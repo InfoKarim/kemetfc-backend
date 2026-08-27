@@ -5,8 +5,7 @@ services:
     region: ohio
     healthCheckPath: /health/ready
     preDeployCommand: >-
-      python -m alembic upgrade head &&
-      python -m scripts.production_check
+      sh -c "python -m alembic upgrade head && python -m scripts.production_check"
     autoDeployTrigger: checksPass
     envVars:
       - key: APP_ENV
