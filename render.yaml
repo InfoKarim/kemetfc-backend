@@ -4,8 +4,7 @@ services:
     runtime: docker
     region: ohio
     healthCheckPath: /health/ready
-    preDeployCommand: >-
-      sh -c "python -m alembic upgrade head && python -m scripts.production_check"
+    preDeployCommand: python scripts/predeploy.py
     autoDeployTrigger: checksPass
     envVars:
       - key: APP_ENV
