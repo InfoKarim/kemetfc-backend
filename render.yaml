@@ -1,0 +1,119 @@
+services:
+  - type: web
+    name: trainingbuddy-pilot2-web
+    runtime: docker
+    region: ohio
+    healthCheckPath: /health/ready
+    preDeployCommand: >-
+      python -m alembic upgrade head &&
+      python -m scripts.production_check
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: TENANCY_MODE
+        value: single_academy
+      - key: DATABASE_URL
+        sync: false
+      - key: AUTH_COOKIE_SECURE
+        value: "true"
+      - key: AUTH_MAX_FAILED_ATTEMPTS
+        value: "5"
+      - key: AUTH_LOCKOUT_MINUTES
+        value: "15"
+      - key: PUBLIC_SITE_ORIGINS
+        value: "https://kemetfc.com,https://www.kemetfc.com"
+      - key: VIDEO_STORAGE_BACKEND
+        value: s3
+      - key: S3_VIDEO_BUCKET
+        sync: false
+      - key: S3_VIDEO_PREFIX
+        value: videos
+      - key: S3_ANALYSIS_PREFIX
+        value: analysis-results
+      - key: S3_DRILL_PREFIX
+        value: drills
+      - key: S3_REGION
+        value: auto
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: POSE_LANDMARKER_MODEL_PATH
+        value: models/pose_landmarker_lite.task
+      - key: POSE_LANDMARKER_MODEL_VERSION
+        value: pose-landmarker-lite-float16
+      - key: FOOTBALL_DETECTION_MODEL_PATH
+        sync: false
+      - key: FOOTBALL_MODEL_VERSION
+        value: football-yolo-1
+      - key: LOG_LEVEL
+        value: INFO
+
+  - type: worker
+    name: trainingbuddy-pilot2-worker
+    runtime: docker
+    region: ohio
+    dockerCommand: python -m app.run_video_analysis_worker
+    maxShutdownDelaySeconds: 300
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: TENANCY_MODE
+        value: single_academy
+      - key: DATABASE_URL
+        sync: false
+      - key: AUTH_COOKIE_SECURE
+        value: "true"
+      - key: VIDEO_STORAGE_BACKEND
+        value: s3
+      - key: S3_VIDEO_BUCKET
+        sync: false
+      - key: S3_VIDEO_PREFIX
+        value: videos
+      - key: S3_ANALYSIS_PREFIX
+        value: analysis-results
+      - key: S3_DRILL_PREFIX
+        value: drills
+      - key: S3_REGION
+        value: auto
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: POSE_LANDMARKER_MODEL_PATH
+        value: models/pose_landmarker_lite.task
+      - key: POSE_LANDMARKER_MODEL_VERSION
+        value: pose-landmarker-lite-float16
+      - key: FOOTBALL_DETECTION_MODEL_PATH
+        sync: false
+      - key: FOOTBALL_MODEL_VERSION
+        value: football-yolo-1
+      - key: MATCH_SAMPLE_EVERY_N_FRAMES
+        value: "2"
+      - key: MATCH_DETECTION_CONFIDENCE
+        value: "0.35"
+      - key: MATCH_IMAGE_SIZE
+        value: "1280"
+      - key: MATCH_TRACKER
+        value: bytetrack.yaml
+      - key: ANALYSIS_WORKER_POLL_SECONDS
+        value: "2"
+      - key: LOG_LEVEL
+        value: INFO
+
+databases:
+  - name: trainingbuddy-pilot2-postgres
+    databaseName: trainingbuddy_pilot2
+    user: trainingbuddy_pilot2
+    region: ohio
+    plan: basic-256mb
+    postgresMajorVersion: "18"
+    connectionPool: pgbouncer
+    ipAllowList: []
+    storageAutoscalingEnabled: true

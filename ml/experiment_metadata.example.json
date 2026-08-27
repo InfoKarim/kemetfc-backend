@@ -1,0 +1,11 @@
+{
+  "experiment_id": "EXP_FOOTBALL_001",
+  "git_revision": "REPLACE_WITH_GIT_SHA",
+  "dataset_fingerprint": "REPLACE_WITH_VALIDATION_FINGERPRINT",
+  "model_name": "football_yolo_tracker",
+  "model_version": "0.1.0",
+  "seed": 42,
+  "camera_protocol": "phone_gimbal_v1",
+  "hardware": "REPLACE_WITH_TRAINING_AND_INFERENCE_HARDWARE",
+  "notes": "Do not evaluate the locked test split until the protocol is frozen."
+}

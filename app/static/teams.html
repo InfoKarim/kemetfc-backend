@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Teams | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --navy: #061a33;
+      --blue: #1268e8;
+      --green: #24b66f;
+      --ink: #14213a;
+      --muted: #68758a;
+      --line: #dfe6ef;
+      --surface: #f5f8fc;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--surface);
+      font: 15px/1.5 Inter, system-ui, sans-serif;
+    }
+
+    .layout {
+      display: grid;
+      min-height: 100vh;
+      grid-template-columns: 240px 1fr;
+    }
+
+    aside {
+      padding: 28px 18px;
+      color: white;
+      background: var(--navy);
+    }
+
+    .brand {
+      margin: 0 10px 30px;
+      color: #f2c35b;
+      font-size: 22px;
+      font-weight: 800;
+    }
+
+    nav { display: grid; gap: 8px; }
+
+    nav a {
+      padding: 12px 14px;
+      color: #dbe7f5;
+      border-radius: 9px;
+      text-decoration: none;
+    }
+
+    nav a:hover,
+    nav a.active {
+      color: white;
+      background: var(--blue);
+    }
+
+    main { padding: 34px; }
+
+    header,
+    .toolbar,
+    .team-card {
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px;
+    }
+
+    h1 { margin: 0; font-size: 30px; }
+    header p { margin: 5px 0 0; color: var(--muted); }
+
+    .primary {
+      padding: 11px 17px;
+      color: white;
+      background: var(--blue);
+      border-radius: 9px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 12px;
+      margin: 20px 0;
+      padding: 16px;
+    }
+
+    input,
+    select {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      font: inherit;
+    }
+
+    #status-filter { max-width: 180px; }
+
+    #teams-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      gap: 18px;
+    }
+
+    .team-card { padding: 20px; }
+
+    .team-card h2 {
+      margin: 12px 0 4px;
+      font-size: 20px;
+    }
+
+    .team-card p { margin: 4px 0; color: var(--muted); }
+
+    .badge {
+      display: inline-block;
+      padding: 5px 9px;
+      color: #087744;
+      background: #e1f7ec;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .badge.inactive {
+      color: #7b4b00;
+      background: #fff0cf;
+    }
+
+    .empty {
+      grid-column: 1 / -1;
+      padding: 55px;
+      color: var(--muted);
+      text-align: center;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+
+    .mobile-nav { display: none; }
+    @media (max-width: 760px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { display: none; }
+      main { padding: 18px 18px 94px; }
+      header { align-items: flex-start; gap: 18px; }
+      .mobile-nav {
+        position: fixed; z-index: 20; right: 10px; bottom: 10px; left: 10px;
+        display: grid; grid-template-columns: repeat(4, 1fr); padding: 8px;
+        border: 1px solid rgba(255, 255, 255, .10); border-radius: 18px;
+        background: rgba(7, 26, 43, .96); box-shadow: 0 18px 42px rgba(0, 0, 0, .24);
+        backdrop-filter: blur(16px);
+      }
+      .mobile-nav a {
+        padding: 9px 4px; border-radius: 11px; color: #b7c4cf; text-align: center;
+        text-decoration: none; font-size: 11px; font-weight: 800;
+      }
+      .mobile-nav a.active { color: #b7f15a; background: rgba(124, 219, 32, .10); }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC</div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a class="active" href="/teams-dashboard">Teams</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+        <a href="/videos-dashboard">Videos</a>
+        <a href="/matches-dashboard">Matches</a>
+        <a href="/reports-dashboard">Reports</a>
+        <a href="/calendar-dashboard">Calendar</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <div>
+          <h1>Teams</h1>
+          <p>Manage academy teams, age groups, coaches, and seasons.</p>
+        </div>
+        <a class="primary" href="/add-team">+ Add team</a>
+      </header>
+
+      <section class="toolbar">
+        <input
+          id="team-search"
+          type="search"
+          placeholder="Search teams or coaches"
+        >
+        <select id="status-filter">
+          <option value="all">All teams</option>
+          <option value="active">Active</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </section>
+
+      <section id="teams-list">
+        <div class="empty">Loading teams...</div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="mobile-nav" aria-label="Mobile navigation">
+    <a href="/dashboard">Home</a>
+    <a href="/players-dashboard">Players</a>
+    <a class="active" href="/teams-dashboard">Teams</a>
+    <a href="/drill-library">Train</a>
+  </nav>
+
+  <script>
+    const list = document.querySelector("#teams-list");
+    const search = document.querySelector("#team-search");
+    const statusFilter = document.querySelector("#status-filter");
+    let teams = [];
+
+    function render() {
+      const query = search.value.toLowerCase().trim();
+      const status = statusFilter.value;
+
+      const visible = teams.filter((team) => {
+        const matchesSearch =
+          `${team.name} ${team.coach_name} ${team.age_group}`
+            .toLowerCase()
+            .includes(query);
+
+        const matchesStatus =
+          status === "all" ||
+          (status === "active" && team.active) ||
+          (status === "inactive" && !team.active);
+
+        return matchesSearch && matchesStatus;
+      });
+
+      list.replaceChildren();
+
+      if (!visible.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No teams found.";
+        list.append(empty);
+        return;
+      }
+
+      for (const team of visible) {
+        const card = document.createElement("article");
+        card.className = "team-card";
+
+        const badge = document.createElement("span");
+        badge.className = `badge${team.active ? "" : " inactive"}`;
+        badge.textContent = team.active ? "Active" : "Inactive";
+
+        const title = document.createElement("h2");
+        title.textContent = team.name;
+
+        const age = document.createElement("p");
+        age.textContent = `Age group: ${team.age_group}`;
+
+        const coach = document.createElement("p");
+        coach.textContent = `Coach: ${team.coach_name}`;
+
+        const season = document.createElement("p");
+        season.textContent = `Season: ${team.season_id}`;
+
+        const link = document.createElement("a");
+        link.textContent = "View team →";
+        link.href =
+          `/team-details?team_id=${encodeURIComponent(team.team_id)}`;
+
+        card.append(badge, title, age, coach, season, link);
+        list.append(card);
+      }
+    }
+
+    async function loadTeams() {
+      try {
+        const response = await fetch("/teams");
+
+        if (!response.ok) {
+          throw new Error("Could not load teams");
+        }
+
+        teams = await response.json();
+        render();
+      } catch (error) {
+        list.innerHTML = '<div class="empty">Could not load teams.</div>';
+      }
+    }
+
+    search.addEventListener("input", render);
+    statusFilter.addEventListener("change", render);
+    loadTeams();
+  </script>
+</body>
+</html>

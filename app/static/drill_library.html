@@ -1,0 +1,813 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Drill Library | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --navy: #071b2d;
+      --green: #35dc83;
+      --paper: #f3f7f4;
+      --text: #142033;
+      --muted: #657386;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--paper);
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+
+    header {
+      padding: 48px max(24px, 7vw) 70px;
+      color: white;
+      background: linear-gradient(135deg, var(--navy), #123a4e);
+    }
+
+    .label {
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: .15em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 10px 0;
+      font-size: clamp(38px, 7vw, 68px);
+      letter-spacing: -.05em;
+    }
+
+    header p {
+      max-width: 620px;
+      color: #cad8e3;
+      font-size: 17px;
+      line-height: 1.6;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: -30px auto 60px;
+    }
+
+    .recommendation-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+      padding: 22px;
+      border: 1px solid #dbe5de;
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 14px 38px #071b2d1c;
+    }
+
+    .recommendation-form div {
+      min-width: 0;
+    }
+
+    .recommendation-form label {
+      display: block;
+      margin-bottom: 7px;
+      color: #4a5968;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+
+    .recommendation-form input,
+    .recommendation-form select {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 13px 14px;
+      border: 1px solid #d8e2dc;
+      border-radius: 11px;
+      background: white;
+      font: inherit;
+    }
+
+    .recommendation-form button {
+      align-self: end;
+      min-height: 49px;
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 11px;
+      background: var(--accent);
+      color: #071b2d;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .recommendation-form button:hover {
+      filter: brightness(.95);
+    }
+
+    .form-actions {
+      display: flex;
+      align-items: end;
+      gap: 10px;
+    }
+
+    .form-actions button {
+      flex: 1;
+    }
+
+    #save-training-plan {
+      background: #071b2d;
+      color: white;
+    }
+
+    #recommendation-status {
+      grid-column: 1 / -1;
+      min-height: 20px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .toolbar {
+      padding: 16px;
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 14px 38px #071b2d1c;
+    }
+
+    #smart-recommendations-section {
+      margin-bottom: 18px;
+      padding: 20px;
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 14px 38px #071b2d1c;
+    }
+    #smart-recommendations-section h2 { margin: 0 0 4px; }
+    .focus-area { padding: 16px; border-left: 4px solid #1265ed; border-radius: 8px; background: #f5f8ff; margin-bottom: 12px; }
+    .focus-area h3 { font-size: 16px; margin: 0 0 4px; color: #16233B !important; }
+    .focus-area p { margin: 0 0 10px; color: #16233B !important; }
+    .focus-videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+    .focus-video { display: block; overflow: hidden; border-radius: 8px; background: white; text-decoration: none; border: 1px solid #e1e7ef; }
+    .focus-video img { display: block; width: 100%; height: 100px; object-fit: cover; background: #0b2036; }
+    .focus-video-info { padding: 8px 10px; }
+    .focus-video-info strong { display: block; font-size: 12.5px; line-height: 1.3; color: #16233B !important; }
+    .focus-video-info span { display: block; margin-top: 3px; font-size: 11px; color: #69768a !important; }
+    #smart-recommendations-section h2 { color: #16233B !important; }
+
+    input {
+      width: 100%;
+      padding: 14px 16px;
+      border: 1px solid #d8e2dc;
+      border-radius: 11px;
+      font: inherit;
+    }
+
+    .summary {
+      display: flex;
+      justify-content: space-between;
+      margin: 28px 2px 14px;
+    }
+
+    .summary h2 { margin: 0; }
+    #count { color: var(--muted); }
+
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      overflow: hidden;
+      border: 1px solid #dbe5de;
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 8px 22px #071b2d0d;
+    }
+
+    .media {
+      display: grid;
+      aspect-ratio: 16 / 9;
+      place-items: center;
+      background: linear-gradient(145deg, #17394c, #071b2d);
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #071b2d;
+    }
+
+    .watch {
+      padding: 12px 18px;
+      border-radius: 999px;
+      color: var(--navy);
+      background: var(--green);
+      font-weight: 850;
+      text-decoration: none;
+    }
+
+    .content { padding: 19px; }
+
+    .category {
+      color: #087640;
+      font-size: 12px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+
+    h3 {
+      margin: 9px 0 7px;
+      font-size: 21px;
+    }
+
+    .description {
+      min-height: 44px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 16px;
+    }
+
+    .meta span {
+      padding: 6px 9px;
+      border-radius: 8px;
+      background: #eef4f0;
+      color: #4a5968;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .card-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      margin-top: 16px;
+    }
+
+    .edit-drill, .delete-drill {
+      padding: 10px 12px;
+      border-radius: 9px;
+      background: white;
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .edit-drill {
+      border: 1px solid #315f7b;
+      color: #17394c;
+    }
+
+    .delete-drill {
+      border: 1px solid #c83b45;
+      color: #a21f2b;
+    }
+
+    .edit-drill:hover { background: #eef7fb; }
+    .delete-drill:hover { background: #fff1f2; }
+
+    .state {
+      padding: 48px;
+      color: var(--muted);
+      text-align: center;
+      background: white;
+      border-radius: 18px;
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body class="drill-library-page">
+  <header>
+    <div class="library-hero-inner">
+      <div class="library-hero-copy">
+        <div class="label">Kemet FC</div>
+        <h1>Drill Library</h1>
+        <p>Training videos organized by player age, development need, and difficulty.</p>
+      </div>
+      <nav class="library-hero-actions" aria-label="Drill Library actions">
+        <a class="watch secondary" href="/dashboard">Home</a>
+        <a class="watch" href="/add-video">+ Add training video</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <form id="recommendation-form" class="recommendation-form">
+      <div>
+        <label for="analysis-id">Player analysis</label>
+        <select
+          id="analysis-id"
+          name="analysis_id"
+          required
+        >
+          <option value="">Loading analyses...</option>
+        </select>
+        <small>
+          The latest analysis is selected automatically. Age comes from the
+          player profile.
+        </small>
+      </div>
+
+      <div>
+        <label for="player-difficulty">Difficulty</label>
+        <select id="player-difficulty" name="difficulty">
+          <option value="beginner">Beginner</option>
+          <option value="intermediate">Intermediate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+      </div>
+
+      <div>
+        <label for="target-duration">Target minutes</label>
+        <input
+          id="target-duration"
+          name="duration"
+          type="number"
+          min="1"
+          value="10"
+        >
+      </div>
+
+      <div>
+        <label for="available-equipment">Equipment</label>
+        <input
+          id="available-equipment"
+          name="equipment"
+          placeholder="ball, cones"
+        >
+      </div>
+
+      <div class="form-actions">
+        <button type="submit">Get recommendations</button>
+        <button id="save-training-plan" type="button">
+          Save training plan
+        </button>
+      </div>
+
+      <p id="recommendation-status" role="status"></p>
+    </form>
+
+    <section id="smart-recommendations-section" hidden>
+      <h2>AI Training Recommendations</h2>
+      <p class="muted" style="margin:0 0 12px;color:#69768a;">
+        Generated from this player's own analysis, with real training videos found on YouTube.
+      </p>
+      <div id="smart-recommendations"></div>
+    </section>
+
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Search drills">
+    </div>
+
+    <div class="summary">
+      <h2>Available training</h2>
+      <span id="count">Loading...</span>
+    </div>
+
+    <section id="grid">
+      <div class="state">Loading the library...</div>
+    </section>
+  </main>
+
+  <script>
+    const grid = document.querySelector("#grid");
+    const count = document.querySelector("#count");
+    const search = document.querySelector("#search");
+    const recommendationForm = document.querySelector(
+      "#recommendation-form"
+    );
+    const recommendationStatus = document.querySelector(
+      "#recommendation-status"
+    );
+    const saveTrainingPlan = document.querySelector(
+      "#save-training-plan"
+    );
+    const getRecommendations = recommendationForm.querySelector(
+      'button[type="submit"]'
+    );
+    const analysisSelect = document.querySelector("#analysis-id");
+    let drills = [];
+
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function populateAnalysisOptions(analyses, players) {
+      const playersById = new Map(
+        players.map((player) => [player.player_id, player])
+      );
+      const sortedAnalyses = [...analyses].sort(
+        (left, right) =>
+          new Date(right.created_at).getTime()
+          - new Date(left.created_at).getTime()
+      );
+
+      analysisSelect.replaceChildren();
+
+      if (!sortedAnalyses.length) {
+        const option = make("option", "", "No analyses available");
+        option.value = "";
+        option.disabled = true;
+        option.selected = true;
+        analysisSelect.append(option);
+        analysisSelect.disabled = true;
+        getRecommendations.disabled = true;
+        saveTrainingPlan.disabled = true;
+        recommendationStatus.replaceChildren(
+          document.createTextNode(
+            "A player analysis is needed before recommendations. "
+          )
+        );
+        const createAnalysis = make(
+          "a",
+          "inline-action",
+          "Create player analysis →"
+        );
+        createAnalysis.href = "/add-assessment";
+        recommendationStatus.append(createAnalysis);
+        return;
+      }
+
+      analysisSelect.disabled = false;
+      getRecommendations.disabled = false;
+      saveTrainingPlan.disabled = false;
+
+      for (const analysis of sortedAnalyses) {
+        const player = playersById.get(analysis.player_id);
+        const playerName = player
+          ? `${player.first_name_en} ${player.last_name_en}`.trim()
+          : analysis.player_id;
+        const createdAt = new Date(analysis.created_at);
+        const dateLabel = Number.isNaN(createdAt.getTime())
+          ? "Unknown date"
+          : createdAt.toLocaleDateString();
+        const option = make(
+          "option",
+          "",
+          `${playerName} — ${dateLabel} — ${analysis.analysis_id}`
+        );
+        option.value = analysis.analysis_id;
+        analysisSelect.append(option);
+      }
+
+      const requestedAnalysisId = new URLSearchParams(location.search).get(
+        "analysis_id"
+      );
+      const requestedOption = sortedAnalyses.find(
+        (analysis) => analysis.analysis_id === requestedAnalysisId
+      );
+
+      analysisSelect.value = requestedOption
+        ? requestedOption.analysis_id
+        : sortedAnalyses[0].analysis_id;
+      recommendationStatus.textContent = requestedOption
+        ? `Analysis ${requestedOption.analysis_id} selected.`
+        : "Latest analysis selected automatically.";
+
+      loadSmartRecommendations();
+    }
+
+    async function loadSmartRecommendations() {
+      const section = document.querySelector("#smart-recommendations-section");
+      const target = document.querySelector("#smart-recommendations");
+      const analysisId = analysisSelect.value;
+
+      if (!analysisId) {
+        section.hidden = true;
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `/analyses/${encodeURIComponent(analysisId)}/smart-recommendations`
+        );
+
+        if (response.status === 404) {
+          section.hidden = true;
+          return;
+        }
+
+        section.hidden = false;
+
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          target.replaceChildren(make(
+            "div",
+            "state",
+            result.detail || "Could not load AI recommendations right now."
+          ));
+          return;
+        }
+
+        const result = await response.json();
+        target.replaceChildren();
+
+        if (!result.focus_areas?.length) {
+          target.append(make("div", "state", "No AI recommendations available."));
+          return;
+        }
+
+        result.focus_areas.forEach((area) => {
+          const box = make("div", "focus-area");
+          box.append(make("h3", "", area.title || "Focus area"));
+          if (area.reason) box.append(make("p", "", area.reason));
+
+          if (area.videos?.length) {
+            const videoGrid = make("div", "focus-videos");
+            area.videos.forEach((video) => {
+              const videoLink = document.createElement("a");
+              videoLink.className = "focus-video";
+              videoLink.href = video.url;
+              videoLink.target = "_blank";
+              videoLink.rel = "noopener noreferrer";
+
+              if (video.thumbnail_url) {
+                const thumb = document.createElement("img");
+                thumb.src = video.thumbnail_url;
+                thumb.alt = "";
+                videoLink.append(thumb);
+              }
+
+              const info = make("div", "focus-video-info");
+              info.append(make("strong", "", video.title || "Watch video"));
+              if (video.channel) info.append(make("span", "", video.channel));
+              videoLink.append(info);
+              videoGrid.append(videoLink);
+            });
+            box.append(videoGrid);
+          }
+
+          target.append(box);
+        });
+      } catch (error) {
+        section.hidden = false;
+        target.replaceChildren(
+          make("div", "state", "Could not load AI recommendations right now.")
+        );
+      }
+    }
+
+    function render() {
+      const query = search.value.toLowerCase().trim();
+      const visible = drills.filter((drill) =>
+        drill.active &&
+        `${drill.name} ${drill.category}`.toLowerCase().includes(query)
+      );
+
+      grid.replaceChildren();
+      count.textContent = `${visible.length} drill${visible.length === 1 ? "" : "s"}`;
+
+      if (!visible.length) {
+        grid.append(make("div", "state", "No drills found."));
+        return;
+      }
+
+      for (const drill of visible) {
+        const card = make("article", "card");
+        const media = make("div", "media");
+
+        if (drill.video_url.startsWith("/uploads/drills/")) {
+          const video = document.createElement("video");
+          video.src = drill.video_url;
+          video.controls = true;
+          video.preload = "metadata";
+          media.append(video);
+        } else {
+          const link = make("a", "watch", "Watch Reel ↗");
+          link.href = drill.video_url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          media.append(link);
+        }
+
+        const content = make("div", "content");
+        content.append(make("div", "category", drill.category));
+        content.append(make("h3", "", drill.name));
+        content.append(make("p", "description", drill.description));
+
+        const meta = make("div", "meta");
+        const age = drill.min_age === drill.max_age
+          ? `Age ${drill.min_age}`
+          : `Ages ${drill.min_age}-${drill.max_age}`;
+
+        meta.append(make("span", "", age));
+        meta.append(make("span", "", drill.difficulty));
+        meta.append(make(
+          "span",
+          "",
+          drill.equipment.length
+            ? drill.equipment.join(", ")
+            : "Any equipment"
+        ));
+
+        content.append(meta);
+        const actions = make("div", "card-actions");
+        const edit = make("button", "edit-drill", "Edit details");
+        edit.type = "button";
+        edit.addEventListener("click", () => {
+          location.href = `/add-video?drill_id=${encodeURIComponent(drill.drill_id)}`;
+        });
+
+        const remove = make("button", "delete-drill", "Delete training video");
+        remove.type = "button";
+        remove.addEventListener("click", async () => {
+          if (!window.confirm(`Delete ${drill.name} from the Drill Library?`)) {
+            return;
+          }
+          remove.disabled = true;
+          recommendationStatus.textContent = `Deleting ${drill.name}...`;
+          try {
+            const response = await fetch(
+              `/drills/${encodeURIComponent(drill.drill_id)}`,
+              {method: "DELETE"}
+            );
+            const data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.detail || "Could not delete training video.");
+            }
+            drills = drills.filter((item) => item.drill_id !== drill.drill_id);
+            recommendationStatus.textContent = `${drill.name} deleted.`;
+            render();
+          } catch (error) {
+            recommendationStatus.textContent = error.message;
+            remove.disabled = false;
+          }
+        });
+        actions.append(edit, remove);
+        content.append(actions);
+        card.append(media, content);
+        grid.append(card);
+      }
+    }
+
+    search.addEventListener("input", render);
+
+    analysisSelect.addEventListener("change", loadSmartRecommendations);
+
+    recommendationForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      const analysisId = analysisSelect.value;
+      const equipment = document
+        .querySelector("#available-equipment")
+        .value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      recommendationStatus.textContent = "Finding suitable drills...";
+
+      try {
+        const response = await fetch(
+          `/analyses/${encodeURIComponent(analysisId)}/drill-recommendations`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              player_difficulty: document.querySelector(
+                "#player-difficulty"
+              ).value,
+              target_duration: Number(document.querySelector(
+                "#target-duration"
+              ).value),
+              available_equipment: equipment,
+            }),
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          if (response.status === 409 && analysisId.startsWith("AN_")) {
+            recommendationStatus.replaceChildren(
+              document.createTextNode(
+                (data.detail || "Could not load recommendations.") + " "
+              )
+            );
+            const reviewLink = make("a", "inline-action", "Review this analysis →");
+            reviewLink.href =
+              `/video-analysis-details?job_id=${encodeURIComponent(analysisId.slice(3))}`;
+            recommendationStatus.append(reviewLink);
+            return;
+          }
+
+          throw new Error(data.detail || "Could not load recommendations.");
+        }
+
+        const uniqueDrills = new Map();
+
+        for (const group of data) {
+          for (const drill of group.drills) {
+            if (!uniqueDrills.has(drill.drill_id)) {
+              uniqueDrills.set(drill.drill_id, drill);
+            }
+          }
+        }
+
+        drills = Array.from(uniqueDrills.values());
+        search.value = "";
+        render();
+
+        recommendationStatus.textContent = drills.length
+          ? `Showing ${drills.length} recommended drill${drills.length === 1 ? "" : "s"}.`
+          : "No suitable drills found.";
+      } catch (error) {
+        recommendationStatus.textContent = error.message;
+      }
+    });
+
+    saveTrainingPlan.addEventListener("click", async () => {
+      if (!recommendationForm.reportValidity()) {
+        return;
+      }
+
+      const analysisId = analysisSelect.value;
+      const equipment = document
+        .querySelector("#available-equipment")
+        .value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      recommendationStatus.textContent = "Saving training plan...";
+
+      try {
+        const response = await fetch(
+          `/analyses/${encodeURIComponent(analysisId)}/training-plans`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              player_difficulty: document.querySelector(
+                "#player-difficulty"
+              ).value,
+              target_duration: Number(document.querySelector(
+                "#target-duration"
+              ).value),
+              available_equipment: equipment,
+            }),
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.detail || "Could not save the training plan."
+          );
+        }
+
+        recommendationStatus.textContent =
+          `Training plan ${data.plan_id} saved as ${data.status}.`;
+      } catch (error) {
+        recommendationStatus.textContent = error.message;
+      }
+    });
+
+    Promise.all([
+      fetch("/drills"),
+      fetch("/analyses"),
+      fetch("/players"),
+    ])
+      .then(async (responses) => {
+        for (const response of responses) {
+          if (!response.ok) {
+            throw new Error("Could not load the Drill Library.");
+          }
+        }
+        return Promise.all(responses.map((response) => response.json()));
+      })
+      .then(([drillData, analyses, players]) => {
+        drills = drillData;
+        populateAnalysisOptions(analyses, players);
+        render();
+      })
+      .catch(() => {
+        count.textContent = "Unavailable";
+        grid.replaceChildren(
+          make("div", "state", "Could not load the library.")
+        );
+      });
+  </script>
+</body>
+</html>

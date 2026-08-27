@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Team Details | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --navy: #061a33;
+      --blue: #1268e8;
+      --ink: #14213a;
+      --muted: #68758a;
+      --line: #dfe6ef;
+      --surface: #f5f8fc;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--surface);
+      font: 15px/1.5 Inter, system-ui, sans-serif;
+    }
+
+    .layout {
+      display: grid;
+      min-height: 100vh;
+      grid-template-columns: 240px 1fr;
+    }
+
+    aside {
+      padding: 28px 18px;
+      color: white;
+      background: var(--navy);
+    }
+
+    .brand {
+      margin: 0 10px 30px;
+      color: #f2c35b;
+      font-size: 22px;
+      font-weight: 800;
+    }
+
+    nav { display: grid; gap: 8px; }
+
+    nav a {
+      padding: 12px 14px;
+      color: #dbe7f5;
+      border-radius: 9px;
+      text-decoration: none;
+    }
+
+    nav a:hover,
+    nav a.active {
+      color: white;
+      background: var(--blue);
+    }
+
+    main { padding: 34px; }
+
+    .back {
+      display: inline-block;
+      margin-bottom: 18px;
+      color: var(--blue);
+      text-decoration: none;
+    }
+
+    .panel {
+      padding: 24px;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+    }
+
+    #team-profile h1 {
+      margin: 8px 0;
+      font-size: 30px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 5px 9px;
+      color: #087744;
+      background: #e1f7ec;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .fact {
+      padding: 14px;
+      background: var(--surface);
+      border-radius: 10px;
+    }
+
+    .fact span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .management {
+      margin-top: 18px;
+    }
+
+    .management h2 {
+      margin-top: 0;
+    }
+
+    #edit-team-form {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    #edit-team-form label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 700;
+    }
+
+    #edit-team-form input,
+    #edit-team-form select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font: inherit;
+    }
+
+    .management-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .management button {
+      padding: 10px 15px;
+      border: 0;
+      border-radius: 8px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    #save-team {
+      color: white;
+      background: var(--blue);
+    }
+
+    #delete-team {
+      color: #a11b1b;
+      background: #fee6e6;
+    }
+
+    #delete-team:disabled {
+      cursor: not-allowed;
+      opacity: .5;
+    }
+
+    #management-status {
+      color: var(--muted);
+    }
+
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      margin: 28px 0 12px;
+    }
+
+    .section-title h2 { margin: 0; }
+
+    #team-players {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .player {
+      padding: 18px;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+
+    .player h3 { margin: 0 0 5px; }
+    .player p { margin: 4px 0; color: var(--muted); }
+
+    .player a {
+      display: inline-block;
+      margin-top: 10px;
+      color: var(--blue);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .empty {
+      grid-column: 1 / -1;
+      padding: 45px;
+      color: var(--muted);
+      text-align: center;
+      background: white;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+
+    .mobile-nav { display: none; }
+    @media (max-width: 760px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { display: none; }
+      main { padding: 18px 18px 94px; }
+      .facts { grid-template-columns: 1fr; }
+      .mobile-nav {
+        position: fixed; z-index: 20; right: 10px; bottom: 10px; left: 10px;
+        display: grid; grid-template-columns: repeat(4, 1fr); padding: 8px;
+        border: 1px solid rgba(255, 255, 255, .10); border-radius: 18px;
+        background: rgba(7, 26, 43, .96); box-shadow: 0 18px 42px rgba(0, 0, 0, .24);
+        backdrop-filter: blur(16px);
+      }
+      .mobile-nav a {
+        padding: 9px 4px; border-radius: 11px; color: #b7c4cf; text-align: center;
+        text-decoration: none; font-size: 11px; font-weight: 800;
+      }
+      .mobile-nav a.active { color: #b7f15a; background: rgba(124, 219, 32, .10); }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC</div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a class="active" href="/teams-dashboard">Teams</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+        <a href="/videos-dashboard">Videos</a>
+        <a href="/matches-dashboard">Matches</a>
+        <a href="/reports-dashboard">Reports</a>
+        <a href="/calendar-dashboard">Calendar</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <a class="back" href="/teams-dashboard">← Back to Teams</a>
+
+      <section id="team-profile" class="panel">
+        <p>Loading team...</p>
+      </section>
+
+      <section class="panel management">
+        <h2>Manage Team</h2>
+
+        <form id="edit-team-form">
+          <div>
+            <label for="edit-team-name">Team name</label>
+            <input id="edit-team-name" required>
+          </div>
+
+          <div>
+            <label for="edit-age-group">Age group</label>
+            <input
+              id="edit-age-group"
+              pattern="[Uu][0-9]+"
+              required
+            >
+          </div>
+
+          <div>
+            <label for="edit-coach-name">Coach</label>
+            <input id="edit-coach-name" required>
+          </div>
+
+          <div>
+            <label for="edit-season-id">Season</label>
+            <input id="edit-season-id" required>
+          </div>
+
+          <div>
+            <label for="edit-active">Status</label>
+            <select id="edit-active">
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
+            </select>
+          </div>
+        </form>
+
+        <div class="management-actions">
+          <button id="save-team" form="edit-team-form" type="submit">
+            Save changes
+          </button>
+          <button id="delete-team" type="button">
+            Delete team
+          </button>
+        </div>
+
+        <p id="management-status" role="status"></p>
+      </section>
+
+      <div class="section-title">
+        <h2>Team Players</h2>
+        <span id="player-count">Loading...</span>
+      </div>
+
+      <section id="team-players">
+        <div class="empty">Loading players...</div>
+      </section>
+
+      <div class="section-title">
+        <h2>Team Matches</h2>
+        <span id="match-count">Loading...</span>
+      </div>
+
+      <section id="team-matches">
+        <div class="empty">Loading matches...</div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="mobile-nav" aria-label="Mobile navigation">
+    <a href="/dashboard">Home</a>
+    <a href="/players-dashboard">Players</a>
+    <a class="active" href="/teams-dashboard">Teams</a>
+    <a href="/drill-library">Train</a>
+  </nav>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const teamId = params.get("team_id");
+    const profile = document.querySelector("#team-profile");
+    const playersList = document.querySelector("#team-players");
+    const playerCount = document.querySelector("#player-count");
+    const matchesList = document.querySelector("#team-matches");
+    const matchCount = document.querySelector("#match-count");
+    const editForm = document.querySelector("#edit-team-form");
+    const deleteButton = document.querySelector("#delete-team");
+    const managementStatus =
+      document.querySelector("#management-status");
+    let currentTeam = null;
+
+    function addFact(container, label, value) {
+      const fact = document.createElement("div");
+      fact.className = "fact";
+
+      const title = document.createElement("span");
+      title.textContent = label;
+
+      const content = document.createElement("strong");
+      content.textContent = value;
+
+      fact.append(title, content);
+      container.append(fact);
+    }
+
+    function renderTeam(team) {
+      currentTeam = team;
+      document.querySelector("#edit-team-name").value = team.name;
+      document.querySelector("#edit-age-group").value = team.age_group;
+      document.querySelector("#edit-coach-name").value = team.coach_name;
+      document.querySelector("#edit-season-id").value = team.season_id;
+      document.querySelector("#edit-active").value = String(team.active);
+
+      profile.replaceChildren();
+
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = team.active ? "Active" : "Inactive";
+
+      const title = document.createElement("h1");
+      title.textContent = team.name;
+
+      const subtitle = document.createElement("p");
+      subtitle.textContent = "Team Details";
+
+      const facts = document.createElement("div");
+      facts.className = "facts";
+      addFact(facts, "Age group", team.age_group);
+      addFact(facts, "Coach", team.coach_name);
+      addFact(facts, "Season", team.season_id);
+
+      profile.append(badge, title, subtitle, facts);
+    }
+
+    function renderPlayers(players) {
+      playersList.replaceChildren();
+      playerCount.textContent =
+        `${players.length} player${players.length === 1 ? "" : "s"}`;
+      deleteButton.disabled = players.length > 0;
+      deleteButton.title = players.length
+        ? "Move players before deleting this team."
+        : "";
+
+      if (!players.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No players assigned to this team.";
+        playersList.append(empty);
+        return;
+      }
+
+      for (const player of players) {
+        const card = document.createElement("article");
+        card.className = "player";
+
+        const name = document.createElement("h3");
+        name.textContent =
+          `${player.first_name_en} ${player.last_name_en}`;
+
+        const id = document.createElement("p");
+        id.textContent = player.player_id;
+
+        const link = document.createElement("a");
+        link.textContent = "View player →";
+        link.href =
+          `/player-details?player_id=${encodeURIComponent(player.player_id)}`;
+
+        card.append(name, id, link);
+        playersList.append(card);
+      }
+    }
+
+    function renderMatches(matches) {
+      matchesList.replaceChildren();
+      matchCount.textContent =
+        `${matches.length} match${matches.length === 1 ? "" : "es"}`;
+
+      if (!matches.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No matches scheduled for this team.";
+        matchesList.append(empty);
+        return;
+      }
+
+      matches
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(b.match_date) - new Date(a.match_date)
+        )
+        .forEach((match) => {
+          const card = document.createElement("article");
+          card.className = "player";
+
+          const isHome = match.home_team_id === teamId;
+          const opponent = isHome
+            ? match.away_team_id
+            : match.home_team_id;
+
+          const title = document.createElement("h3");
+          title.textContent =
+            `${isHome ? "Home" : "Away"} vs ${opponent}`;
+
+          const details = document.createElement("p");
+          details.textContent =
+            `${new Date(match.match_date).toLocaleString()} · ` +
+            match.status.replace("_", " ");
+
+          const score = document.createElement("strong");
+          score.textContent =
+            match.home_score === null ||
+            match.away_score === null
+              ? "Score pending"
+              : `${match.home_score} - ${match.away_score}`;
+
+          card.append(title, details, score);
+          matchesList.append(card);
+        });
+    }
+
+    async function loadTeam() {
+      if (!teamId) {
+        profile.innerHTML = "<p>Team ID is required.</p>";
+        return;
+      }
+
+      try {
+        const [teamResponse, playersResponse, matchesResponse] =
+          await Promise.all([
+            fetch("/teams/" + encodeURIComponent(teamId)),
+            fetch("/players"),
+            fetch("/matches"),
+          ]);
+
+        if (!teamResponse.ok) {
+          throw new Error("Team not found");
+        }
+
+        const team = await teamResponse.json();
+        const allPlayers = playersResponse.ok
+          ? await playersResponse.json()
+          : [];
+        const allMatches = matchesResponse.ok
+          ? await matchesResponse.json()
+          : [];
+
+        renderTeam(team);
+        renderPlayers(
+          allPlayers.filter((player) => player.team_id === teamId)
+        );
+        renderMatches(
+          allMatches.filter(
+            (match) =>
+              match.home_team_id === teamId ||
+              match.away_team_id === teamId
+          )
+        );
+      } catch (error) {
+        profile.replaceChildren(make("p", "", error.message));
+        playersList.replaceChildren();
+        playerCount.textContent = "Unavailable";
+        matchesList.replaceChildren();
+        matchCount.textContent = "Unavailable";
+      }
+    }
+
+    editForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+
+      if (!currentTeam) return;
+      managementStatus.textContent = "Saving changes...";
+
+      const payload = {
+        ...currentTeam,
+        name: document.querySelector("#edit-team-name").value.trim(),
+        age_group:
+          document.querySelector("#edit-age-group").value.trim(),
+        coach_name:
+          document.querySelector("#edit-coach-name").value.trim(),
+        season_id:
+          document.querySelector("#edit-season-id").value.trim(),
+        active:
+          document.querySelector("#edit-active").value === "true",
+      };
+
+      try {
+        const response = await fetch(
+          `/teams/${encodeURIComponent(teamId)}`,
+          {
+            method: "PUT",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(payload),
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error("Could not update team");
+        }
+
+        renderTeam(await response.json());
+        managementStatus.textContent = "Team updated successfully.";
+      } catch (error) {
+        managementStatus.textContent = error.message;
+      }
+    });
+
+    deleteButton.addEventListener("click", async () => {
+      if (deleteButton.disabled) return;
+
+      if (!confirm("Delete this team permanently?")) return;
+
+      try {
+        const response = await fetch(
+          `/teams/${encodeURIComponent(teamId)}`,
+          {method: "DELETE"}
+        );
+
+        if (!response.ok) {
+          throw new Error("Could not delete team");
+        }
+
+        location.href = "/teams-dashboard";
+      } catch (error) {
+        managementStatus.textContent = error.message;
+      }
+    });
+
+    loadTeam();
+  </script>
+</body>
+</html>

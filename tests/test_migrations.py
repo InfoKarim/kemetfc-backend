@@ -1,0 +1,125 @@
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+from sqlalchemy import create_engine, inspect, text
+
+from app.migration_health import (
+    DatabaseSchemaNotCurrent,
+    require_database_at_head,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_TABLES = {
+    "alembic_version",
+    "analyses",
+    "assessment_registrations",
+    "auth_sessions",
+    "audit_events",
+    "data_records",
+    "drills",
+    "guardian_consents",
+    "id_counters",
+    "guardian_player_links",
+    "matches",
+    "messages",
+    "notifications",
+    "password_reset_codes",
+    "players",
+    "privacy_requests",
+    "seasons",
+    "teams",
+    "training_plans",
+    "users",
+    "video_analysis_jobs",
+    "videos",
+}
+
+
+def migration_environment(database_url: str) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment.update({
+        "APP_ENV": "test",
+        "AUTH_COOKIE_SECURE": "false",
+        "DATABASE_URL": database_url,
+    })
+    return environment
+
+
+def test_migrations_build_fresh_sqlite_database(tmp_path):
+    database_path = tmp_path / "fresh.db"
+    database_url = f"sqlite:///{database_path}"
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=PROJECT_ROOT,
+        env=migration_environment(database_url),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    engine = create_engine(database_url)
+    assert set(inspect(engine).get_table_names()) == EXPECTED_TABLES
+
+    with engine.connect() as connection:
+        revision = connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one()
+
+    assert revision == "c9a1f3e7b204"
+    job_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("video_analysis_jobs")
+    }
+    assert "target_track_id" in job_columns
+    user_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("users")
+    }
+    assert "feature_permissions" in user_columns
+    assert "email" in user_columns
+
+    with engine.connect() as connection:
+        assert require_database_at_head(connection) == ("c9a1f3e7b204",)
+
+
+def test_migration_health_rejects_database_without_migrations(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+
+    with engine.connect() as connection:
+        with pytest.raises(DatabaseSchemaNotCurrent, match="upgrade head"):
+            require_database_at_head(connection)
+
+
+def test_postgresql_migration_sql_has_single_drills_table():
+    database_url = (
+        "postgresql+psycopg://user:password@localhost/trainingbuddy"
+        "?sslmode=disable"
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alembic",
+            "upgrade",
+            "head",
+            "--sql",
+        ],
+        cwd=PROJECT_ROOT,
+        env=migration_environment(database_url),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stdout.count("CREATE TABLE drills") == 1
+    assert result.stdout.count("CREATE TABLE videos") == 1
+    assert "CREATE TABLE users" in result.stdout
+    assert "CREATE TABLE guardian_consents" in result.stdout
+    assert "CREATE TABLE audit_events" in result.stdout
+    assert "CREATE TABLE guardian_player_links" in result.stdout
+    assert "CREATE TABLE privacy_requests" in result.stdout

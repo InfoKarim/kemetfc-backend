@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Add Player | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; color: #142039; background: #f5f7fb; }
+    .layout { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
+    aside { padding: 26px 16px; color: white; background: #071b35; }
+    .brand { margin: 0 10px 30px; color: #ffd36b; font-size: 22px; font-weight: 800; }
+    nav { display: grid; gap: 8px; }
+    nav a { padding: 12px 14px; border-radius: 9px; color: #dbe7f7; text-decoration: none; }
+    nav a:hover, nav a.active { color: white; background: #1265ed; }
+    main { padding: 30px; }
+    h1, h2, p { margin-top: 0; }
+    .muted { color: #69768a; }
+    .back { color: #1265ed; font-weight: 700; text-decoration: none; }
+    form { display: grid; gap: 18px; margin-top: 22px; }
+    .card { padding: 22px; border: 1px solid #e1e7ef; border-radius: 16px; background: white; }
+    .fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 750; }
+    input, select {
+      width: 100%;
+      padding: 12px 13px;
+      border: 1px solid #d8e0eb;
+      border-radius: 9px;
+      background: white;
+      font: inherit;
+    }
+    .profile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+    .profile-grid .fields { grid-template-columns: repeat(2, 1fr); }
+    .actions { display: flex; justify-content: flex-end; gap: 10px; }
+    button, .secondary {
+      padding: 12px 18px;
+      border-radius: 9px;
+      font: inherit;
+      font-weight: 750;
+      text-decoration: none;
+    }
+    button { border: 0; color: white; background: #1265ed; cursor: pointer; }
+    button:disabled { opacity: .6; }
+    .secondary { border: 1px solid #d8e0eb; color: #142039; background: white; }
+    #form-status { min-height: 24px; font-weight: 700; }
+    .success { color: #13844b; }
+    .error { color: #b83232; }
+    @media (max-width: 900px) {
+      .profile-grid { grid-template-columns: 1fr; }
+      .fields, .profile-grid .fields { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 650px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { display: none; }
+      main { padding: 18px; }
+      .fields, .profile-grid .fields { grid-template-columns: 1fr; }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC</div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a class="active" href="/players-dashboard">Players</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <a class="back" href="/players-dashboard">← Back to Players</a>
+      <h1 id="form-title">Add Player</h1>
+      <p id="form-subtitle" class="muted">Create a complete player profile for assessment and training.</p>
+
+      <form id="player-form">
+        <section id="basic-information" class="card">
+          <h2>Basic Information</h2>
+          <div class="fields">
+            <div><label for="first-name-en">First name</label><input id="first-name-en" required></div>
+            <div><label for="last-name-en">Last name</label><input id="last-name-en" required></div>
+            <div><label for="first-name-ar">Arabic first name (optional)</label><input id="first-name-ar"></div>
+            <div><label for="last-name-ar">Arabic last name (optional)</label><input id="last-name-ar"></div>
+            <div><label for="date-of-birth">Date of birth</label><input id="date-of-birth" type="date" required></div>
+            <div>
+              <label for="sex">Sex</label>
+              <select id="sex" required>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
+            </div>
+            <div>
+              <label for="team-id">Team</label>
+              <select id="team-id">
+                <option value="">No team assigned</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <div class="profile-grid">
+          <section id="physical-profile" class="card">
+            <h2>Physical Profile</h2>
+            <div class="fields" data-group="physical"></div>
+          </section>
+
+          <section id="technical-profile" class="card">
+            <h2>Technical Profile</h2>
+            <div class="fields" data-group="technical"></div>
+          </section>
+
+          <section id="mental-profile" class="card">
+            <h2>Mental Profile</h2>
+            <div class="fields" data-group="mental"></div>
+          </section>
+
+          <section id="match-performance" class="card">
+            <h2>Match Performance</h2>
+            <div class="fields" data-group="match"></div>
+          </section>
+        </div>
+
+        <p id="form-status" role="status"></p>
+
+        <div class="actions">
+          <a class="secondary" href="/players-dashboard">Cancel</a>
+          <button id="save-player" type="submit">Save Player</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <script>
+    const groups = {
+      physical: [
+        ["height_cm", "Height (cm)", 140],
+        ["weight_kg", "Weight (kg)", 35],
+        ["dominant_foot", "Dominant foot", "right"],
+        ["speed", "Speed", 70],
+        ["acceleration", "Acceleration", 70],
+        ["agility", "Agility", 70],
+        ["stamina", "Stamina", 70],
+        ["strength", "Strength", 70]
+      ],
+      technical: [
+        ["ball_control", "Ball control", 70],
+        ["dribbling", "Dribbling", 70],
+        ["passing", "Passing", 70],
+        ["shooting", "Shooting", 70],
+        ["finishing", "Finishing", 70]
+      ],
+      mental: [
+        ["decision_making", "Decision making", 70],
+        ["concentration", "Concentration", 70],
+        ["composure", "Composure", 70],
+        ["positioning", "Positioning", 70],
+        ["vision", "Vision", 70]
+      ],
+      match: [
+        ["minutes_played", "Minutes played", 0],
+        ["goals", "Goals", 0],
+        ["assists", "Assists", 0],
+        ["shots", "Shots", 0],
+        ["shots_on_target", "Shots on target", 0],
+        ["passes_attempted", "Passes attempted", 0],
+        ["passes_completed", "Passes completed", 0],
+        ["tackles", "Tackles", 0],
+        ["interceptions", "Interceptions", 0],
+        ["rating", "Rating", 0]
+      ]
+    };
+
+    for (const [group, fields] of Object.entries(groups)) {
+      const target = document.querySelector(`[data-group="${group}"]`);
+
+      fields.forEach(([name, label, value]) => {
+        const wrapper = document.createElement("div");
+        const labelNode = document.createElement("label");
+        const input = document.createElement("input");
+
+        labelNode.htmlFor = `${group}-${name}`;
+        labelNode.textContent = label;
+        input.id = `${group}-${name}`;
+        input.dataset.field = name;
+        input.value = value;
+        input.required = true;
+
+        if (name === "dominant_foot") {
+          input.type = "text";
+        } else {
+          input.type = "number";
+          input.min = "0";
+          input.step = ["height_cm", "weight_kg", "rating"].includes(name)
+            ? "0.1"
+            : "1";
+        }
+
+        wrapper.append(labelNode, input);
+        target.append(wrapper);
+      });
+    }
+
+    const readGroup = (group) => {
+      const values = {};
+
+      document.querySelectorAll(`[data-group="${group}"] [data-field]`)
+        .forEach((input) => {
+          values[input.dataset.field] =
+            input.type === "number" ? Number(input.value) : input.value.trim();
+        });
+
+      return values;
+    };
+
+    async function loadTeams() {
+      const select = document.querySelector("#team-id");
+
+      try {
+        const response = await fetch("/teams");
+
+        if (!response.ok) {
+          throw new Error("Could not load teams");
+        }
+
+        const teams = await response.json();
+
+        for (const team of teams) {
+          if (!team.active) continue;
+
+          const option = document.createElement("option");
+          option.value = team.team_id;
+          option.textContent =
+            `${team.name} (${team.age_group})`;
+          select.append(option);
+        }
+      } catch (error) {
+        const status = document.querySelector("#form-status");
+        status.className = "error";
+        status.textContent = error.message;
+      }
+    }
+
+    const params = new URLSearchParams(location.search);
+    const editingPlayerId = params.get("player_id");
+
+    function fillGroup(group, values) {
+      if (!values) return;
+      document.querySelectorAll(`[data-group="${group}"] [data-field]`)
+        .forEach((input) => {
+          const field = input.dataset.field;
+          if (values[field] !== undefined && values[field] !== null) {
+            input.value = values[field];
+          }
+        });
+    }
+
+    async function loadPlayerForEdit() {
+      if (!editingPlayerId) return;
+
+      document.querySelector("#form-title").textContent = "Edit Player";
+      document.querySelector("#form-subtitle").textContent =
+        "Update this player's profile.";
+      document.querySelector("#save-player").textContent = "Save Changes";
+
+      try {
+        const response = await fetch(
+          `/players/${encodeURIComponent(editingPlayerId)}`
+        );
+
+        if (!response.ok) {
+          throw new Error("Could not load this player's data.");
+        }
+
+        const player = await response.json();
+
+        document.querySelector("#first-name-en").value = player.first_name_en || "";
+        document.querySelector("#last-name-en").value = player.last_name_en || "";
+        document.querySelector("#first-name-ar").value = player.first_name_ar || "";
+        document.querySelector("#last-name-ar").value = player.last_name_ar || "";
+        document.querySelector("#date-of-birth").value = player.date_of_birth || "";
+        document.querySelector("#sex").value = player.sex || "male";
+
+        fillGroup("physical", player.physical_profile);
+        fillGroup("technical", player.technical_profile);
+        fillGroup("mental", player.mental_profile);
+        fillGroup("match", player.match_performance);
+
+        if (player.team_id) {
+          document.querySelector("#team-id").value = player.team_id;
+        }
+      } catch (error) {
+        const status = document.querySelector("#form-status");
+        status.className = "error";
+        status.textContent = error.message;
+      }
+    }
+
+    loadTeams().then(loadPlayerForEdit);
+
+    document.querySelector("#player-form").addEventListener(
+      "submit",
+      async (event) => {
+        event.preventDefault();
+
+        const status = document.querySelector("#form-status");
+        const button = document.querySelector("#save-player");
+        status.className = "";
+        status.textContent = "Saving player...";
+        button.disabled = true;
+
+        const payload = {
+          first_name_ar: document.querySelector("#first-name-ar").value.trim(),
+          last_name_ar: document.querySelector("#last-name-ar").value.trim(),
+          first_name_en: document.querySelector("#first-name-en").value.trim(),
+          last_name_en: document.querySelector("#last-name-en").value.trim(),
+          date_of_birth: document.querySelector("#date-of-birth").value,
+          sex: document.querySelector("#sex").value,
+          team_id:
+            document.querySelector("#team-id").value || null,
+          physical_profile: readGroup("physical"),
+          technical_profile: readGroup("technical"),
+          mental_profile: readGroup("mental"),
+          match_performance: readGroup("match")
+        };
+
+        try {
+          const response = await fetch(
+            editingPlayerId ? `/players/${encodeURIComponent(editingPlayerId)}` : "/players",
+            {
+              method: editingPlayerId ? "PUT" : "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload)
+            }
+          );
+
+          if (!response.ok) {
+            const result = await response.json();
+            throw new Error(result.detail || "Could not save player.");
+          }
+
+          const savedPlayer = await response.json();
+          status.className = "success";
+          status.textContent = editingPlayerId
+            ? "Player updated successfully."
+            : "Player saved successfully.";
+          location.href =
+            `/player-details?player_id=${encodeURIComponent(savedPlayer.player_id || editingPlayerId)}`;
+        } catch (error) {
+          status.className = "error";
+          status.textContent = error.message;
+          button.disabled = false;
+        }
+      }
+    );
+  </script>
+</body>
+</html>

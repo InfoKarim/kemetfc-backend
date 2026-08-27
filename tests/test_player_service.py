@@ -1,0 +1,343 @@
+from datetime import date
+
+from app.player import Player
+from app.physical_profile import PhysicalProfile
+from app.technical_profile import TechnicalProfile
+from app.mental_profile import MentalProfile
+from app.match_performance import MatchPerformance
+from app.services.player_service import PlayerService
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.database import Base
+
+TEST_DATABASE_URL = "sqlite:///:memory:"
+
+engine = create_engine(
+    TEST_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+)
+
+TestingSessionLocal = sessionmaker(
+    bind=engine,
+    autoflush=False,
+    autocommit=False,
+)
+
+Base.metadata.create_all(bind=engine)
+
+def make_service():
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    db = TestingSessionLocal()
+    return PlayerService(db=db)
+
+def make_service():
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    db = TestingSessionLocal()
+    return PlayerService(db=db)
+
+def make_service():
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    db = TestingSessionLocal()
+    return PlayerService(db=db)
+
+def test_add_and_get_player():
+    service = make_service()
+
+    player = Player(
+        player_id="P001",
+        first_name_ar="محمد",
+        last_name_ar="صلاح",
+        first_name_en="Mohamed",
+        last_name_en="Salah",
+        date_of_birth=date(1992, 6, 15),
+        sex="male",
+        physical_profile=PhysicalProfile(
+            height_cm=175.0,
+            weight_kg=71.0,
+            dominant_foot="left",
+            speed=90.0,
+            acceleration=89.0,
+            agility=88.0,
+            stamina=85.0,
+            strength=70.0,
+        ),
+        technical_profile=TechnicalProfile(
+            ball_control=90.0,
+            dribbling=89.0,
+            passing=82.0,
+            shooting=88.0,
+            finishing=91.0,
+        ),
+        mental_profile=MentalProfile(
+            decision_making=88.0,
+            concentration=87.0,
+            composure=90.0,
+            positioning=92.0,
+            vision=84.0,
+        ),
+        match_performance=MatchPerformance(
+            minutes_played=90,
+            goals=1,
+            assists=0,
+            shots=4,
+            shots_on_target=2,
+            passes_attempted=40,
+            passes_completed=34,
+            tackles=1,
+            interceptions=0,
+            rating=8.5,
+        ),
+    )
+
+    service.add_player(player)
+
+    result = service.get_player("P001")
+
+    assert result == player
+
+def test_get_unknown_player_returns_none():
+    service = make_service()
+
+    result = service.get_player("UNKNOWN")
+
+    assert result is None
+
+def test_get_all_players():
+    service = make_service()
+
+    player = Player(
+        player_id="P001",
+        first_name_ar="محمد",
+        last_name_ar="صلاح",
+        first_name_en="Mohamed",
+        last_name_en="Salah",
+        date_of_birth=date(1992, 6, 15),
+        sex="male",
+        physical_profile=PhysicalProfile(
+            height_cm=175.0,
+            weight_kg=71.0,
+            dominant_foot="left",
+            speed=90.0,
+            acceleration=89.0,
+            agility=88.0,
+            stamina=85.0,
+            strength=70.0,
+        ),
+        technical_profile=TechnicalProfile(
+            ball_control=90.0,
+            dribbling=89.0,
+            passing=82.0,
+            shooting=88.0,
+            finishing=91.0,
+        ),
+        mental_profile=MentalProfile(
+            decision_making=88.0,
+            concentration=87.0,
+            composure=90.0,
+            positioning=92.0,
+            vision=84.0,
+        ),
+        match_performance=MatchPerformance(
+            minutes_played=90,
+            goals=1,
+            assists=0,
+            shots=4,
+            shots_on_target=2,
+            passes_attempted=40,
+            passes_completed=34,
+            tackles=1,
+            interceptions=0,
+            rating=8.5,
+        ),
+    )
+
+    service.add_player(player)
+
+    results = service.get_all_players()
+
+    assert len(results) == 1
+    assert results[0] == player
+
+def test_delete_player():
+    service = make_service()
+
+    player = Player(
+        player_id="P001",
+        first_name_ar="محمد",
+        last_name_ar="صلاح",
+        first_name_en="Mohamed",
+        last_name_en="Salah",
+        date_of_birth=date(1992, 6, 15),
+        sex="male",
+        physical_profile=PhysicalProfile(
+            height_cm=175.0,
+            weight_kg=71.0,
+            dominant_foot="left",
+            speed=90.0,
+            acceleration=89.0,
+            agility=88.0,
+            stamina=85.0,
+            strength=70.0,
+        ),
+        technical_profile=TechnicalProfile(
+            ball_control=90.0,
+            dribbling=89.0,
+            passing=82.0,
+            shooting=88.0,
+            finishing=91.0,
+        ),
+        mental_profile=MentalProfile(
+            decision_making=88.0,
+            concentration=87.0,
+            composure=90.0,
+            positioning=92.0,
+            vision=84.0,
+        ),
+        match_performance=MatchPerformance(
+            minutes_played=90,
+            goals=1,
+            assists=0,
+            shots=4,
+            shots_on_target=2,
+            passes_attempted=40,
+            passes_completed=34,
+            tackles=1,
+            interceptions=0,
+            rating=8.5,
+        ),
+    )
+
+    service.add_player(player)
+
+    deleted = service.delete_player("P001")
+
+    assert deleted is True
+    assert service.get_player("P001") is None
+
+def test_delete_unknown_player_returns_false():
+    service = make_service()
+
+    deleted = service.delete_player("UNKNOWN")
+
+    assert deleted is False
+
+def test_update_player():
+    service = make_service()
+
+    player = Player(
+        player_id="P001",
+        first_name_ar="محمد",
+        last_name_ar="صلاح",
+        first_name_en="Mohamed",
+        last_name_en="Salah",
+        date_of_birth=date(1992, 6, 15),
+        sex="male",
+        physical_profile=PhysicalProfile(
+            height_cm=175.0,
+            weight_kg=71.0,
+            dominant_foot="left",
+            speed=90.0,
+            acceleration=89.0,
+            agility=88.0,
+            stamina=85.0,
+            strength=70.0,
+        ),
+        technical_profile=TechnicalProfile(
+            ball_control=90.0,
+            dribbling=89.0,
+            passing=82.0,
+            shooting=88.0,
+            finishing=91.0,
+        ),
+        mental_profile=MentalProfile(
+            decision_making=88.0,
+            concentration=87.0,
+            composure=90.0,
+            positioning=92.0,
+            vision=84.0,
+        ),
+        match_performance=MatchPerformance(
+            minutes_played=90,
+            goals=1,
+            assists=0,
+            shots=4,
+            shots_on_target=2,
+            passes_attempted=40,
+            passes_completed=34,
+            tackles=1,
+            interceptions=0,
+            rating=8.5,
+        ),
+    )
+
+    service.add_player(player)
+
+    player.first_name_en = "Mo"
+
+    updated = service.update_player(player)
+
+    assert updated is True
+    assert service.get_player("P001").first_name_en == "Mo"
+
+def test_update_unknown_player_returns_false():
+    service = make_service()
+
+    player = Player(
+        player_id="UNKNOWN",
+        first_name_ar="محمد",
+        last_name_ar="صلاح",
+        first_name_en="Mohamed",
+        last_name_en="Salah",
+        date_of_birth=date(1992, 6, 15),
+        sex="male",
+        physical_profile=PhysicalProfile(
+            height_cm=175.0,
+            weight_kg=71.0,
+            dominant_foot="left",
+            speed=90.0,
+            acceleration=89.0,
+            agility=88.0,
+            stamina=85.0,
+            strength=70.0,
+        ),
+        technical_profile=TechnicalProfile(
+            ball_control=90.0,
+            dribbling=89.0,
+            passing=82.0,
+            shooting=88.0,
+            finishing=91.0,
+        ),
+        mental_profile=MentalProfile(
+            decision_making=88.0,
+            concentration=87.0,
+            composure=90.0,
+            positioning=92.0,
+            vision=84.0,
+        ),
+        match_performance=MatchPerformance(
+            minutes_played=90,
+            goals=1,
+            assists=0,
+            shots=4,
+            shots_on_target=2,
+            passes_attempted=40,
+            passes_completed=34,
+            tackles=1,
+            interceptions=0,
+            rating=8.5,
+        ),
+    )
+
+    updated = service.update_player(player)
+
+    assert updated is False
+    assert service.get_player("UNKNOWN") is None
+
+

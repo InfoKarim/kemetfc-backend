@@ -1,0 +1,4 @@
+image_path,label_path,match_id,club_id,camera_id,age_band,sex,lighting,consent_id,split
+images/train/match_001_000120.jpg,labels/train/match_001_000120.txt,MATCH_001,CLUB_001,PHONE_GIMBAL_01,U13,mixed,day,CONSENT_001,train
+images/val/match_002_000090.jpg,labels/val/match_002_000090.txt,MATCH_002,CLUB_001,PHONE_GIMBAL_01,U13,mixed,night,CONSENT_002,val
+images/test/match_003_000075.jpg,labels/test/match_003_000075.txt,MATCH_003,CLUB_002,PHONE_GIMBAL_02,U15,male,day,CONSENT_003,test

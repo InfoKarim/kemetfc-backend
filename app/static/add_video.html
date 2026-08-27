@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Add Player Video | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; color: #142039; background: #f5f7fb; }
+    .layout { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
+    aside { padding: 26px 16px; color: white; background: #071b35; }
+    .brand { margin: 0 10px 30px; color: #ffd36b; font-size: 22px; font-weight: 800; }
+    nav { display: grid; gap: 8px; }
+    nav a { padding: 12px 14px; border-radius: 9px; color: #dbe7f7; text-decoration: none; }
+    nav a:hover, nav a.active { color: white; background: #1265ed; }
+    main { padding: 30px; }
+    h1, h2, p { margin-top: 0; }
+    .muted { color: #69768a; }
+    .back { color: #1265ed; font-weight: 700; text-decoration: none; }
+    .card { max-width: 940px; margin-top: 22px; padding: 24px; border: 1px solid #e1e7ef; border-radius: 16px; background: white; }
+    .fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    .wide { grid-column: span 2; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 750; }
+    input, select {
+      width: 100%;
+      padding: 12px 13px;
+      border: 1px solid #d8e0eb;
+      border-radius: 9px;
+      background: white;
+      font: inherit;
+    }
+    .note { margin-top: 18px; padding: 14px; border-radius: 10px; color: #5a6575; background: #f5f8fc; }
+    .steps { display: flex; gap: 10px; margin: 22px 0; }
+    .step { flex: 1; padding: 12px; border-radius: 12px; color: #53657b; background: #eaf1ee; font-weight: 750; }
+    .step strong { color: #0a7147; }
+    .file-summary { margin-top: 8px; color: #52647a; font-size: 14px; }
+    .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+    button, .secondary {
+      padding: 12px 18px;
+      border-radius: 9px;
+      font: inherit;
+      font-weight: 750;
+      text-decoration: none;
+    }
+    button { border: 0; color: white; background: #1265ed; cursor: pointer; }
+    button:disabled { opacity: .6; }
+    .secondary { border: 1px solid #d8e0eb; color: #142039; background: white; }
+    #form-status { min-height: 24px; margin-top: 15px; font-weight: 700; }
+    .success { color: #13844b; }
+    .error { color: #b83232; }
+    @media (max-width: 760px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { display: none; }
+      main { padding: 18px; }
+      .fields { grid-template-columns: 1fr; }
+      .wide { grid-column: auto; }
+      .steps { display: grid; }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC</div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a href="/teams-dashboard">Teams</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+        <a class="active" href="/videos-dashboard">Videos</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <a class="back" href="/videos-dashboard">← Back to Videos</a>
+      <h1>Upload a Player Video</h1>
+      <p class="muted">Choose the player, choose the video, and Kemet FC will handle the technical details.</p>
+
+      <div class="steps" aria-label="Upload steps">
+        <div class="step"><strong>1.</strong> Choose player</div>
+        <div class="step"><strong>2.</strong> Choose video</div>
+        <div class="step"><strong>3.</strong> Start analysis</div>
+      </div>
+
+      <form id="video-form" class="card">
+        <h2>What do you want to analyze?</h2>
+
+        <div class="fields">
+          <div>
+            <label for="player-id">Player</label>
+            <select id="player-id" required>
+              <option value="">Loading players...</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="video-type">What kind of video is this?</label>
+            <select id="video-type">
+              <option value="training">Training</option>
+              <option value="match">Match</option>
+              <option value="assessment">Assessment</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="analysis-type">What should Kemet FC measure?</label>
+            <select id="analysis-type">
+              <option value="pose_estimation">Pose measurements</option>
+              <option value="squat_jump">Squat jump</option>
+              <option value="agility_ladder">Agility ladder</option>
+              <option value="full_match">Full match tracking</option>
+              <option value="">Do not analyze now</option>
+            </select>
+          </div>
+
+          <div class="wide">
+            <label for="video-file">Choose video(s) from this device</label>
+            <input
+              id="video-file"
+              type="file"
+              accept=".mp4,.mov,.avi,.mkv,.webm,.m4v,video/*"
+              multiple
+              required
+            >
+            <p id="file-summary" class="file-summary">No video selected yet.</p>
+          </div>
+        </div>
+
+        <div class="note">
+          After upload, you can leave this page. The Videos page will show
+          analysis progress and tell you when each result is ready. When you
+          choose several videos, they upload one after another and all use
+          the player and settings selected above.
+        </div>
+
+        <p id="form-status" role="status"></p>
+
+        <div class="actions">
+          <a class="secondary" href="/videos-dashboard">Cancel</a>
+          <button id="save-video" type="submit">Upload and start analysis</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <script>
+    const form = document.querySelector("#video-form");
+    const status = document.querySelector("#form-status");
+    const button = document.querySelector("#save-video");
+    const videoFile = document.querySelector("#video-file");
+    const fileSummary = document.querySelector("#file-summary");
+    let currentUser = null;
+
+    function readVideoMetadata(file) {
+      return new Promise((resolve) => {
+        const preview = document.createElement("video");
+        const objectUrl = URL.createObjectURL(file);
+        preview.preload = "metadata";
+        preview.onloadedmetadata = () => {
+          const duration = Number.isFinite(preview.duration)
+            ? Math.max(preview.duration, 0.1)
+            : 1;
+          const resolution = preview.videoWidth && preview.videoHeight
+            ? `${preview.videoWidth}x${preview.videoHeight}`
+            : "unknown";
+          URL.revokeObjectURL(objectUrl);
+          resolve({ duration, resolution });
+        };
+        preview.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve({ duration: 1, resolution: "unknown" });
+        };
+        preview.src = objectUrl;
+      });
+    }
+
+    videoFile.addEventListener("change", () => {
+      const selected = Array.from(videoFile.files);
+      if (!selected.length) {
+        fileSummary.textContent = "No video selected yet.";
+        return;
+      }
+
+      const totalMb = selected.reduce((sum, file) => sum + file.size, 0) / 1024 / 1024;
+      fileSummary.textContent = selected.length === 1
+        ? `${selected[0].name} · ${(selected[0].size / 1024 / 1024).toFixed(1)} MB`
+        : `${selected.length} videos selected · ${totalMb.toFixed(1)} MB total`;
+    });
+
+    async function loadPlayers() {
+      const select = document.querySelector("#player-id");
+
+      try {
+        const meResponse = await fetch("/auth/me");
+        if (!meResponse.ok) throw new Error();
+        const me = await meResponse.json();
+        currentUser = me.user;
+
+        const response = await fetch(
+          currentUser.role === "guardian"
+            ? "/guardian/children"
+            : "/players"
+        );
+        if (!response.ok) throw new Error();
+
+        const players = await response.json();
+        select.replaceChildren(new Option(
+          currentUser.role === "guardian"
+            ? "Select your child"
+            : "Select player",
+          ""
+        ));
+
+        players.forEach((player) => {
+          select.append(new Option(
+            player.name || `${player.first_name_en} ${player.last_name_en}`,
+            player.player_id
+          ));
+        });
+
+        if (!players.length && currentUser.role === "guardian") {
+          select.replaceChildren(new Option(
+            "Ask the administrator to link your child",
+            ""
+          ));
+          button.disabled = true;
+          status.className = "error";
+          status.textContent = "Your account is not linked to a child yet.";
+        }
+      } catch {
+        select.replaceChildren(new Option("Could not load players", ""));
+      }
+    }
+
+    async function uploadOneVideo(file, index) {
+      const { duration, resolution } = await readVideoMetadata(file);
+
+      const metadata = {
+        player_id: document.querySelector("#player-id").value,
+        video_type: document.querySelector("#video-type").value,
+        duration_seconds: duration,
+        session_id: `SESSION_${Date.now()}_${index}`,
+        location_id: "unspecified",
+        capture_device: "Phone or camera upload",
+        resolution: resolution,
+        frame_rate_fps: 30,
+        schema_version: "1.0",
+        created_by: "coach"
+      };
+
+      const upload = new FormData();
+      upload.append("metadata", JSON.stringify(metadata));
+      upload.append("video", file);
+
+      const response = await fetch("/videos/upload", {
+        method: "POST",
+        body: upload
+      });
+
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.detail || "Could not save video.");
+      }
+
+      const savedVideo = await response.json();
+      const analysisType = document.querySelector("#analysis-type").value;
+
+      if (analysisType) {
+        const jobResponse = await fetch(
+          `/videos/${encodeURIComponent(savedVideo.video_id)}/analysis-jobs`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              analysis_type: analysisType,
+              max_attempts: 3
+            })
+          }
+        );
+
+        if (!jobResponse.ok) {
+          const result = await jobResponse.json();
+          throw new Error(
+            result.detail || "Video saved, but analysis could not be queued."
+          );
+        }
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      status.className = "";
+      button.disabled = true;
+
+      const selectedFiles = Array.from(document.querySelector("#video-file").files);
+
+      if (!selectedFiles.length) {
+        status.className = "error";
+        status.textContent = "Choose a video file.";
+        button.disabled = false;
+        return;
+      }
+
+      const failures = [];
+
+      for (let index = 0; index < selectedFiles.length; index += 1) {
+        const file = selectedFiles[index];
+        status.textContent = selectedFiles.length > 1
+          ? `Uploading video ${index + 1} of ${selectedFiles.length}: ${file.name}...`
+          : `Uploading ${file.name}. Keep this page open...`;
+
+        try {
+          await uploadOneVideo(file, index);
+        } catch (error) {
+          failures.push(`${file.name}: ${error.message}`);
+        }
+      }
+
+      const uploadedCount = selectedFiles.length - failures.length;
+
+      if (!failures.length) {
+        status.className = "success";
+        status.textContent = selectedFiles.length > 1
+          ? `${uploadedCount} videos saved and analysis queued successfully.`
+          : "Video saved and analysis queued successfully.";
+      } else {
+        status.className = "error";
+        status.textContent = uploadedCount
+          ? `${uploadedCount} of ${selectedFiles.length} videos saved. Failed: ${failures.join("; ")}`
+          : `No videos saved. Failed: ${failures.join("; ")}`;
+      }
+
+      if (currentUser?.role === "guardian") {
+        form.reset();
+        fileSummary.textContent = "No video selected yet.";
+        button.disabled = false;
+      } else if (uploadedCount) {
+        location.href = "/videos-dashboard";
+      } else {
+        button.disabled = false;
+      }
+    });
+
+    loadPlayers();
+  </script>
+</body>
+</html>

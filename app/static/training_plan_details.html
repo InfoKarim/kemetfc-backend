@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Training Plan Details | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --navy: #061a33;
+      --blue: #0866f5;
+      --green: #17a957;
+      --line: #dfe6ef;
+      --muted: #66758b;
+      --page: #f4f7fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: #10213b;
+      background: var(--page);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+
+    .layout {
+      display: grid;
+      min-height: 100vh;
+      grid-template-columns: 240px 1fr;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 16px;
+      color: white;
+      background: linear-gradient(180deg, #071d39, #031226);
+    }
+
+    .brand {
+      margin: 0 10px 34px;
+      color: #f5c45d;
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 3px;
+      color: #8ca1bb;
+      font-size: 11px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    nav { display: grid; gap: 7px; }
+
+    nav a {
+      padding: 12px 14px;
+      border-radius: 9px;
+      color: #dce7f5;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    nav a:hover,
+    nav a.active {
+      color: white;
+      background: var(--blue);
+    }
+
+    main {
+      min-width: 0;
+      padding: 28px 32px 56px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: -.035em;
+    }
+
+    header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+    }
+
+    .back {
+      color: var(--blue);
+      text-decoration: none;
+      font-weight: 750;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: 1fr 190px;
+      gap: 20px;
+      margin-bottom: 20px;
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: white;
+    }
+
+    .summary h2 { margin: 0 0 7px; }
+
+    .subtitle {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .meta span {
+      padding: 7px 10px;
+      border-radius: 8px;
+      color: #405269;
+      background: #eef3f8;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 7px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    select {
+      width: 100%;
+      padding: 11px;
+      border: 1px solid #d7e0eb;
+      border-radius: 9px;
+      background: white;
+      font: inherit;
+    }
+
+    #recommendations {
+      display: grid;
+      gap: 18px;
+    }
+
+    .weakness {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: white;
+    }
+
+    .weakness-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 15px;
+    }
+
+    .weakness h3 { margin: 0; }
+
+    .score {
+      padding: 7px 10px;
+      border-radius: 8px;
+      color: #a04b00;
+      background: #fff0da;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .drills {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .drill {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfcfe;
+    }
+
+    .media {
+      display: grid;
+      aspect-ratio: 16 / 9;
+      place-items: center;
+      background: var(--navy);
+    }
+
+    .media video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .media a {
+      padding: 10px 14px;
+      border-radius: 8px;
+      color: white;
+      background: var(--blue);
+      text-decoration: none;
+      font-weight: 750;
+    }
+
+    .drill-content { padding: 14px; }
+
+    .drill h4 { margin: 0 0 7px; }
+
+    .drill p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .state {
+      padding: 55px 20px;
+      border: 1px dashed #cbd7e4;
+      border-radius: 14px;
+      color: var(--muted);
+      background: white;
+      text-align: center;
+    }
+
+    #page-message {
+      min-height: 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 800px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; }
+      .summary { grid-template-columns: 1fr; }
+      main { padding: 22px 16px 40px; }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">
+        Kemet FC
+        <small>Academy Development</small>
+      </div>
+
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a href="/teams-dashboard">Teams</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a class="active" href="/training-plans-dashboard">
+          Training Plans
+        </a>
+        <a href="/drill-library">Drill Library</a>
+        <a href="/videos-dashboard">Videos</a>
+        <a href="/matches-dashboard">Matches</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <div>
+          <h1>Training Plan Details</h1>
+          <p>Player weaknesses and recommended development drills.</p>
+        </div>
+        <a class="back" href="/training-plans-dashboard">
+          ← All training plans
+        </a>
+      </header>
+
+      <p id="page-message" role="status"></p>
+
+      <section id="plan-details">
+        <div class="state">Loading training plan...</div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const details = document.querySelector("#plan-details");
+    const message = document.querySelector("#page-message");
+    const planId = new URLSearchParams(location.search).get("plan_id");
+
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function makeStatusSelect(plan) {
+      const select = document.createElement("select");
+
+      for (const value of [
+        "draft",
+        "active",
+        "completed",
+        "cancelled",
+      ]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent =
+          value.charAt(0).toUpperCase() + value.slice(1);
+        option.selected = plan.status === value;
+        select.append(option);
+      }
+
+      select.addEventListener("change", async () => {
+        message.textContent = "Updating plan status...";
+
+        try {
+          const response = await fetch(
+            `/training-plans/${encodeURIComponent(plan.plan_id)}/status`,
+            {
+              method: "PATCH",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({status: select.value}),
+            }
+          );
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.detail || "Could not update status.");
+          }
+
+          plan.status = data.status;
+          message.textContent =
+            `Plan updated to ${data.status}.`;
+        } catch (error) {
+          message.textContent = error.message;
+          select.value = plan.status;
+        }
+      });
+
+      return select;
+    }
+
+    function makeDrill(drill) {
+      const card = make("article", "drill");
+      const media = make("div", "media");
+
+      if (drill.video_url?.startsWith("/uploads/drills/")) {
+        const video = document.createElement("video");
+        video.src = drill.video_url;
+        video.controls = true;
+        video.preload = "metadata";
+        media.append(video);
+      } else if (drill.video_url) {
+        const link = make("a", "", "Watch drill ↗");
+        link.href = drill.video_url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        media.append(link);
+      } else {
+        media.append(make("span", "", "No video"));
+      }
+
+      const content = make("div", "drill-content");
+      content.append(make(
+        "h4",
+        "",
+        drill.name || drill.drill_id
+      ));
+      content.append(make(
+        "p",
+        "",
+        [
+          drill.category,
+          drill.difficulty,
+          drill.duration_minutes
+            ? `${drill.duration_minutes} min`
+            : null,
+        ].filter(Boolean).join(" • ")
+      ));
+
+      card.append(media, content);
+      return card;
+    }
+
+    function render(plan) {
+      details.replaceChildren();
+
+      const summary = make("section", "summary");
+      const summaryContent = make("div");
+      summaryContent.append(make("h2", "", plan.plan_id));
+      summaryContent.append(make(
+        "p",
+        "subtitle",
+        `Player ${plan.player_id} • Analysis ${plan.analysis_id}`
+      ));
+
+      const meta = make("div", "meta");
+      meta.append(make("span", "", plan.player_difficulty));
+      meta.append(make(
+        "span",
+        "",
+        `${plan.target_duration} minutes`
+      ));
+      meta.append(make(
+        "span",
+        "",
+        plan.available_equipment.length
+          ? plan.available_equipment.join(", ")
+          : "Any equipment"
+      ));
+      summaryContent.append(meta);
+
+      const statusControl = make("div");
+      statusControl.append(make("label", "", "Plan status"));
+      statusControl.append(makeStatusSelect(plan));
+      summary.append(summaryContent, statusControl);
+      details.append(summary);
+
+      const recommendations = make("section");
+      recommendations.id = "recommendations";
+
+      if (!plan.recommendations.length) {
+        recommendations.append(
+          make("div", "state", "No recommendations in this plan.")
+        );
+      }
+
+      for (const item of plan.recommendations) {
+        const group = make("article", "weakness");
+        const groupHeader = make("div", "weakness-header");
+        groupHeader.append(make("h3", "", item.weakness));
+        groupHeader.append(make(
+          "span",
+          "score",
+          `Score ${item.weakness_score}`
+        ));
+        group.append(groupHeader);
+
+        const drills = make("div", "drills");
+
+        if (!item.drills.length) {
+          drills.append(
+            make("div", "state", "No suitable drills found.")
+          );
+        } else {
+          for (const drill of item.drills) {
+            drills.append(makeDrill(drill));
+          }
+        }
+
+        group.append(drills);
+        recommendations.append(group);
+      }
+
+      details.append(recommendations);
+    }
+
+    async function loadPlan() {
+      if (!planId) {
+        details.replaceChildren(
+          make(
+            "div",
+            "state",
+            "Choose a training plan from the Training Plans page."
+          )
+        );
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `/training-plans/${encodeURIComponent(planId)}`
+        );
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || "Could not load plan.");
+        }
+
+        render(data);
+      } catch (error) {
+        message.textContent = error.message;
+        details.replaceChildren(
+          make("div", "state", "Training plan is unavailable.")
+        );
+      }
+    }
+
+    loadPlan();
+  </script>
+</body>
+</html>

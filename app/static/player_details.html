@@ -1,0 +1,623 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Player Profile | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --navy: #071b35;
+      --blue: #1265ed;
+      --green: #1eaa62;
+      --muted: #68758a;
+      --line: #e1e7ef;
+      --surface: #f5f7fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: #142039;
+      background: var(--surface);
+      font-family: Inter, system-ui, sans-serif;
+    }
+
+    .layout { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
+
+    aside {
+      padding: 26px 16px;
+      color: white;
+      background: var(--navy);
+    }
+
+    .brand {
+      margin: 0 10px 30px;
+      color: #ffd36b;
+      font-size: 22px;
+      font-weight: 800;
+    }
+
+    nav { display: grid; gap: 8px; }
+
+    nav a {
+      padding: 12px 14px;
+      border-radius: 9px;
+      color: #dbe7f7;
+      text-decoration: none;
+    }
+
+    nav a:hover, nav a.active { color: white; background: var(--blue); }
+
+    main { padding: 30px; }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+    }
+
+    .back { color: var(--blue); text-decoration: none; font-weight: 700; }
+    .snapshot-link {
+      padding: 11px 16px;
+      border-radius: 10px;
+      color: #092035;
+      background: #82d629;
+      font-weight: 800;
+      text-decoration: none;
+    }
+    .topbar-actions { display: flex; align-items: center; gap: 10px; }
+    .delete-player {
+      padding: 10px 16px;
+      border: 1px solid #f3c9c9;
+      border-radius: 10px;
+      color: #b83232;
+      background: #fff5f5;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .delete-player:hover { background: #ffe9e9; }
+    .delete-player:disabled { opacity: .6; cursor: wait; }
+    h1, h2, h3, p { margin-top: 0; }
+
+    .profile {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 20px;
+    }
+
+    .card {
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: white;
+      box-shadow: 0 6px 18px #1620330a;
+    }
+
+    .identity { text-align: center; }
+
+    .avatar-btn {
+      position: relative;
+      display: block;
+      width: 100px;
+      height: 100px;
+      margin: 8px auto 6px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      background: none;
+      cursor: pointer;
+    }
+    .avatar {
+      display: grid;
+      width: 100px;
+      height: 100px;
+      place-items: center;
+      border-radius: 50%;
+      overflow: hidden;
+      color: white;
+      background: linear-gradient(145deg, #1265ed, #0b2f67);
+      font-size: 34px;
+      font-weight: 800;
+    }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .avatar-btn::after {
+      content: "✎"; position: absolute; right: 2px; bottom: 2px;
+      display: grid; width: 26px; height: 26px; place-items: center;
+      border-radius: 50%; border: 2px solid white; background: #1265ed; color: white; font-size: 13px;
+    }
+    #player-photo-remove {
+      display: block; margin: 0 auto 18px; padding: 0; border: 0; background: none;
+      color: #8a97a8; font-size: 12px; font-weight: 700; text-decoration: underline; cursor: pointer;
+    }
+    #player-photo-status { min-height: 16px; margin: -4px 0 8px; font-size: 12px; color: #8a97a8; }
+
+    .muted { color: var(--muted); }
+
+    .facts {
+      display: grid;
+      gap: 12px;
+      margin-top: 24px;
+      text-align: left;
+    }
+
+    .fact {
+      display: flex;
+      justify-content: space-between;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .scores {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+    }
+
+    .score {
+      padding: 18px;
+      border-radius: 13px;
+      background: #f7f9fc;
+    }
+
+    .score strong {
+      display: block;
+      margin-top: 8px;
+      color: var(--blue);
+      font-size: 28px;
+    }
+
+    .section { margin-top: 20px; }
+
+    .list { display: grid; gap: 12px; }
+
+    .item {
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fafbfd;
+    }
+
+    .item-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .badge {
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: #087441;
+      background: #daf4e5;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: capitalize;
+    }
+
+    .empty, .error {
+      padding: 28px;
+      color: var(--muted);
+      text-align: center;
+      border-radius: 12px;
+      background: #f8fafc;
+    }
+
+    .error { color: #a12c2c; background: #fff0f0; }
+
+    .mobile-nav { display: none; }
+    @media (max-width: 850px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { display: none; }
+      main { padding: 18px 18px 94px; }
+      .profile { grid-template-columns: 1fr; }
+      .scores { grid-template-columns: 1fr; }
+      .mobile-nav {
+        position: fixed; z-index: 20; right: 10px; bottom: 10px; left: 10px;
+        display: grid; grid-template-columns: repeat(4, 1fr); padding: 8px;
+        border: 1px solid rgba(255, 255, 255, .10); border-radius: 18px;
+        background: rgba(7, 26, 43, .96); box-shadow: 0 18px 42px rgba(0, 0, 0, .24);
+        backdrop-filter: blur(16px);
+      }
+      .mobile-nav a {
+        padding: 9px 4px; border-radius: 11px; color: #b7c4cf; text-align: center;
+        text-decoration: none; font-size: 11px; font-weight: 800;
+      }
+      .mobile-nav a.active { color: #b7f15a; background: rgba(124, 219, 32, .10); }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC</div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a class="active" href="/players-dashboard">Players</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+        <a href="/videos-dashboard">Videos</a>
+        <a href="/matches-dashboard">Matches</a>
+        <a href="/reports-dashboard">Reports</a>
+        <a href="/calendar-dashboard">Calendar</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <div class="topbar">
+        <div>
+          <a class="back" href="/players-dashboard">← Back to Players</a>
+          <h1>Player Profile</h1>
+          <p class="muted">Development, assessments, and training overview.</p>
+        </div>
+        <div class="topbar-actions">
+          <a id="development-snapshot-link" class="snapshot-link" href="/development-snapshot">
+            Development Snapshot
+          </a>
+          <a id="edit-player-link" class="snapshot-link" href="#" style="background:#e7ecf2;color:#16233B;">
+            Edit Player
+          </a>
+          <button id="delete-player-btn" type="button" class="delete-player">
+            Delete Player
+          </button>
+        </div>
+      </div>
+
+      <div id="player-profile" class="profile">
+        <section class="card identity">
+          <button type="button" class="avatar-btn" id="player-photo-btn" title="Change player photo">
+            <div class="avatar" id="player-initials">--</div>
+          </button>
+          <input type="file" id="player-photo-input" accept="image/png,image/jpeg,image/webp" hidden>
+          <button type="button" id="player-photo-remove" hidden>Remove photo</button>
+          <p id="player-photo-status"></p>
+          <h2 id="player-name">Loading...</h2>
+          <p id="player-id" class="muted"></p>
+          <div id="player-facts" class="facts"></div>
+        </section>
+
+        <div>
+          <section class="card">
+            <h2>Development overview</h2>
+            <div id="player-scores" class="scores"></div>
+          </section>
+
+          <section class="card section">
+            <h2>Recent Assessments</h2>
+            <div id="player-assessments" class="list">
+              <div class="empty">Loading assessments...</div>
+            </div>
+          </section>
+
+          <section class="card section">
+            <h2>Training Plans</h2>
+            <div id="player-training-plans" class="list">
+              <div class="empty">Loading training plans...</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <nav class="mobile-nav" aria-label="Mobile navigation">
+    <a href="/dashboard">Home</a>
+    <a class="active" href="/players-dashboard">Players</a>
+    <a href="/drill-library">Train</a>
+    <a href="/reports-dashboard">Reports</a>
+  </nav>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const playerId = params.get("player_id");
+
+    if (playerId) {
+      document.querySelector("#development-snapshot-link").href =
+        `/development-snapshot?player_id=${encodeURIComponent(playerId)}`;
+      document.querySelector("#edit-player-link").href =
+        `/add-player?player_id=${encodeURIComponent(playerId)}`;
+    }
+
+    const average = (values) => {
+      const numbers = Object.values(values || {})
+        .filter((value) => typeof value === "number");
+      if (!numbers.length) return 0;
+      return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
+    };
+
+    const ageFromDate = (birthDate) => {
+      const birth = new Date(`${birthDate}T00:00:00`);
+      const today = new Date();
+      let age = today.getFullYear() - birth.getFullYear();
+
+      if (
+        today.getMonth() < birth.getMonth() ||
+        (
+          today.getMonth() === birth.getMonth() &&
+          today.getDate() < birth.getDate()
+        )
+      ) age -= 1;
+
+      return age;
+    };
+
+    const make = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+
+    function renderPlayerPhoto(player) {
+      const avatar = document.querySelector("#player-initials");
+      const removeBtn = document.querySelector("#player-photo-remove");
+
+      if (player.photo_filename) {
+        avatar.replaceChildren();
+        const img = document.createElement("img");
+        img.src = `/uploads/avatars/${player.photo_filename}?t=${Date.now()}`;
+        img.alt = "";
+        avatar.append(img);
+        removeBtn.hidden = false;
+      } else {
+        avatar.replaceChildren();
+        avatar.textContent =
+          `${player.first_name_en[0]}${player.last_name_en[0]}`.toUpperCase();
+        removeBtn.hidden = true;
+      }
+    }
+
+    function initPlayerPhotoControls(player) {
+      const input = document.querySelector("#player-photo-input");
+      const status = document.querySelector("#player-photo-status");
+
+      document.querySelector("#player-photo-btn").addEventListener("click", () => {
+        input.click();
+      });
+
+      input.addEventListener("change", async () => {
+        const file = input.files[0];
+        if (!file) return;
+
+        status.textContent = "Uploading...";
+
+        try {
+          const formData = new FormData();
+          formData.append("photo", file);
+          const response = await fetch(
+            `/players/${encodeURIComponent(player.player_id)}/photo`,
+            { method: "POST", body: formData }
+          );
+          const result = await response.json().catch(() => ({}));
+
+          if (!response.ok) throw new Error(result.detail || "Could not upload photo.");
+
+          player.photo_filename = result.photo_url.split("/").pop();
+          renderPlayerPhoto(player);
+          status.textContent = "";
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          input.value = "";
+        }
+      });
+
+      document.querySelector("#player-photo-remove").addEventListener("click", async () => {
+        status.textContent = "Removing...";
+        const response = await fetch(
+          `/players/${encodeURIComponent(player.player_id)}/photo`,
+          { method: "DELETE" }
+        );
+
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          status.textContent = result.detail || "Could not remove photo.";
+          return;
+        }
+
+        player.photo_filename = null;
+        renderPlayerPhoto(player);
+        status.textContent = "";
+      });
+    }
+
+    function renderPlayer(player, teamName) {
+      const name = `${player.first_name_en} ${player.last_name_en}`;
+      document.querySelector("#player-name").textContent = name;
+      document.querySelector("#player-id").textContent = player.player_id;
+      renderPlayerPhoto(player);
+      initPlayerPhotoControls(player);
+
+      const facts = document.querySelector("#player-facts");
+      facts.replaceChildren();
+
+      [
+        ["Age", ageFromDate(player.date_of_birth)],
+        ["Sex", player.sex],
+        ["Team", teamName || "No team assigned"],
+        ["Dominant foot", player.physical_profile.dominant_foot],
+        ["Height", `${player.physical_profile.height_cm} cm`],
+        ["Weight", `${player.physical_profile.weight_kg} kg`],
+      ].forEach(([label, value]) => {
+        const row = make("div", "fact");
+        row.append(make("span", "muted", label), make("strong", "", value));
+        facts.append(row);
+      });
+
+      const scores = document.querySelector("#player-scores");
+      scores.replaceChildren();
+
+      [
+        ["Technical", average(player.technical_profile)],
+        ["Physical", average(player.physical_profile)],
+        ["Mental", average(player.mental_profile)],
+      ].forEach(([label, value]) => {
+        const box = make("div", "score");
+        box.append(make("span", "muted", label));
+        box.append(make("strong", "", value.toFixed(1)));
+        scores.append(box);
+      });
+    }
+
+    function renderAssessments(assessments) {
+      const target = document.querySelector("#player-assessments");
+      target.replaceChildren();
+
+      if (!assessments.length) {
+        target.append(make("div", "empty", "No assessments available."));
+        return;
+      }
+
+      assessments.slice().reverse().slice(0, 5).forEach((analysis) => {
+        const item = make("article", "item");
+        const head = make("div", "item-head");
+        head.append(
+          make("strong", "", analysis.analysis_type),
+          make("span", "badge", analysis.processing_status)
+        );
+        item.append(head);
+        item.append(make(
+          "p",
+          "muted",
+          `Overall score: ${analysis.overall_score ?? "Pending"}`
+        ));
+        item.append(make(
+          "p",
+          "",
+          `${analysis.weaknesses?.length || 0} development areas identified`
+        ));
+        target.append(item);
+      });
+    }
+
+    function renderPlans(plans) {
+      const target = document.querySelector("#player-training-plans");
+      target.replaceChildren();
+
+      if (!plans.length) {
+        target.append(make("div", "empty", "No training plans available."));
+        return;
+      }
+
+      plans.slice().reverse().forEach((plan) => {
+        const item = make("article", "item");
+        const head = make("div", "item-head");
+        head.append(
+          make("strong", "", plan.plan_id),
+          make("span", "badge", plan.status)
+        );
+        item.append(head);
+        item.append(make(
+          "p",
+          "muted",
+          `${plan.player_difficulty} · ${plan.target_duration} minutes`
+        ));
+
+        const link = make("a", "back", "View training plan →");
+        link.href =
+          `/training-plan-details?plan_id=${encodeURIComponent(plan.plan_id)}`;
+        item.append(link);
+        target.append(item);
+      });
+    }
+
+    async function loadProfile() {
+      if (!playerId) {
+        document.querySelector("#player-profile").innerHTML =
+          '<div class="error">Player ID is required.</div>';
+        return;
+      }
+
+      try {
+        const [
+          playerResponse,
+          analysesResponse,
+          plansResponse,
+          teamsResponse,
+        ] = await Promise.all([
+          fetch(`/players/${encodeURIComponent(playerId)}`),
+          fetch(`/players/${encodeURIComponent(playerId)}/analyses`),
+          fetch("/training-plans"),
+          fetch("/teams"),
+        ]);
+
+        if (!playerResponse.ok) throw new Error("Player not found");
+
+        const player = await playerResponse.json();
+        const analyses = analysesResponse.ok
+          ? await analysesResponse.json()
+          : [];
+        const allPlans = plansResponse.ok
+          ? await plansResponse.json()
+          : [];
+        const teams = teamsResponse.ok
+          ? await teamsResponse.json()
+          : [];
+        const team = teams.find(
+          (item) => item.team_id === player.team_id
+        );
+
+        renderPlayer(player, team?.name);
+        renderAssessments(analyses);
+        renderPlans(
+          allPlans.filter((plan) => plan.player_id === playerId)
+        );
+      } catch (error) {
+        document.querySelector("#player-profile").replaceChildren(
+          make("div", "error", error.message)
+        );
+      }
+    }
+
+    document.querySelector("#delete-player-btn").addEventListener(
+      "click",
+      async () => {
+        if (!playerId) return;
+
+        const confirmed = confirm(
+          `Delete player ${playerId}? This cannot be undone. ` +
+          `If this player has videos, assessments, or training plans, ` +
+          `deletion may be blocked until those are removed first.`
+        );
+        if (!confirmed) return;
+
+        const button = document.querySelector("#delete-player-btn");
+        button.disabled = true;
+        button.textContent = "Deleting...";
+
+        try {
+          const response = await fetch(
+            `/players/${encodeURIComponent(playerId)}`,
+            { method: "DELETE" }
+          );
+
+          if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(
+              result.detail ||
+              "Could not delete player. They may still have linked " +
+              "videos, assessments, or training plans."
+            );
+          }
+
+          location.href = "/players-dashboard";
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = "Delete Player";
+          alert(error.message);
+        }
+      }
+    );
+
+    loadProfile();
+  </script>
+</body>
+</html>

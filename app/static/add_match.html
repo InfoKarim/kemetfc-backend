@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Add Match | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; color: #142039; background: #f5f7fb; }
+    .layout { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
+    aside { padding: 26px 16px; color: white; background: #071b35; }
+    .brand { margin: 0 10px 30px; color: #ffd36b; font-size: 22px; font-weight: 800; }
+    nav { display: grid; gap: 8px; }
+    nav a { padding: 12px 14px; border-radius: 9px; color: #dbe7f7; text-decoration: none; }
+    nav a:hover, nav a.active { color: white; background: #1265ed; }
+    main { padding: 30px; }
+    h1, h2, p { margin-top: 0; }
+    .muted { color: #69768a; }
+    .back { color: #1265ed; font-weight: 700; text-decoration: none; }
+    .card { max-width: 900px; margin-top: 22px; padding: 24px; border: 1px solid #e1e7ef; border-radius: 16px; background: white; }
+    .fields { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 750; }
+    input, select {
+      width: 100%;
+      padding: 12px 13px;
+      border: 1px solid #d8e0eb;
+      border-radius: 9px;
+      background: white;
+      font: inherit;
+    }
+    .score-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; padding: 18px; border-radius: 12px; background: #f7f9fc; }
+    .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+    button, .secondary { padding: 12px 18px; border-radius: 9px; font: inherit; font-weight: 750; text-decoration: none; }
+    button { border: 0; color: white; background: #1265ed; cursor: pointer; }
+    button:disabled { opacity: .6; }
+    .secondary { border: 1px solid #d8e0eb; color: #142039; background: white; }
+    #form-status { min-height: 24px; margin-top: 15px; font-weight: 700; }
+    .success { color: #13844b; }
+    .error { color: #b83232; }
+    @media (max-width: 700px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { display: none; }
+      main { padding: 18px; }
+      .fields, .score-fields { grid-template-columns: 1fr; }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC</div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a href="/teams-dashboard">Teams</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+        <a href="/videos-dashboard">Videos</a>
+        <a class="active" href="/matches-dashboard">Matches</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <a class="back" href="/matches-dashboard">← Back to Matches</a>
+      <h1>Add Match</h1>
+      <p class="muted">Create a fixture or record a completed match result.</p>
+
+      <form id="match-form" class="card">
+        <h2>Match Information</h2>
+
+        <div class="fields">
+          <div>
+            <label for="competition-id">Competition ID</label>
+            <input id="competition-id" required placeholder="LEAGUE001">
+          </div>
+
+          <div>
+            <label for="season-id">Season ID</label>
+            <input id="season-id" required placeholder="2026-2027">
+          </div>
+
+          <div>
+            <label for="venue-id">Venue ID</label>
+            <input id="venue-id" placeholder="VENUE001">
+          </div>
+
+          <div>
+            <label for="home-team-id">Home team</label>
+            <select id="home-team-id" required>
+              <option value="">Select home team</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="away-team-id">Away team</label>
+            <select id="away-team-id" required>
+              <option value="">Select away team</option>
+            </select>
+          </div>
+
+          <div>
+            <label for="match-date">Match date</label>
+            <input id="match-date" type="datetime-local" required>
+          </div>
+
+          <div>
+            <label for="match-status">Status</label>
+            <select id="match-status">
+              <option value="scheduled">Scheduled</option>
+              <option value="in_progress">In progress</option>
+              <option value="completed">Completed</option>
+              <option value="postponed">Postponed</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="score-fields" class="score-fields" hidden>
+          <div>
+            <label for="home-score">Home score</label>
+            <input id="home-score" type="number" min="0" value="0">
+          </div>
+          <div>
+            <label for="away-score">Away score</label>
+            <input id="away-score" type="number" min="0" value="0">
+          </div>
+        </div>
+
+        <p id="form-status" role="status"></p>
+
+        <div class="actions">
+          <a class="secondary" href="/matches-dashboard">Cancel</a>
+          <button id="save-match" type="submit">Save Match</button>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <script>
+    const form = document.querySelector("#match-form");
+    const statusSelect = document.querySelector("#match-status");
+    const scoreFields = document.querySelector("#score-fields");
+    const statusMessage = document.querySelector("#form-status");
+    const button = document.querySelector("#save-match");
+
+    async function loadTeams() {
+      try {
+        const response = await fetch("/teams");
+        if (!response.ok) throw new Error("Could not load teams.");
+        const teams = await response.json();
+        const home = document.querySelector("#home-team-id");
+        const away = document.querySelector("#away-team-id");
+        for (const team of teams) {
+          if (!team.active) continue;
+          for (const select of [home, away]) {
+            const option = document.createElement("option");
+            option.value = team.team_id;
+            option.textContent = `${team.name} (${team.age_group})`;
+            select.append(option);
+          }
+        }
+      } catch (error) {
+        statusMessage.className = "error";
+        statusMessage.textContent = error.message;
+      }
+    }
+
+    loadTeams();
+
+    statusSelect.addEventListener("change", () => {
+      scoreFields.hidden = statusSelect.value !== "completed";
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      statusMessage.className = "";
+      statusMessage.textContent = "Saving match...";
+      button.disabled = true;
+
+      const completed = statusSelect.value === "completed";
+
+      const payload = {
+        competition_id: document.querySelector("#competition-id").value.trim(),
+        season_id: document.querySelector("#season-id").value.trim(),
+        home_team_id: document.querySelector("#home-team-id").value.trim(),
+        away_team_id: document.querySelector("#away-team-id").value.trim(),
+        match_date: new Date(
+          document.querySelector("#match-date").value
+        ).toISOString(),
+        venue_id: document.querySelector("#venue-id").value.trim() || null,
+        status: statusSelect.value,
+        home_score: completed
+          ? Number(document.querySelector("#home-score").value)
+          : null,
+        away_score: completed
+          ? Number(document.querySelector("#away-score").value)
+          : null
+      };
+
+      try {
+        const response = await fetch("/matches", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.detail || "Could not save match.");
+        }
+
+        statusMessage.className = "success";
+        statusMessage.textContent = "Match saved successfully.";
+        location.href = "/matches-dashboard";
+      } catch (error) {
+        statusMessage.className = "error";
+        statusMessage.textContent = error.message;
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

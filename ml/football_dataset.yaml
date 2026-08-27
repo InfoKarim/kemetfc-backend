@@ -1,0 +1,11 @@
+# Change path to the root containing images/ and labels/ before training.
+path: datasets/football
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: player
+  1: goalkeeper
+  2: referee
+  3: ball

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+      color: #15304d;
+      background: #f4f7fb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background:
+        radial-gradient(circle at top left, #2c7be522, transparent 38%),
+        radial-gradient(circle at bottom right, #1aa98122, transparent 35%),
+        #f4f7fb;
+    }
+    main {
+      width: min(100%, 430px);
+      padding: 34px;
+      border: 1px solid #dce5ef;
+      border-radius: 20px;
+      background: white;
+      box-shadow: 0 24px 60px #15304d18;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 28px;
+      font-size: 24px;
+      font-weight: 900;
+      letter-spacing: -0.03em;
+    }
+    .brand img { width: 80px; height: 80px; object-fit: contain; }
+    .brand span { color: #1aa981; }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    p { color: #66788a; line-height: 1.5; }
+    form { display: grid; gap: 18px; margin-top: 28px; }
+    label { display: grid; gap: 7px; font-weight: 750; font-size: 14px; }
+    input {
+      width: 100%;
+      border: 1px solid #cbd8e5;
+      border-radius: 10px;
+      padding: 12px 13px;
+      font: inherit;
+      color: #15304d;
+    }
+    input:focus {
+      outline: 3px solid #2c7be522;
+      border-color: #2c7be5;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 13px;
+      background: #15304d;
+      color: white;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.65; cursor: wait; }
+    #login-status { min-height: 22px; margin: 0; color: #b42318; }
+    .forgot-password { margin-top: 6px; text-align: right; }
+    .forgot-password a {
+      color: #2c7be5; font-weight: 700; font-size: 13px;
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><img src="/logo.png" alt=""> Kemet <span>FC</span></div>
+    <h1>Welcome back</h1>
+    <p>Sign in to access academy players, videos, and analysis results.</p>
+
+    <form id="login-form">
+      <label for="username">
+        Username
+        <input id="username" autocomplete="username" required autofocus>
+      </label>
+      <label for="password">
+        Password
+        <input id="password" type="password" autocomplete="current-password" required>
+      </label>
+      <div class="forgot-password">
+        <a href="/forgot-password" id="forgot-password-link">Forgot your password?</a>
+      </div>
+      <p id="login-status" role="status"></p>
+      <button id="login-button" type="submit">Sign in</button>
+    </form>
+  </main>
+
+  <script>
+    const form = document.querySelector("#login-form");
+    const status = document.querySelector("#login-status");
+    const button = document.querySelector("#login-button");
+    const requestedNext = new URLSearchParams(location.search).get("next");
+    const next = requestedNext && requestedNext.startsWith("/") &&
+      !requestedNext.startsWith("//") ? requestedNext : "/dashboard";
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      status.textContent = "Signing in...";
+      button.disabled = true;
+
+      try {
+        const response = await fetch("/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            username: document.querySelector("#username").value.trim(),
+            password: document.querySelector("#password").value,
+          }),
+        });
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.detail || "Could not sign in.");
+        }
+
+        const landingPages = {
+          dashboard: "/dashboard",
+          players: "/players-dashboard",
+          teams: "/teams-dashboard",
+          assessments: "/assessments-dashboard",
+          training: "/drill-library",
+          videos: "/videos-dashboard",
+          matches: "/matches-dashboard",
+          reports: "/reports-dashboard",
+          calendar: "/calendar-dashboard",
+        };
+        const enabled = result.user?.feature_permissions || [];
+        const fallback = result.user?.role === "admin"
+          ? "/dashboard"
+          : landingPages[enabled[0]] || "/dashboard";
+        location.assign(requestedNext ? next : fallback);
+      } catch (error) {
+        status.textContent = error.message;
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

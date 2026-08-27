@@ -1,0 +1,4 @@
+-r requirements.txt
+mediapipe==0.10.35
+ultralytics>=8.4,<9
+lap==0.5.13

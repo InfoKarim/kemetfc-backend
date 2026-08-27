@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3D Body Analysis | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; color: #142039; background: #f5f7fb; }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+    h1, h2, p { margin-top: 0; }
+    .muted { color: #69768a; }
+    .back { color: #1265ed; font-weight: 700; text-decoration: none; }
+    .top-links { display: flex; align-items: center; gap: 16px; margin-bottom: 4px; }
+    .state { padding: 40px; color: #69768a; text-align: center; }
+    .state button {
+      margin-top: 14px; padding: 10px 18px; border: 0; border-radius: 9px;
+      background: #1265ed; color: white; font: inherit; font-weight: 700; cursor: pointer;
+    }
+    .workspace { display: none; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 18px; }
+    .workspace.ready { display: grid; }
+    .panel {
+      padding: 16px; border: 1px solid #e1e7ef; border-radius: 15px; background: white;
+    }
+    .panel h2 { font-size: 16px; margin-bottom: 10px; }
+    .skeleton-head-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; margin-bottom: 10px;
+    }
+    .skeleton-head-row h2 { margin-bottom: 0; }
+    #reset-view {
+      padding: 7px 12px; border: 1px solid #d8e0eb !important; border-radius: 8px;
+      background: white !important; color: #1265ed !important; box-shadow: none !important;
+      font: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer;
+    }
+    #reset-view:hover { background: #f2f7ff !important; }
+    video { width: 100%; border-radius: 10px; background: black; display: block; }
+    #skeleton-canvas {
+      width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; background: #0b2036;
+      cursor: grab; display: block; touch-action: none;
+    }
+    #skeleton-canvas:active { cursor: grabbing; }
+    .hint { margin-top: 8px; font-size: 12px; color: #8a97a8; text-align: center; }
+    .angles {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px;
+    }
+    .angle-box {
+      padding: 12px 8px; border-radius: 10px; background: #f5f8fc; text-align: center;
+    }
+    .angle-box span { display: block; font-size: 11px; font-weight: 800; color: #69768a; text-transform: uppercase; letter-spacing: .03em; }
+    .angle-box strong { display: block; margin-top: 6px; font-size: 22px; color: #142039; }
+    .angle-box small { display: block; margin-top: 2px; font-size: 11px; color: #9aa5b3; }
+    @media (max-width: 850px) {
+      .workspace { grid-template-columns: 1fr; }
+      .angles { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <main>
+    <div class="top-links">
+      <a class="back" href="/dashboard">🏠 Dashboard</a>
+      <a class="back" href="/video-analysis-details" id="back-link">← Back to video analysis</a>
+    </div>
+    <h1>3D Body Analysis</h1>
+    <p id="subtitle" class="muted">Loading...</p>
+
+    <section id="state-section" class="state">Loading analysis...</section>
+
+    <section id="workspace" class="workspace">
+      <article class="panel">
+        <h2>Video</h2>
+        <video id="player" controls playsinline></video>
+      </article>
+
+      <article class="panel">
+        <div class="skeleton-head-row">
+          <h2>3D skeleton (drag to rotate)</h2>
+          <button type="button" id="reset-view">Reset to front view</button>
+        </div>
+        <canvas id="skeleton-canvas" width="640" height="480"></canvas>
+        <p class="hint">Built from MediaPipe's real-world 3D landmarks (metric, hip-centered) — drag horizontally or vertically to orbit.</p>
+        <div class="angles" id="angle-readouts"></div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const jobId = new URLSearchParams(location.search).get("job_id");
+    const stateSection = document.querySelector("#state-section");
+    const workspace = document.querySelector("#workspace");
+    const subtitle = document.querySelector("#subtitle");
+    const backLink = document.querySelector("#back-link");
+    const video = document.querySelector("#player");
+    const canvas = document.querySelector("#skeleton-canvas");
+    const ctx = canvas.getContext("2d");
+    const angleReadouts = document.querySelector("#angle-readouts");
+
+    if (jobId) backLink.href = `/video-analysis-details?job_id=${encodeURIComponent(jobId)}`;
+
+    const LANDMARK_INDEX = {
+      nose: 0, left_eye: 2, right_eye: 5,
+      left_shoulder: 11, right_shoulder: 12,
+      left_elbow: 13, right_elbow: 14,
+      left_wrist: 15, right_wrist: 16,
+      left_hip: 23, right_hip: 24,
+      left_knee: 25, right_knee: 26,
+      left_ankle: 27, right_ankle: 28,
+      left_foot_index: 31, right_foot_index: 32,
+    };
+
+    const LIMBS = [
+      ["left_shoulder", "left_elbow", 0.075],
+      ["left_elbow", "left_wrist", 0.06],
+      ["right_shoulder", "right_elbow", 0.075],
+      ["right_elbow", "right_wrist", 0.06],
+      ["left_hip", "left_knee", 0.1],
+      ["left_knee", "left_ankle", 0.075],
+      ["left_ankle", "left_foot_index", 0.05],
+      ["right_hip", "right_knee", 0.1],
+      ["right_knee", "right_ankle", 0.075],
+      ["right_ankle", "right_foot_index", 0.05],
+    ];
+
+    const ANGLE_LABELS = [
+      ["Hip", "left_hip_angle_degrees", "right_hip_angle_degrees"],
+      ["Knee", "left_knee_angle_degrees", "right_knee_angle_degrees"],
+      ["Ankle", "left_ankle_angle_degrees", "right_ankle_angle_degrees"],
+      ["Elbow", "left_elbow_angle_degrees", "right_elbow_angle_degrees"],
+    ];
+
+    let framesByIndex = new Map();
+    let sortedTimestamps = [];
+    let rotationY = 0;
+    let rotationX = 0;
+    let dragging = false;
+    let lastPointer = null;
+
+    ANGLE_LABELS.forEach(([label]) => {
+      const box = document.createElement("div");
+      box.className = "angle-box";
+      box.innerHTML = `<span>${label}</span><strong data-angle="${label}">—</strong><small>L / R</small>`;
+      angleReadouts.append(box);
+    });
+
+    function project(point) {
+      const cosY = Math.cos(rotationY), sinY = Math.sin(rotationY);
+      const cosX = Math.cos(rotationX), sinX = Math.sin(rotationX);
+      let [x, y, z] = point;
+      let x1 = x * cosY - z * sinY;
+      let z1 = x * sinY + z * cosY;
+      let y2 = y * cosX - z1 * sinX;
+      let z2 = y * sinX + z1 * cosX;
+      const distance = 1.0;
+      const scale = (canvas.height * 0.45) / (distance + z2);
+      return {
+        x: canvas.width / 2 + x1 * scale,
+        y: canvas.height / 2 + y2 * scale,
+        depth: z2,
+        scale,
+      };
+    }
+
+    function drawSkeleton(worldLandmarks) {
+      // Backdrop: soft vignette + a ground plane so the figure reads as
+      // standing in a 3D space rather than floating on a flat fill.
+      const backdrop = ctx.createRadialGradient(
+        canvas.width / 2, canvas.height * 0.4, canvas.height * 0.15,
+        canvas.width / 2, canvas.height * 0.5, canvas.height * 0.9
+      );
+      backdrop.addColorStop(0, "#12304f");
+      backdrop.addColorStop(1, "#081627");
+      ctx.fillStyle = backdrop;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (!worldLandmarks) {
+        ctx.fillStyle = "#5b6b80";
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("No pose detected at this frame", canvas.width / 2, canvas.height / 2);
+        return;
+      }
+
+      function pointFor(name) {
+        const landmark = worldLandmarks[LANDMARK_INDEX[name]];
+        if (!landmark) return null;
+        return project([landmark.x, landmark.y, landmark.z]);
+      }
+
+      const points = {};
+      Object.keys(LANDMARK_INDEX).forEach((name) => { points[name] = pointFor(name); });
+
+      // Ground shadow beneath whichever foot is lowest on screen.
+      const feetY = [points.left_foot_index, points.right_foot_index, points.left_ankle, points.right_ankle]
+        .filter(Boolean).map((p) => p.y);
+      if (feetY.length) {
+        const floorY = Math.max(...feetY) + 10;
+        const shadow = ctx.createRadialGradient(
+          canvas.width / 2, floorY, 4,
+          canvas.width / 2, floorY, canvas.width * 0.22
+        );
+        shadow.addColorStop(0, "rgba(0, 0, 0, .38)");
+        shadow.addColorStop(1, "rgba(0, 0, 0, 0)");
+        ctx.fillStyle = shadow;
+        ctx.beginPath();
+        ctx.ellipse(canvas.width / 2, floorY, canvas.width * 0.22, canvas.height * 0.035, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      function drawLimb(a, b, thicknessMeters) {
+        const p1 = points[a], p2 = points[b];
+        if (!p1 || !p2) return;
+        const width = Math.max(4, thicknessMeters * ((p1.scale + p2.scale) / 2));
+        const gradient = ctx.createLinearGradient(p1.x, p1.y, p2.x, p2.y);
+        gradient.addColorStop(0, "#f3c98a");
+        gradient.addColorStop(1, "#e8b06e");
+        ctx.strokeStyle = gradient;
+        ctx.lineWidth = width;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+      }
+
+      function drawTorso() {
+        const corners = [points.left_shoulder, points.right_shoulder, points.right_hip, points.left_hip];
+        if (corners.some((p) => !p)) return;
+        const gradient = ctx.createLinearGradient(
+          points.left_shoulder.x, points.left_shoulder.y,
+          points.right_hip.x, points.right_hip.y
+        );
+        gradient.addColorStop(0, "#2f6fd8");
+        gradient.addColorStop(1, "#1b4faa");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.moveTo(corners[0].x, corners[0].y);
+        corners.slice(1).forEach((p) => ctx.lineTo(p.x, p.y));
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, .15)";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      function drawHead() {
+        const nose = points.nose;
+        const ls = points.left_shoulder, rs = points.right_shoulder;
+        if (!nose || !ls || !rs) return;
+        const shoulderWidth = Math.hypot(rs.x - ls.x, rs.y - ls.y);
+        const radius = Math.max(10, shoulderWidth * 0.32);
+        const headCenter = { x: nose.x, y: nose.y - radius * 0.15 };
+        const gradient = ctx.createRadialGradient(
+          headCenter.x - radius * 0.3, headCenter.y - radius * 0.3, radius * 0.2,
+          headCenter.x, headCenter.y, radius
+        );
+        gradient.addColorStop(0, "#ffdcAF");
+        gradient.addColorStop(1, "#e8b489");
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(headCenter.x, headCenter.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        // A plain ball has no "front" — without some marker the figure
+        // looks identical from every angle, so there's no way to tell
+        // when you've rotated back to actually facing it. Two eye dots
+        // only appear while the front of the body is turned toward the
+        // viewer (based on the Y-orbit angle); rotate past the side and
+        // they disappear, so "no eyes" clearly means "you're behind it".
+        if (Math.cos(rotationY) <= 0) return;
+        const shoulderDirX = (rs.x - ls.x) / (shoulderWidth || 1);
+        const shoulderDirY = (rs.y - ls.y) / (shoulderWidth || 1);
+        const eyeOffset = radius * 0.32;
+        const eyeForward = radius * 0.15;
+        const eyeRadius = Math.max(1.5, radius * 0.09);
+        [-1, 1].forEach((side) => {
+          ctx.beginPath();
+          ctx.arc(
+            headCenter.x + shoulderDirX * eyeOffset * side,
+            headCenter.y - eyeForward + shoulderDirY * eyeOffset * side,
+            eyeRadius, 0, Math.PI * 2
+          );
+          ctx.fillStyle = "#2b2118";
+          ctx.fill();
+        });
+      }
+
+      function drawJoint(name, radius, color) {
+        const p = points[name];
+        if (!p) return;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
+
+      // Draw back-to-front: legs, torso, head, arms (arms in front reads
+      // correctly for the common facing-camera framing of these clips).
+      LIMBS.filter(([a]) => a.includes("hip")).forEach(([a, b, t]) => drawLimb(a, b, t));
+      LIMBS.filter(([a]) => a.includes("knee")).forEach(([a, b, t]) => drawLimb(a, b, t));
+      LIMBS.filter(([a]) => a.includes("ankle")).forEach(([a, b, t]) => drawLimb(a, b, t));
+      drawTorso();
+      drawHead();
+      LIMBS.filter(([a]) => a.includes("shoulder")).forEach(([a, b, t]) => drawLimb(a, b, t));
+      LIMBS.filter(([a]) => a.includes("elbow")).forEach(([a, b, t]) => drawLimb(a, b, t));
+
+      ["left_foot_index", "right_foot_index"].forEach((name) => drawJoint(name, 5, "#e8b06e"));
+      ["left_wrist", "right_wrist"].forEach((name) => drawJoint(name, 6, "#f3c98a"));
+    }
+
+    function updateAngles(jointAngles) {
+      ANGLE_LABELS.forEach(([label, leftKey, rightKey]) => {
+        const el = angleReadouts.querySelector(`[data-angle="${label}"]`);
+        if (!jointAngles) {
+          el.textContent = "—";
+          return;
+        }
+        const left = jointAngles[leftKey];
+        const right = jointAngles[rightKey];
+        const leftText = left != null ? `${Math.round(left)}°` : "—";
+        const rightText = right != null ? `${Math.round(right)}°` : "—";
+        el.textContent = `${leftText} / ${rightText}`;
+      });
+    }
+
+    function nearestFrame(timeSeconds) {
+      if (!sortedTimestamps.length) return null;
+      const targetMs = timeSeconds * 1000;
+      let lo = 0, hi = sortedTimestamps.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (sortedTimestamps[mid] < targetMs) lo = mid + 1;
+        else hi = mid;
+      }
+      return framesByIndex.get(sortedTimestamps[lo]);
+    }
+
+    function renderAtCurrentTime() {
+      const frame = nearestFrame(video.currentTime);
+      drawSkeleton(frame ? frame.worldLandmarks : null);
+      updateAngles(frame ? frame.jointAngles : null);
+    }
+
+    canvas.addEventListener("pointerdown", (event) => {
+      dragging = true;
+      lastPointer = { x: event.clientX, y: event.clientY };
+      try {
+        canvas.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture is a nice-to-have for drags that leave the
+        // canvas bounds; dragging still works without it.
+      }
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      const dx = event.clientX - lastPointer.x;
+      const dy = event.clientY - lastPointer.y;
+      lastPointer = { x: event.clientX, y: event.clientY };
+      rotationY += dx * 0.01;
+      rotationX = Math.max(-1.3, Math.min(1.3, rotationX + dy * 0.01));
+      renderAtCurrentTime();
+    });
+    ["pointerup", "pointercancel", "pointerleave"].forEach((eventName) => {
+      canvas.addEventListener(eventName, () => { dragging = false; });
+    });
+
+    document.querySelector("#reset-view").addEventListener("click", () => {
+      rotationY = 0;
+      rotationX = 0;
+      renderAtCurrentTime();
+    });
+
+    video.addEventListener("timeupdate", renderAtCurrentTime);
+    video.addEventListener("seeked", renderAtCurrentTime);
+
+    async function loadAnalysis() {
+      if (!jobId) {
+        stateSection.textContent = "Job ID is required.";
+        return;
+      }
+
+      try {
+        const jobResponse = await fetch(`/analysis-jobs/${encodeURIComponent(jobId)}`);
+        if (!jobResponse.ok) throw new Error("Analysis job not found.");
+        const job = await jobResponse.json();
+
+        if (!["pose_estimation", "squat_jump", "agility_ladder"].includes(job.analysis_type)) {
+          stateSection.textContent = "3D body analysis is only available for pose-based analysis jobs.";
+          return;
+        }
+
+        if (job.status !== "completed") {
+          stateSection.textContent = `Analysis status: ${job.status}. Come back once it's completed.`;
+          return;
+        }
+
+        const [videoResponse, resultResponse] = await Promise.all([
+          fetch(`/videos/${encodeURIComponent(job.video_id)}`),
+          fetch(`/analysis-jobs/${encodeURIComponent(jobId)}/result`),
+        ]);
+        if (!videoResponse.ok) throw new Error("Video not found.");
+        if (!resultResponse.ok) throw new Error("Analysis result unavailable.");
+
+        const videoData = await videoResponse.json();
+        const result = await resultResponse.json();
+
+        const landmarkFrames = result.landmark_frames || [];
+        const featureFrames = result.features?.frames || [];
+        const featuresByIndex = new Map(
+          featureFrames.map((frame) => [frame.frame_index, frame])
+        );
+
+        let has3d = false;
+        landmarkFrames.forEach((frame) => {
+          if (!frame.world_landmarks) return;
+          has3d = true;
+          const feature = featuresByIndex.get(frame.frame_index);
+          framesByIndex.set(frame.timestamp_ms, {
+            worldLandmarks: frame.world_landmarks,
+            jointAngles: feature?.joint_angles_3d || null,
+          });
+        });
+
+        if (!has3d) {
+          stateSection.textContent =
+            "This video was analyzed before 3D support was added. " +
+            "Re-run pose analysis on this video to see the 3D view.";
+          return;
+        }
+
+        sortedTimestamps = Array.from(framesByIndex.keys()).sort((a, b) => a - b);
+        video.src = videoData.file_path;
+
+        subtitle.textContent = `${job.job_id} · ${job.analysis_type}`;
+        stateSection.hidden = true;
+        workspace.classList.add("ready");
+        drawSkeleton(framesByIndex.get(sortedTimestamps[0])?.worldLandmarks || null);
+      } catch (error) {
+        stateSection.textContent = error.message;
+      }
+    }
+
+    loadAnalysis();
+  </script>
+</body>
+</html>

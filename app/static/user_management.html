@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Account Management | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <script src="/auth-client.js"></script>
+  <style>
+    :root {
+      --navy: #071a2b;
+      --navy-soft: #12384a;
+      --lime: #7cdb20;
+      --green: #31d989;
+      --page: #f1f6f3;
+      --line: #d7e3dc;
+      --muted: #617087;
+      --danger: #c83f49;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #11223a;
+      background: var(--page);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+    header {
+      padding: 44px max(24px, calc((100% - 1180px) / 2));
+      color: white;
+      background:
+        radial-gradient(circle at 90% 20%, #35d98a2e, transparent 30%),
+        linear-gradient(135deg, var(--navy), #0b3b42);
+    }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--green);
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 0; font-size: clamp(34px, 6vw, 58px); letter-spacing: -.045em; }
+    header p:last-of-type { max-width: 680px; color: #cfdae4; line-height: 1.6; }
+    .home {
+      display: inline-flex;
+      margin-top: 10px;
+      padding: 10px 15px;
+      border-radius: 10px;
+      color: var(--navy);
+      background: var(--green);
+      text-decoration: none;
+      font-weight: 850;
+    }
+    main { width: min(1180px, calc(100% - 30px)); margin: 28px auto 70px; }
+    .panel {
+      margin-bottom: 22px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: white;
+      box-shadow: 0 18px 42px #071a2b0d;
+    }
+    .panel-head { display: flex; justify-content: space-between; gap: 18px; align-items: start; }
+    h2 { margin: 0 0 6px; font-size: 22px; }
+    .hint { margin: 0; color: var(--muted); line-height: 1.5; }
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 220px;
+      gap: 16px;
+      margin-top: 22px;
+    }
+    label { display: grid; gap: 7px; color: #40516a; font-size: 13px; font-weight: 800; }
+    input, select {
+      width: 100%;
+      min-height: 48px;
+      padding: 11px 13px;
+      border: 1px solid #ccd9e1;
+      border-radius: 11px;
+      color: #11223a;
+      background: white;
+      font: inherit;
+    }
+    input:focus, select:focus { outline: 3px solid #31d98933; border-color: #1fbf73; }
+    fieldset { margin: 20px 0 0; padding: 0; border: 0; }
+    legend { margin-bottom: 12px; color: #40516a; font-size: 13px; font-weight: 850; }
+    .permissions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(150px, 1fr));
+      gap: 10px;
+    }
+    .permission {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 44px;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+      background: #f8fbf9;
+      font-size: 13px;
+      font-weight: 750;
+    }
+    .permission input { width: 18px; min-height: 18px; margin: 0; accent-color: #1fbf73; }
+    button {
+      min-height: 48px;
+      padding: 11px 18px;
+      border: 0;
+      border-radius: 11px;
+      color: var(--navy);
+      background: var(--lime);
+      font: inherit;
+      font-weight: 900;
+      cursor: pointer;
+    }
+    button.secondary { color: white; background: var(--navy); }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    .actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+    #message { min-height: 22px; margin: 12px 0 0; color: var(--muted); }
+    #message.error { color: var(--danger); }
+    .users { display: grid; gap: 14px; margin-top: 20px; }
+    .user-card {
+      display: grid;
+      grid-template-columns: minmax(160px, .7fr) minmax(0, 2fr) auto;
+      gap: 18px;
+      align-items: start;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fbfdfc;
+    }
+    .identity strong { display: block; font-size: 17px; }
+    .identity span { color: var(--muted); font-size: 12px; }
+    .user-controls { display: grid; grid-template-columns: 180px 1fr; gap: 12px; }
+    .user-controls .permissions { grid-column: 1 / -1; grid-template-columns: repeat(3, 1fr); }
+    .active-toggle { display: flex; align-items: center; gap: 9px; margin-top: 12px; font-size: 13px; font-weight: 800; }
+    .active-toggle input { width: 18px; min-height: 18px; }
+    .account-actions {
+      display: grid;
+      align-self: center;
+      gap: 9px;
+    }
+    .save-user { white-space: nowrap; }
+    .admin-note { color: #117243; font-size: 12px; font-weight: 800; }
+    @media (max-width: 820px) {
+      header { padding: 32px 20px; }
+      .form-grid, .user-card, .user-controls { grid-template-columns: 1fr; }
+      .permissions, .user-controls .permissions { grid-template-columns: 1fr 1fr; }
+      .account-actions, .save-user { width: 100%; }
+    }
+    @media (max-width: 480px) {
+      main { width: min(100% - 20px, 1180px); }
+      .panel { padding: 18px; border-radius: 17px; }
+      .permissions, .user-controls .permissions { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <p class="eyebrow">Kemet FC Administration</p>
+    <h1>Account management</h1>
+    <p>Create a separate login for every person and choose exactly which parts of the academy platform they can access.</p>
+    <a class="home" href="/dashboard">← Dashboard</a>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Create account</h2>
+          <p class="hint">Use a unique username. Passwords must contain at least 12 characters.</p>
+        </div>
+      </div>
+      <form id="create-user-form">
+        <div class="form-grid">
+          <label>Username<input id="new-username" autocomplete="off" required minlength="3" maxlength="64"></label>
+          <label>Temporary password<input id="new-password" type="password" autocomplete="new-password" required minlength="12"></label>
+          <label>Role
+            <select id="new-role">
+              <option value="coach">Coach</option>
+              <option value="reviewer">Reviewer</option>
+              <option value="guardian">Guardian</option>
+              <option value="admin">Administrator</option>
+            </select>
+          </label>
+          <label style="grid-column: 1 / -1">Email (for password reset codes)
+            <input id="new-email" type="email" autocomplete="off" maxlength="320">
+          </label>
+        </div>
+        <fieldset>
+          <legend>Enabled features</legend>
+          <div id="new-permissions" class="permissions"></div>
+        </fieldset>
+        <div class="actions"><button type="submit">Create account</button></div>
+        <p id="message" role="status"></p>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>Existing accounts</h2>
+          <p class="hint">Change a role, reset a password, disable a login, delete an unused account, or update feature access.</p>
+        </div>
+        <span id="user-count" class="hint">Loading…</span>
+      </div>
+      <div id="users" class="users"><p class="hint">Loading accounts…</p></div>
+    </section>
+  </main>
+
+  <script>
+    const features = [
+      ["dashboard", "Dashboard"],
+      ["players", "Players"],
+      ["teams", "Teams"],
+      ["assessments", "Assessments & snapshots"],
+      ["training", "Training plans & drills"],
+      ["videos", "Videos & AI processing"],
+      ["matches", "Matches"],
+      ["reports", "Reports"],
+      ["calendar", "Calendar"],
+    ];
+    const roleDefaults = {
+      admin: features.map(([key]) => key),
+      coach: features.map(([key]) => key),
+      reviewer: ["dashboard", "players", "assessments", "videos", "reports"],
+      guardian: [],
+    };
+    const usersRoot = document.querySelector("#users");
+    const message = document.querySelector("#message");
+    const createRole = document.querySelector("#new-role");
+
+    function permissionInputs(root, selected, disabled = false) {
+      root.replaceChildren();
+      for (const [key, label] of features) {
+        const wrapper = document.createElement("label");
+        wrapper.className = "permission";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.value = key;
+        input.checked = selected.includes(key);
+        input.disabled = disabled;
+        wrapper.append(input, document.createTextNode(label));
+        root.append(wrapper);
+      }
+    }
+
+    function selectedPermissions(root) {
+      return [...root.querySelectorAll('input[type="checkbox"]:checked')]
+        .map((input) => input.value);
+    }
+
+    function errorMessage(payload, fallback) {
+      if (typeof payload?.detail === "string") return payload.detail;
+      if (Array.isArray(payload?.detail)) {
+        return payload.detail.map((item) => item.msg).join("; ");
+      }
+      return fallback;
+    }
+
+    function syncRolePermissions(roleSelect, root) {
+      const isAdmin = roleSelect.value === "admin";
+      permissionInputs(root, roleDefaults[roleSelect.value] || [], isAdmin);
+    }
+
+    const newPermissions = document.querySelector("#new-permissions");
+    syncRolePermissions(createRole, newPermissions);
+    createRole.addEventListener("change", () => {
+      syncRolePermissions(createRole, newPermissions);
+    });
+
+    async function loadUsers() {
+      const [usersResponse, identityResponse] = await Promise.all([
+        fetch("/auth/users"),
+        fetch("/auth/me"),
+      ]);
+      if (!usersResponse.ok) throw new Error("Could not load accounts.");
+      if (!identityResponse.ok) throw new Error("Could not identify the current account.");
+      const users = await usersResponse.json();
+      const identityData = await identityResponse.json();
+      const currentUserId = identityData.user.user_id;
+      document.querySelector("#user-count").textContent =
+        `${users.length} account${users.length === 1 ? "" : "s"}`;
+      usersRoot.replaceChildren();
+
+      for (const user of users) {
+        const card = document.createElement("article");
+        card.className = "user-card";
+
+        const identity = document.createElement("div");
+        identity.className = "identity";
+        const name = document.createElement("strong");
+        name.textContent = user.username;
+        const id = document.createElement("span");
+        id.textContent = user.user_id;
+        const activeLabel = document.createElement("label");
+        activeLabel.className = "active-toggle";
+        const active = document.createElement("input");
+        active.type = "checkbox";
+        active.checked = user.active;
+        activeLabel.append(active, document.createTextNode("Account active"));
+        identity.append(name, id, activeLabel);
+
+        const controls = document.createElement("div");
+        controls.className = "user-controls";
+        const roleLabel = document.createElement("label");
+        roleLabel.textContent = "Role";
+        const role = document.createElement("select");
+        for (const [value, label] of [
+          ["admin", "Administrator"], ["coach", "Coach"],
+          ["reviewer", "Reviewer"], ["guardian", "Guardian"],
+        ]) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = label;
+          option.selected = user.role === value;
+          role.append(option);
+        }
+        roleLabel.append(role);
+        const passwordLabel = document.createElement("label");
+        passwordLabel.textContent = "New temporary password";
+        const password = document.createElement("input");
+        password.type = "password";
+        password.minLength = 12;
+        password.autocomplete = "new-password";
+        password.placeholder = "12+ characters for reset";
+        passwordLabel.append(password);
+        const emailLabel = document.createElement("label");
+        emailLabel.style.gridColumn = "1 / -1";
+        emailLabel.textContent = "Email (for password reset codes)";
+        const email = document.createElement("input");
+        email.type = "email";
+        email.value = user.email || "";
+        email.placeholder = "name@example.com";
+        emailLabel.append(email);
+        const permissions = document.createElement("div");
+        permissions.className = "permissions";
+        permissionInputs(
+          permissions,
+          user.feature_permissions || [],
+          user.role === "admin"
+        );
+        role.addEventListener("change", () => {
+          syncRolePermissions(role, permissions);
+        });
+        controls.append(roleLabel, passwordLabel, emailLabel, permissions);
+
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "secondary save-user";
+        save.textContent = "Save changes";
+        save.addEventListener("click", async () => {
+          save.disabled = true;
+          const payload = {
+            role: role.value,
+            active: active.checked,
+            email: email.value.trim() || null,
+            feature_permissions: selectedPermissions(permissions),
+          };
+          const response = await fetch(`/auth/users/${encodeURIComponent(user.user_id)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json().catch(() => ({}));
+          save.disabled = false;
+          if (!response.ok) {
+            alert(errorMessage(data, "Could not update account."));
+            return;
+          }
+          await loadUsers();
+        });
+
+        const resetPassword = document.createElement("button");
+        resetPassword.type = "button";
+        resetPassword.className = "save-user";
+        resetPassword.textContent = "Reset password";
+        resetPassword.addEventListener("click", async () => {
+          if (password.value.length < 12) {
+            alert("Enter a new temporary password with at least 12 characters.");
+            password.focus();
+            return;
+          }
+          if (!confirm(
+            `Reset the password for ${user.username}? Their existing sessions will be signed out.`
+          )) return;
+
+          resetPassword.disabled = true;
+          const response = await fetch(
+            `/auth/users/${encodeURIComponent(user.user_id)}`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ password: password.value }),
+            }
+          );
+          const data = await response.json().catch(() => ({}));
+          resetPassword.disabled = false;
+          if (!response.ok) {
+            alert(errorMessage(data, "Could not reset password."));
+            return;
+          }
+          password.value = "";
+          alert(`Password reset for ${user.username}.`);
+        });
+
+        const deleteAccount = document.createElement("button");
+        deleteAccount.type = "button";
+        deleteAccount.className = "secondary save-user";
+        deleteAccount.textContent = "Delete account";
+        deleteAccount.disabled = user.user_id === currentUserId;
+        if (deleteAccount.disabled) {
+          deleteAccount.title = "You cannot delete the account you are currently using.";
+        }
+        deleteAccount.addEventListener("click", async () => {
+          if (!confirm(
+            `Permanently delete ${user.username}? This cannot be undone.`
+          )) return;
+
+          deleteAccount.disabled = true;
+          const response = await fetch(
+            `/auth/users/${encodeURIComponent(user.user_id)}`,
+            { method: "DELETE" }
+          );
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            deleteAccount.disabled = false;
+            alert(errorMessage(data, "Could not delete account."));
+            return;
+          }
+          await loadUsers();
+        });
+
+        const accountActions = document.createElement("div");
+        accountActions.className = "account-actions";
+        accountActions.append(save, resetPassword, deleteAccount);
+
+        card.append(identity, controls, accountActions);
+        usersRoot.append(card);
+      }
+    }
+
+    document.querySelector("#create-user-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      message.className = "";
+      message.textContent = "Creating account…";
+      const response = await fetch("/auth/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: document.querySelector("#new-username").value,
+          password: document.querySelector("#new-password").value,
+          role: createRole.value,
+          email: document.querySelector("#new-email").value.trim() || null,
+          feature_permissions: selectedPermissions(newPermissions),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        message.className = "error";
+        message.textContent = errorMessage(data, "Could not create account.");
+        return;
+      }
+      event.target.reset();
+      createRole.value = "coach";
+      syncRolePermissions(createRole, newPermissions);
+      message.textContent = `Account ${data.username} created successfully.`;
+      await loadUsers();
+    });
+
+    loadUsers().catch((error) => {
+      usersRoot.textContent = error.message;
+    });
+  </script>
+</body>
+</html>

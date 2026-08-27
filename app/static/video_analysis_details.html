@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Analysis | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; color: #142039; background: #f5f7fb; }
+    .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100vh; }
+    aside { padding: 26px 16px; color: white; background: #071b35; }
+    .brand { margin: 0 10px 30px; color: #ffd36b; font-size: 22px; font-weight: 800; }
+    nav { display: grid; gap: 8px; }
+    nav a { padding: 12px 14px; border-radius: 9px; color: #dbe7f7; text-decoration: none; }
+    nav a:hover, nav a.active { color: white; background: #1265ed; }
+    main { min-width: 0; padding: 30px; }
+    h1, h2, h3, p { margin-top: 0; }
+    .muted { color: #69768a; }
+    #subtitle { overflow-wrap: anywhere; }
+    .back { color: #1265ed; font-weight: 700; text-decoration: none; }
+    .notice { margin: 20px 0; padding: 14px 16px; border-left: 4px solid #f39320; border-radius: 8px; background: #fff8e9; }
+    .quality { margin: 20px 0; padding: 16px; border: 1px solid #cfe7d8; border-radius: 12px; background: #eef9f2; }
+    .quality.abstained { border-color: #efc2c2; background: #fff0f0; }
+    .quality strong { display: block; margin-bottom: 5px; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 20px 0; }
+    .card { padding: 20px; border: 1px solid #e1e7ef; border-radius: 15px; background: white; }
+    .metric { min-width: 0; }
+    .metric strong { display: block; margin-top: 7px; font-size: 25px; }
+    .two-column { display: grid; grid-template-columns: 1.5fr 1fr; gap: 18px; }
+    .list { display: grid; gap: 10px; }
+    .rep { padding: 15px; border-radius: 10px; background: #f7f9fc; }
+    .rep-head { display: flex; justify-content: space-between; gap: 12px; }
+    .badge { padding: 5px 9px; border-radius: 999px; background: #edf2f6; font-size: 12px; font-weight: 750; }
+    .approved { color: #087441; background: #daf4e5; }
+    .rejected { color: #a52d2d; background: #ffe1e1; }
+    label { display: block; margin: 12px 0 6px; font-weight: 700; }
+    input, textarea { width: 100%; padding: 11px 12px; border: 1px solid #d8e0eb; border-radius: 8px; font: inherit; }
+    textarea { min-height: 95px; resize: vertical; }
+    .actions { display: flex; gap: 10px; margin-top: 14px; }
+    button { padding: 10px 14px; border: 0; border-radius: 8px; color: white; font: inherit; font-weight: 750; cursor: pointer; }
+    .approve { background: #169c57; }
+    .reject { background: #c84040; }
+    .state { padding: 25px; color: #69768a; text-align: center; }
+    .mobile-nav { display: none; }
+    @media (max-width: 850px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { display: none; }
+      main { padding: 18px 18px 94px; }
+      .grid, .two-column { grid-template-columns: 1fr; }
+      .mobile-nav {
+        position: fixed; z-index: 20; right: 10px; bottom: 10px; left: 10px;
+        display: grid; grid-template-columns: repeat(4, 1fr); padding: 8px;
+        border: 1px solid rgba(255, 255, 255, .10); border-radius: 18px;
+        background: rgba(7, 26, 43, .96); box-shadow: 0 18px 42px rgba(0, 0, 0, .24);
+        backdrop-filter: blur(16px);
+      }
+      .mobile-nav a {
+        padding: 9px 4px; border-radius: 11px; color: #b7c4cf; text-align: center;
+        text-decoration: none; font-size: 11px; font-weight: 800;
+      }
+      .mobile-nav a.active { color: #b7f15a; background: rgba(124, 219, 32, .10); }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC</div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a href="/teams-dashboard">Teams</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+        <a class="active" href="/videos-dashboard">Videos</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <a class="back" href="/videos-dashboard">← Back to Videos</a>
+      <h1>Video Analysis Review</h1>
+      <p id="subtitle" class="muted">Loading analysis...</p>
+      <a id="body-analysis-3d-link" class="back" href="#" hidden>View 3D Body Analysis →</a>
+
+      <div class="notice">
+        These are automated movement measurements, not an approved player
+        assessment. A coach must review the video and results.
+      </div>
+
+      <section id="quality-status" class="quality" hidden aria-live="polite"></section>
+
+      <section id="analysis-metrics" class="grid">
+        <div class="state">Loading...</div>
+      </section>
+
+      <div class="two-column">
+        <section class="card">
+          <h2>Detected Movement Events</h2>
+          <div id="repetitions" class="list">
+            <div class="state">Loading movement results...</div>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Coach Review</h2>
+          <p>Current status: <span id="review-status" class="badge">pending</span></p>
+          <form id="coach-review-form">
+            <label for="reviewed-by">Coach name</label>
+            <input id="reviewed-by" required>
+            <label for="review-notes">Review notes</label>
+            <textarea id="review-notes"></textarea>
+            <div class="actions">
+              <button class="approve" type="submit" data-review="approved">Approve</button>
+              <button class="reject" type="submit" data-review="rejected">Reject</button>
+            </div>
+          </form>
+          <p id="review-message" role="status"></p>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <nav class="mobile-nav" aria-label="Mobile navigation">
+    <a href="/dashboard">Home</a>
+    <a href="/players-dashboard">Players</a>
+    <a href="/drill-library">Train</a>
+    <a class="active" href="/videos-dashboard">Videos</a>
+  </nav>
+
+  <script>
+    const jobId = new URLSearchParams(location.search).get("job_id");
+    const metrics = document.querySelector("#analysis-metrics");
+    const repetitions = document.querySelector("#repetitions");
+    const reviewForm = document.querySelector("#coach-review-form");
+    const qualityStatus = document.querySelector("#quality-status");
+    let job;
+
+    const make = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+
+    function percent(value) {
+      return typeof value === "number"
+        ? `${Math.round(value * 100)}%`
+        : "—";
+    }
+
+    function addMetric(label, value) {
+      const card = make("article", "card metric");
+      card.append(make("span", "muted", label));
+      card.append(make("strong", "", value));
+      metrics.append(card);
+    }
+
+    function renderJob() {
+      document.querySelector("#subtitle").textContent =
+        `${job.job_id} · ${job.analysis_type} · ${job.status}`;
+
+      const poseAnalysisTypes = ["pose_estimation", "squat_jump", "agility_ladder"];
+      const link3d = document.querySelector("#body-analysis-3d-link");
+      if (poseAnalysisTypes.includes(job.analysis_type) && job.status === "completed") {
+        link3d.href = `/body-analysis-3d?job_id=${encodeURIComponent(jobId)}`;
+        link3d.hidden = false;
+      } else {
+        link3d.hidden = true;
+      }
+
+      const status = document.querySelector("#review-status");
+      status.textContent = job.review_status;
+      status.className = `badge ${job.review_status}`;
+      document.querySelector("#reviewed-by").value = job.reviewed_by || "";
+      document.querySelector("#review-notes").value = job.review_notes || "";
+    }
+
+    function renderResult(result) {
+      metrics.replaceChildren();
+      const movement = result.movement_analysis;
+
+      if (result.quality_control) {
+        const quality = result.quality_control;
+        qualityStatus.hidden = false;
+        qualityStatus.className = `quality${quality.abstained ? " abstained" : ""}`;
+        qualityStatus.replaceChildren(
+          make(
+            "strong",
+            "",
+            quality.abstained
+              ? "Automated scoring withheld"
+              : "Evidence thresholds passed"
+          ),
+          make("span", "", quality.message || "Human review is still required.")
+        );
+        if (quality.reasons?.length) {
+          qualityStatus.append(make(
+            "p",
+            "muted",
+            `Reasons: ${quality.reasons.join(", ")}`
+          ));
+        }
+      } else {
+        qualityStatus.hidden = true;
+      }
+
+      if (result.analysis_type === "full_match") {
+        addMetric(
+          "Analysis confidence",
+          percent(result.summary?.analysis_confidence)
+        );
+        addMetric(
+          "Confidence type",
+          result.summary?.confidence_semantics === "heuristic_unvalidated"
+            ? "Uncalibrated heuristic"
+            : (result.summary?.confidence_semantics || "—")
+        );
+        addMetric(
+          "Player coverage",
+          percent(result.summary?.player_detection_rate)
+        );
+        addMetric(
+          "Ball coverage",
+          percent(result.summary?.ball_detection_rate)
+        );
+        addMetric("Players tracked", result.summary?.players_tracked ?? "—");
+        addMetric(
+          "Candidate events",
+          result.summary?.candidate_event_count ?? "—"
+        );
+        repetitions.replaceChildren();
+
+        const target = result.target_player;
+        if (target) {
+          const targetCard = make("article", "rep");
+          targetCard.append(make(
+            "strong", "", `Target player track ${target.track_id}`
+          ));
+          targetCard.append(make(
+            "p", "muted",
+            `Tracked ${target.frames_tracked} frames · ` +
+            `${target.ball_control_samples} ball-control samples · ` +
+            `${target.high_speed_run_count} high-speed segments`
+          ));
+          repetitions.append(targetCard);
+        }
+
+        (result.events || []).forEach((event) => {
+          const card = make("article", "rep");
+          card.append(make("strong", "", "Pass candidate"));
+          card.append(make(
+            "p", "muted",
+            `Track ${event.from_track_id} → ${event.to_track_id} at ` +
+            `${event.timestamp_seconds.toFixed(2)}s · ` +
+            `${percent(event.confidence)} confidence`
+          ));
+          repetitions.append(card);
+        });
+
+        if (!target && !(result.events || []).length) {
+          repetitions.append(make(
+            "div", "state", "No reviewable target events were detected."
+          ));
+        }
+        return;
+      }
+
+      addMetric("Pose detection", percent(result.summary?.detection_rate));
+      addMetric("Feature coverage", percent(result.features?.feature_coverage));
+
+      if (movement?.analysis_type === "agility_ladder") {
+        addMetric("Detected steps", movement.summary?.step_count ?? "—");
+        addMetric(
+          "Cadence",
+          movement.summary?.cadence_steps_per_minute == null
+            ? "—"
+            : `${Math.round(movement.summary.cadence_steps_per_minute)} / min`
+        );
+      } else {
+        addMetric(
+          "Movement cycles",
+          movement?.summary?.movement_cycle_count ?? "—"
+        );
+        addMetric("Detected jumps", movement?.summary?.jump_count ?? "—");
+      }
+
+      repetitions.replaceChildren();
+
+      if (movement?.analysis_type === "agility_ladder") {
+        if (!movement.steps?.length) {
+          repetitions.append(make(
+            "div",
+            "state",
+            "No complete agility-ladder steps detected."
+          ));
+          return;
+        }
+
+        movement.steps.forEach((step) => {
+          const card = make("article", "rep");
+          const head = make("div", "rep-head");
+          head.append(
+            make("strong", "", `Step ${step.step_number}`),
+            make("span", "badge", `${step.foot} foot`)
+          );
+          card.append(head);
+          card.append(make(
+            "p",
+            "muted",
+            `Contact at ${(step.contact_timestamp_ms / 1000).toFixed(2)}s · ` +
+            `air time ${(step.air_time_ms / 1000).toFixed(2)}s`
+          ));
+          card.append(make(
+            "p",
+            "",
+            `Foot lift: ${step.foot_lift_torso_ratio.toFixed(2)} torso units`
+          ));
+          repetitions.append(card);
+        });
+        return;
+      }
+
+      if (!movement?.repetitions?.length) {
+        repetitions.append(make(
+          "div",
+          "state",
+          movement
+            ? "No complete squat-jump repetitions detected."
+            : "This job did not request squat-jump analysis."
+        ));
+        return;
+      }
+
+      movement.repetitions.forEach((repetition) => {
+        const card = make("article", "rep");
+        const head = make("div", "rep-head");
+        head.append(
+          make("strong", "", `Repetition ${repetition.repetition_number}`),
+          make(
+            "span",
+            "badge",
+            repetition.jump_detected ? "Jump detected" : "Movement cycle"
+          )
+        );
+        card.append(head);
+        card.append(make(
+          "p",
+          "muted",
+          `${(repetition.duration_ms / 1000).toFixed(2)} seconds · ` +
+          repetition.phases.map((phase) => phase.name).join(" → ")
+        ));
+        card.append(make(
+          "p",
+          "",
+          `Minimum knee angle: ${Math.round(
+            repetition.measurements.minimum_knee_angle_degrees
+          )}°`
+        ));
+        repetitions.append(card);
+      });
+    }
+
+    async function loadAnalysis() {
+      if (!jobId) {
+        metrics.innerHTML = '<div class="state">Job ID is required.</div>';
+        return;
+      }
+
+      try {
+        const jobResponse = await fetch(
+          `/analysis-jobs/${encodeURIComponent(jobId)}`
+        );
+        if (!jobResponse.ok) throw new Error("Analysis job not found.");
+        job = await jobResponse.json();
+        renderJob();
+
+        if (job.status !== "completed") {
+          metrics.replaceChildren(
+            make("div", "state", `Analysis status: ${job.status}`)
+          );
+          repetitions.replaceChildren();
+          return;
+        }
+
+        const resultResponse = await fetch(
+          `/analysis-jobs/${encodeURIComponent(jobId)}/result`
+        );
+        if (!resultResponse.ok) throw new Error("Analysis result unavailable.");
+        renderResult(await resultResponse.json());
+      } catch (error) {
+        metrics.replaceChildren(make("div", "state", error.message));
+        repetitions.replaceChildren();
+      }
+    }
+
+    reviewForm.addEventListener("click", (event) => {
+      if (event.target.dataset.review) {
+        reviewForm.dataset.review = event.target.dataset.review;
+      }
+    });
+
+    reviewForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const reviewStatus = reviewForm.dataset.review || "approved";
+      const message = document.querySelector("#review-message");
+
+      const response = await fetch(
+        `/analysis-jobs/${encodeURIComponent(jobId)}/review`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            review_status: reviewStatus,
+            reviewed_by: document.querySelector("#reviewed-by").value.trim(),
+            review_notes: document.querySelector("#review-notes").value.trim() || null
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        message.textContent = error.detail || "Could not save review.";
+        return;
+      }
+
+      job = await response.json();
+      renderJob();
+      message.textContent = "Coach review saved.";
+    });
+
+    loadAnalysis();
+  </script>
+</body>
+</html>

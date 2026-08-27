@@ -1,0 +1,63 @@
+name: trainingbuddy-pilot2
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: trainingbuddy_pilot2
+      POSTGRES_USER: trainingbuddy_pilot2
+      POSTGRES_PASSWORD: trainingbuddy_pilot2_dev
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trainingbuddy_pilot2 -d trainingbuddy_pilot2"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - trainingbuddy_pilot2_postgres_data:/var/lib/postgresql
+
+  app:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://trainingbuddy_pilot2:trainingbuddy_pilot2_dev@postgres:5432/trainingbuddy_pilot2?sslmode=disable
+    command: >-
+      sh -c "python -m alembic upgrade head &&
+      uvicorn main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips=*"
+    ports:
+      - "127.0.0.1:8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./models:/app/models:ro
+      - trainingbuddy_pilot2_analysis_results:/app/analysis/results
+
+  worker:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://trainingbuddy_pilot2:trainingbuddy_pilot2_dev@postgres:5432/trainingbuddy_pilot2?sslmode=disable
+    command: python -m app.run_video_analysis_worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./models:/app/models:ro
+      - trainingbuddy_pilot2_analysis_results:/app/analysis/results
+
+volumes:
+  trainingbuddy_pilot2_postgres_data:
+  trainingbuddy_pilot2_analysis_results:

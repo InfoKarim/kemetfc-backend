@@ -1,0 +1,680 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Players | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --navy: #061a33;
+      --blue: #0866f5;
+      --green: #28b75f;
+      --orange: #ff9418;
+      --purple: #8955ea;
+      --line: #dfe6ef;
+      --muted: #68778d;
+      --page: #f5f7fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: #10213b;
+      background: var(--page);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+
+    .layout {
+      display: grid;
+      min-height: 100vh;
+      grid-template-columns: 240px 1fr;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 16px;
+      color: white;
+      background: linear-gradient(180deg, #071d39, #031226);
+    }
+
+    .brand {
+      margin: 0 10px 30px;
+      color: #f5c45d;
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 3px;
+      color: #8ca1bb;
+      font-size: 11px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    nav { display: grid; gap: 7px; }
+
+    nav a {
+      padding: 12px 14px;
+      border-radius: 9px;
+      color: #dce7f5;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    nav a:hover,
+    nav a.active {
+      color: white;
+      background: var(--blue);
+    }
+
+    main {
+      min-width: 0;
+      padding: 26px 30px 55px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 23px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: -.04em;
+    }
+
+    header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+    }
+
+    .add-player {
+      padding: 11px 16px;
+      border-radius: 9px;
+      color: white;
+      background: var(--blue);
+      text-decoration: none;
+      font-weight: 750;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(160px, 1fr));
+      gap: 15px;
+      margin-bottom: 18px;
+    }
+
+    .stat,
+    .toolbar,
+    .player {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: white;
+      box-shadow: 0 8px 24px #15304d0a;
+    }
+
+    .stat { padding: 19px; }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 7px;
+      font-size: 29px;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr 180px;
+      gap: 12px;
+      margin-bottom: 18px;
+      padding: 14px;
+    }
+
+    input,
+    select {
+      width: 100%;
+      padding: 12px 13px;
+      border: 1px solid #d7e0eb;
+      border-radius: 9px;
+      background: white;
+      color: inherit;
+      font: inherit;
+    }
+
+    #players-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+      gap: 15px;
+    }
+
+    .player { padding: 19px; }
+
+    .player-head {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      margin-bottom: 17px;
+    }
+
+    .avatar {
+      display: grid;
+      width: 58px;
+      height: 58px;
+      flex: 0 0 58px;
+      place-items: center;
+      border-radius: 50%;
+      overflow: hidden;
+      color: white;
+      background: linear-gradient(145deg, #1d7cff, #092b58);
+      font-size: 18px;
+      font-weight: 900;
+    }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+    .player h2 {
+      margin: 0 0 4px;
+      font-size: 17px;
+    }
+
+    .player-id {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 17px;
+    }
+
+    .tags span {
+      padding: 6px 9px;
+      border-radius: 8px;
+      color: #405269;
+      background: #eef3f8;
+      font-size: 11px;
+      font-weight: 750;
+      text-transform: capitalize;
+    }
+
+    .scores {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 17px;
+    }
+
+    .score-row {
+      display: grid;
+      grid-template-columns: 70px 1fr 30px;
+      gap: 9px;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .track {
+      height: 6px;
+      overflow: hidden;
+      border-radius: 10px;
+      background: #edf1f6;
+    }
+
+    .track span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--blue);
+    }
+
+    .score-row:nth-child(2) .track span { background: var(--green); }
+    .score-row:nth-child(3) .track span { background: var(--orange); }
+
+    .player-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .player-footer span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .profile-link {
+      color: var(--blue);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .footer-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .delete-player {
+      padding: 5px 10px;
+      border: 1px solid #f3c9c9;
+      border-radius: 8px;
+      color: #b83232;
+      background: #fff5f5;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .delete-player:hover { background: #ffe9e9; }
+    .delete-player:disabled { opacity: .6; cursor: wait; }
+
+    .state {
+      grid-column: 1 / -1;
+      padding: 50px 20px;
+      border: 1px dashed #cbd7e4;
+      border-radius: 14px;
+      color: var(--muted);
+      background: white;
+      text-align: center;
+    }
+
+    #page-message {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 850px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; }
+      nav { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 600px) {
+      main { padding: 22px 16px 40px; }
+      header { align-items: flex-start; flex-direction: column; }
+      .stats { grid-template-columns: 1fr; }
+      .toolbar { grid-template-columns: 1fr; }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">
+        Kemet FC
+        <small>Academy Development</small>
+      </div>
+
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a class="active" href="/players-dashboard">Players</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+        <a href="/videos-dashboard">Videos</a>
+        <a href="/matches-dashboard">Matches</a>
+        <a href="/reports-dashboard">Reports</a>
+        <a href="/calendar-dashboard">Calendar</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <div>
+          <h1>Players</h1>
+          <p>Track player profiles, assessments, and development plans.</p>
+        </div>
+        <a class="add-player" href="/add-player">+ Add player</a>
+      </header>
+
+      <p id="page-message" role="status"></p>
+
+      <section class="stats">
+        <article class="stat">
+          <span>Total players</span>
+          <strong id="total-players">0</strong>
+        </article>
+        <article class="stat">
+          <span>Assessed players</span>
+          <strong id="assessed-players">0</strong>
+        </article>
+        <article class="stat">
+          <span>Players with active plans</span>
+          <strong id="planned-players">0</strong>
+        </article>
+      </section>
+
+      <section class="toolbar">
+        <input id="player-search" type="search"
+          placeholder="Search players by name or ID">
+        <select id="sex-filter">
+          <option value="">All players</option>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+        </select>
+        <select id="team-filter">
+          <option value="">All teams</option>
+        </select>
+      </section>
+
+      <section id="players-list">
+        <div class="state">Loading players...</div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const playersList = document.querySelector("#players-list");
+    const search = document.querySelector("#player-search");
+    const sexFilter = document.querySelector("#sex-filter");
+    const teamFilter = document.querySelector("#team-filter");
+    const message = document.querySelector("#page-message");
+
+    let players = [];
+    let analyses = [];
+    let plans = [];
+    let teams = [];
+
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function average(profile) {
+      const values = Object.values(profile || {})
+        .filter((value) => typeof value === "number");
+
+      if (!values.length) return 0;
+
+      return Math.round(
+        values.reduce((total, value) => total + value, 0) /
+        values.length
+      );
+    }
+
+    function playerAge(value) {
+      const birth = new Date(value);
+      const today = new Date();
+      let age = today.getFullYear() - birth.getFullYear();
+
+      if (
+        today.getMonth() < birth.getMonth() ||
+        (
+          today.getMonth() === birth.getMonth() &&
+          today.getDate() < birth.getDate()
+        )
+      ) {
+        age -= 1;
+      }
+
+      return age;
+    }
+
+    function addScore(root, label, value) {
+      const row = make("div", "score-row");
+      row.append(make("span", "", label));
+
+      const track = make("div", "track");
+      const fill = make("span");
+      fill.style.width = `${Math.min(100, value)}%`;
+      track.append(fill);
+
+      row.append(track, make("span", "", String(value)));
+      root.append(row);
+    }
+
+    function render() {
+      const query = search.value.toLowerCase().trim();
+      const selectedSex = sexFilter.value;
+      const selectedTeam = teamFilter.value;
+
+      const visible = players.filter((player) => {
+        const name =
+          `${player.first_name_en} ${player.last_name_en} ${player.player_id}`
+            .toLowerCase();
+
+        return name.includes(query) &&
+          (!selectedSex || player.sex === selectedSex) &&
+          (!selectedTeam || player.team_id === selectedTeam);
+      });
+
+      playersList.replaceChildren();
+
+      if (!visible.length) {
+        playersList.append(
+          make("div", "state", "No players found.")
+        );
+        return;
+      }
+
+      for (const player of visible) {
+        const playerAnalyses = analyses.filter(
+          (item) => item.player_id === player.player_id
+        );
+        const activePlans = plans.filter(
+          (plan) =>
+            plan.player_id === player.player_id &&
+            plan.status === "active"
+        );
+
+        const card = make("article", "player");
+        const head = make("div", "player-head");
+        const initials =
+          `${player.first_name_en?.[0] || ""}${player.last_name_en?.[0] || ""}`;
+
+        const avatar = make("div", "avatar");
+        if (player.photo_filename) {
+          const img = document.createElement("img");
+          img.src = `/uploads/avatars/${player.photo_filename}`;
+          img.alt = "";
+          avatar.append(img);
+        } else {
+          avatar.textContent = initials || "P";
+        }
+        head.append(avatar);
+
+        const identity = make("div");
+        identity.append(make(
+          "h2",
+          "",
+          `${player.first_name_en} ${player.last_name_en}`
+        ));
+        identity.append(make(
+          "p",
+          "player-id",
+          player.player_id
+        ));
+        head.append(identity);
+
+        const tags = make("div", "tags");
+        tags.append(make(
+          "span",
+          "",
+          `Age ${playerAge(player.date_of_birth)}`
+        ));
+        tags.append(make("span", "", player.sex));
+
+        const team = teams.find(
+          (item) => item.team_id === player.team_id
+        );
+        tags.append(make(
+          "span",
+          "",
+          team ? team.name : "No team"
+        ));
+
+        tags.append(make(
+          "span",
+          "",
+          `${playerAnalyses.length} assessments`
+        ));
+
+        const scores = make("div", "scores");
+        addScore(
+          scores,
+          "Technical",
+          average(player.technical_profile)
+        );
+        addScore(
+          scores,
+          "Physical",
+          average(player.physical_profile)
+        );
+        addScore(
+          scores,
+          "Mental",
+          average(player.mental_profile)
+        );
+
+        const footer = make("div", "player-footer");
+        footer.append(make(
+          "span",
+          "",
+          `${activePlans.length} active plans`
+        ));
+
+        const profileLink = make(
+          "a",
+          "profile-link",
+          "View profile →"
+        );
+        profileLink.href =
+          `/player-details?player_id=${encodeURIComponent(player.player_id)}`;
+
+        const editLink = make("a", "profile-link", "Edit");
+        editLink.href =
+          `/add-player?player_id=${encodeURIComponent(player.player_id)}`;
+
+        const deleteButton = make("button", "delete-player", "Delete");
+        deleteButton.type = "button";
+        deleteButton.addEventListener("click", () => {
+          deletePlayer(player.player_id, deleteButton);
+        });
+
+        const footerActions = make("div", "footer-actions");
+        footerActions.append(profileLink, editLink, deleteButton);
+        footer.append(footerActions);
+
+        card.append(head, tags, scores, footer);
+        playersList.append(card);
+      }
+    }
+
+    function updateStats() {
+      document.querySelector("#total-players").textContent =
+        players.length;
+
+      document.querySelector("#assessed-players").textContent =
+        new Set(analyses.map((item) => item.player_id)).size;
+
+      document.querySelector("#planned-players").textContent =
+        new Set(
+          plans
+            .filter((plan) => plan.status === "active")
+            .map((plan) => plan.player_id)
+        ).size;
+    }
+
+    async function deletePlayer(playerId, button) {
+      const confirmed = confirm(
+        `Delete player ${playerId}? This cannot be undone. ` +
+        `If this player has videos, assessments, or training plans, ` +
+        `deletion may be blocked until those are removed first.`
+      );
+      if (!confirmed) return;
+
+      button.disabled = true;
+      button.textContent = "Deleting...";
+
+      try {
+        const response = await fetch(
+          `/players/${encodeURIComponent(playerId)}`,
+          { method: "DELETE" }
+        );
+
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          throw new Error(
+            result.detail ||
+            "Could not delete player. They may still have linked " +
+            "videos, assessments, or training plans."
+          );
+        }
+
+        players = players.filter((item) => item.player_id !== playerId);
+        analyses = analyses.filter((item) => item.player_id !== playerId);
+        plans = plans.filter((item) => item.player_id !== playerId);
+        updateStats();
+        render();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "Delete";
+        alert(error.message);
+      }
+    }
+
+    async function loadPlayers() {
+      try {
+        const responses = await Promise.all([
+          fetch("/players"),
+          fetch("/analyses"),
+          fetch("/training-plans"),
+          fetch("/teams"),
+        ]);
+
+        if (responses.some((response) => !response.ok)) {
+          throw new Error("Could not load player data.");
+        }
+
+        [players, analyses, plans, teams] =
+          await Promise.all(responses.map((response) => response.json()));
+
+        for (const team of teams) {
+          const option = document.createElement("option");
+          option.value = team.team_id;
+          option.textContent = `${team.name} (${team.age_group})`;
+          teamFilter.append(option);
+        }
+
+        updateStats();
+        render();
+      } catch (error) {
+        message.textContent = error.message;
+        playersList.replaceChildren(
+          make("div", "state", "Player data is unavailable.")
+        );
+      }
+    }
+
+    search.addEventListener("input", render);
+    sexFilter.addEventListener("change", render);
+    teamFilter.addEventListener("change", render);
+    loadPlayers();
+  </script>
+</body>
+</html>

@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assessment Registrations | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --navy: #061a33;
+      --blue: #0866f5;
+      --green: #28b75f;
+      --orange: #ff9418;
+      --purple: #8955ea;
+      --line: #dfe6ef;
+      --muted: #68778d;
+      --page: #f5f7fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: #10213b;
+      background: var(--page);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+
+    .layout {
+      display: grid;
+      min-height: 100vh;
+      grid-template-columns: 240px 1fr;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 16px;
+      color: white;
+      background: linear-gradient(180deg, #071d39, #031226);
+    }
+
+    .brand {
+      margin: 0 10px 30px;
+      color: #f5c45d;
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 3px;
+      color: #8ca1bb;
+      font-size: 11px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    nav { display: grid; gap: 7px; }
+
+    nav a {
+      padding: 12px 14px;
+      border-radius: 9px;
+      color: #dce7f5;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    nav a:hover,
+    nav a.active {
+      color: white;
+      background: var(--blue);
+    }
+
+    main {
+      min-width: 0;
+      padding: 26px 30px 55px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 23px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: -.04em;
+    }
+
+    header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(160px, 1fr));
+      gap: 15px;
+      margin-bottom: 18px;
+    }
+
+    .stat,
+    .toolbar,
+    .registration {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: white;
+      box-shadow: 0 8px 24px #15304d0a;
+    }
+
+    .stat { padding: 19px; }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 7px;
+      font-size: 29px;
+    }
+
+    .toolbar {
+      margin-bottom: 18px;
+      padding: 14px;
+    }
+
+    input {
+      width: 100%;
+      padding: 12px 13px;
+      border: 1px solid #d7e0eb;
+      border-radius: 9px;
+      background: white;
+      color: inherit;
+      font: inherit;
+    }
+
+    #registrations-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 15px;
+    }
+
+    .registration { padding: 19px; }
+
+    .registration-head {
+      display: flex;
+      align-items: center;
+      gap: 13px;
+      margin-bottom: 15px;
+    }
+
+    .avatar {
+      display: grid;
+      width: 52px;
+      height: 52px;
+      flex: 0 0 52px;
+      place-items: center;
+      border-radius: 50%;
+      color: white;
+      background: linear-gradient(145deg, #1d7cff, #092b58);
+      font-size: 16px;
+      font-weight: 900;
+    }
+
+    .registration h2 {
+      margin: 0 0 4px;
+      font-size: 17px;
+    }
+
+    .registration-id {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-bottom: 15px;
+    }
+
+    .tags span {
+      padding: 6px 9px;
+      border-radius: 8px;
+      color: #405269;
+      background: #eef3f8;
+      font-size: 11px;
+      font-weight: 750;
+      text-transform: capitalize;
+    }
+
+    .details {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 15px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+      font-size: 12.5px;
+    }
+
+    .details-row {
+      display: grid;
+      grid-template-columns: 92px 1fr;
+      gap: 8px;
+      color: #2c3e58;
+    }
+
+    .details-row span:first-child {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .registration-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .registration-footer span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .consent-badge {
+      padding: 5px 10px;
+      border-radius: 8px;
+      color: #1c8a4a;
+      background: #e8f8ee;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .consent-badge.incomplete {
+      color: #b83232;
+      background: #fff5f5;
+    }
+
+    .footer-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .delete-registration {
+      padding: 5px 10px;
+      border: 1px solid #f3c9c9;
+      border-radius: 8px;
+      color: #b83232;
+      background: #fff5f5;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .delete-registration:hover { background: #ffe9e9; }
+    .delete-registration:disabled { opacity: .6; cursor: wait; }
+
+    .state {
+      grid-column: 1 / -1;
+      padding: 50px 20px;
+      border: 1px dashed #cbd7e4;
+      border-radius: 14px;
+      color: var(--muted);
+      background: white;
+      text-align: center;
+    }
+
+    #page-message {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 850px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; }
+      nav { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 600px) {
+      main { padding: 22px 16px 40px; }
+      header { align-items: flex-start; flex-direction: column; }
+      .stats { grid-template-columns: 1fr; }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">
+        Kemet FC
+        <small>Academy Development</small>
+      </div>
+
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a class="active" href="/registrations-dashboard">Assessment Registrations</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+        <a href="/videos-dashboard">Videos</a>
+        <a href="/matches-dashboard">Matches</a>
+        <a href="/reports-dashboard">Reports</a>
+        <a href="/calendar-dashboard">Calendar</a>
+        <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <div>
+          <h1>Assessment Registrations</h1>
+          <p>Families who signed up for the Free AI Assessment Day from kemetfc.com.</p>
+        </div>
+      </header>
+
+      <p id="page-message" role="status"></p>
+
+      <section class="stats">
+        <article class="stat">
+          <span>Total registrations</span>
+          <strong id="total-registrations">0</strong>
+        </article>
+        <article class="stat">
+          <span>Registered today</span>
+          <strong id="today-registrations">0</strong>
+        </article>
+      </section>
+
+      <section class="toolbar">
+        <input id="registration-search" type="search"
+          placeholder="Search by parent or player name, or email">
+      </section>
+
+      <section id="registrations-list">
+        <div class="state">Loading registrations...</div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const registrationsList = document.querySelector("#registrations-list");
+    const search = document.querySelector("#registration-search");
+    const message = document.querySelector("#page-message");
+
+    let registrations = [];
+
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function formatDate(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime())
+        ? value
+        : date.toLocaleDateString(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          });
+    }
+
+    function formatDateTime(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime())
+        ? value
+        : date.toLocaleString(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          });
+    }
+
+    function allConsentsGiven(consents) {
+      return Boolean(consents) &&
+        Object.values(consents).every((value) => value === true);
+    }
+
+    function render() {
+      const query = search.value.toLowerCase().trim();
+
+      const visible = registrations.filter((registration) => {
+        const haystack = [
+          registration.parent_name,
+          registration.parent_email,
+          registration.player_name,
+        ].join(" ").toLowerCase();
+
+        return haystack.includes(query);
+      });
+
+      registrationsList.replaceChildren();
+
+      if (!visible.length) {
+        registrationsList.append(
+          make("div", "state", "No registrations found.")
+        );
+        return;
+      }
+
+      for (const registration of visible) {
+        const card = make("article", "registration");
+        const head = make("div", "registration-head");
+        const initials = (registration.player_name || "")
+          .split(" ")
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0])
+          .join("")
+          .toUpperCase();
+
+        const avatar = make("div", "avatar", initials || "P");
+        head.append(avatar);
+
+        const identity = make("div");
+        identity.append(make("h2", "", registration.player_name));
+        identity.append(make(
+          "p",
+          "registration-id",
+          `Parent: ${registration.parent_name}`
+        ));
+        head.append(identity);
+
+        const tags = make("div", "tags");
+        tags.append(make("span", "", `Age ${registration.player_age}`));
+        tags.append(make(
+          "span",
+          "",
+          `Born ${formatDate(registration.player_date_of_birth)}`
+        ));
+        if (registration.preferred_position) {
+          tags.append(make("span", "", registration.preferred_position));
+        }
+        if (registration.experience_level) {
+          tags.append(make("span", "", registration.experience_level));
+        }
+        if (registration.current_team) {
+          tags.append(make("span", "", registration.current_team));
+        }
+
+        const details = make("div", "details");
+        const rows = [
+          ["Email", registration.parent_email],
+          ["Phone", registration.parent_phone],
+          ["Emergency", registration.emergency_contact],
+        ];
+        for (const [label, value] of rows) {
+          const row = make("div", "details-row");
+          row.append(make("span", "", label));
+          row.append(make("span", "", value || "—"));
+          details.append(row);
+        }
+
+        const footer = make("div", "registration-footer");
+        footer.append(make(
+          "span",
+          "",
+          `Submitted ${formatDateTime(registration.submitted_at)}`
+        ));
+
+        const consentsOk = allConsentsGiven(registration.consents);
+        const footerActions = make("div", "footer-actions");
+        footerActions.append(make(
+          "span",
+          `consent-badge${consentsOk ? "" : " incomplete"}`,
+          consentsOk ? "All consents confirmed" : "Consent incomplete"
+        ));
+
+        const deleteButton = make("button", "delete-registration", "Delete");
+        deleteButton.type = "button";
+        deleteButton.addEventListener("click", () => {
+          deleteRegistration(registration.registration_id, deleteButton);
+        });
+        footerActions.append(deleteButton);
+
+        footer.append(footerActions);
+
+        card.append(head, tags, details, footer);
+        registrationsList.append(card);
+      }
+    }
+
+    function updateStats() {
+      document.querySelector("#total-registrations").textContent =
+        registrations.length;
+
+      const today = new Date().toDateString();
+      document.querySelector("#today-registrations").textContent =
+        registrations.filter((registration) => {
+          const submitted = new Date(registration.submitted_at);
+          return !Number.isNaN(submitted.getTime()) &&
+            submitted.toDateString() === today;
+        }).length;
+    }
+
+    async function deleteRegistration(registrationId, button) {
+      const confirmed = confirm(
+        `Delete this registration? This cannot be undone.`
+      );
+      if (!confirmed) return;
+
+      button.disabled = true;
+      button.textContent = "Deleting...";
+
+      try {
+        const response = await fetch(
+          `/registrations/${encodeURIComponent(registrationId)}`,
+          { method: "DELETE" }
+        );
+
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          throw new Error(
+            result.detail || "Could not delete registration."
+          );
+        }
+
+        registrations = registrations.filter(
+          (item) => item.registration_id !== registrationId
+        );
+        updateStats();
+        render();
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = "Delete";
+        alert(error.message);
+      }
+    }
+
+    async function loadRegistrations() {
+      try {
+        const response = await fetch("/registrations");
+
+        if (!response.ok) {
+          throw new Error("Could not load registrations.");
+        }
+
+        registrations = await response.json();
+        updateStats();
+        render();
+      } catch (error) {
+        message.textContent = error.message;
+        registrationsList.replaceChildren(
+          make("div", "state", "Registration data is unavailable.")
+        );
+      }
+    }
+
+    search.addEventListener("input", render);
+    loadRegistrations();
+  </script>
+</body>
+</html>

@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assessment Details | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; color: #142039; background: #f5f7fb; }
+    .layout { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
+    aside { padding: 26px 16px; color: white; background: #071b35; }
+    .brand { margin: 0 10px 30px; color: #ffd36b; font-size: 22px; font-weight: 800; }
+    nav { display: grid; gap: 8px; }
+    nav a { padding: 12px 14px; border-radius: 9px; color: #dbe7f7; text-decoration: none; }
+    nav a:hover, nav a.active { color: white; background: #1265ed; }
+    main { padding: 30px; }
+    h1, h2, p { margin-top: 0; }
+    .muted { color: #69768a; }
+    .back { color: #1265ed; font-weight: 700; text-decoration: none; }
+    .page-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .delete-assessment {
+      padding: 9px 16px;
+      border: 1px solid #f3c9c9;
+      border-radius: 9px;
+      color: #b83232;
+      background: #fff5f5;
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .delete-assessment:hover { background: #ffe9e9; }
+    .delete-assessment:disabled { opacity: .6; cursor: wait; }
+    .card { padding: 22px; border: 1px solid #e1e7ef; border-radius: 16px; background: white; }
+    #assessment-overview { display: grid; grid-template-columns: 1.5fr repeat(3, 1fr); gap: 14px; margin: 22px 0; }
+    .player { display: flex; align-items: center; gap: 13px; }
+    .avatar { display: grid; width: 58px; height: 58px; place-items: center; border-radius: 50%; color: white; background: #1265ed; font-weight: 800; }
+    /* design-system.css assumes .player always sits on a light card (as in
+       players.html) and forces dark text there — but #assessment-overview
+       is a dark card, so that made the player name invisible. Win it back
+       with higher specificity, scoped to just this page's usage. */
+    #assessment-overview .player h1,
+    #assessment-overview .player h2,
+    #assessment-overview .player h3,
+    #assessment-overview .player {
+      color: #F4F7FA !important;
+    }
+    .metric { padding: 15px; border-radius: 12px; background: #f7f9fc; }
+    .metric strong { display: block; margin-top: 8px; font-size: 23px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .wide { grid-column: 1 / -1; }
+    .list { display: grid; gap: 10px; }
+    .attribute { padding: 13px; border-radius: 10px; background: #f8fafc; }
+    .attribute-head { display: flex; justify-content: space-between; }
+    .bar { height: 7px; margin-top: 9px; overflow: hidden; border-radius: 10px; background: #e5eaf1; }
+    .bar span { display: block; height: 100%; background: #169c57; }
+    #assessment-weaknesses .bar span { background: #f39320; }
+    .recommendation { padding: 14px; border-left: 4px solid #7b4ee4; border-radius: 8px; background: #f8f5ff; }
+    a.recommendation {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      text-decoration: none;
+      color: #16233B;
+      transition: background .15s ease, transform .15s ease;
+    }
+    a.recommendation:hover { background: #efe7ff; transform: translateX(-2px); }
+    a.recommendation .arrow { color: #7b4ee4; font-weight: 800; flex: 0 0 auto; }
+    .state { padding: 30px; color: #69768a; text-align: center; }
+    .focus-area { padding: 16px; border-left: 4px solid #1265ed; border-radius: 8px; background: #f5f8ff; margin-bottom: 12px; }
+    .focus-area h3 { font-size: 16px; margin-bottom: 4px; color: #16233B !important; }
+    .focus-area p { margin: 0 0 10px; color: #16233B !important; }
+    .focus-videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+    .focus-video { display: block; overflow: hidden; border-radius: 8px; background: white; text-decoration: none; border: 1px solid #e1e7ef; }
+    .focus-video img { display: block; width: 100%; height: 100px; object-fit: cover; background: #0b2036; }
+    .focus-video-info { padding: 8px 10px; }
+    .focus-video-info strong { display: block; font-size: 12.5px; line-height: 1.3; color: #16233B !important; }
+    .focus-video-info span { display: block; margin-top: 3px; font-size: 11px; color: #69768a !important; }
+    .mobile-nav { display: none; }
+    @media (max-width: 800px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { display: none; }
+      main { padding: 18px 18px 94px; }
+      #assessment-overview, .grid { grid-template-columns: 1fr; }
+      .wide { grid-column: auto; }
+      .mobile-nav {
+        position: fixed; z-index: 20; right: 10px; bottom: 10px; left: 10px;
+        display: grid; grid-template-columns: repeat(4, 1fr); padding: 8px;
+        border: 1px solid rgba(255, 255, 255, .10); border-radius: 18px;
+        background: rgba(7, 26, 43, .96); box-shadow: 0 18px 42px rgba(0, 0, 0, .24);
+        backdrop-filter: blur(16px);
+      }
+      .mobile-nav a {
+        padding: 9px 4px; border-radius: 11px; color: #b7c4cf; text-align: center;
+        text-decoration: none; font-size: 11px; font-weight: 800;
+      }
+      .mobile-nav a.active { color: #b7f15a; background: rgba(124, 219, 32, .10); }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC</div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a href="/teams-dashboard">Teams</a>
+        <a class="active" href="/assessments-dashboard">Assessments</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+              <a href="/registrations-dashboard">Assessment Registrations</a>
+              <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <a class="back" href="/assessments-dashboard">← Back to Assessments</a>
+      <div class="page-head">
+        <div>
+          <h1>Assessment Details</h1>
+          <p id="subtitle" class="muted">Loading assessment...</p>
+        </div>
+        <button id="delete-assessment-btn" type="button" class="delete-assessment">
+          Delete Assessment
+        </button>
+      </div>
+
+      <section id="assessment-overview" class="card">
+        <div class="state">Loading...</div>
+      </section>
+
+      <div class="grid">
+        <section class="card">
+          <h2>Top Strengths</h2>
+          <div id="assessment-strengths" class="list"></div>
+        </section>
+
+        <section class="card">
+          <h2>Areas to Improve</h2>
+          <div id="assessment-weaknesses" class="list"></div>
+        </section>
+
+        <section class="card wide">
+          <h2>Training Recommendations</h2>
+          <p class="muted" style="margin-bottom:12px;">
+            Tap a recommendation to build a training plan around it.
+          </p>
+          <div id="assessment-recommendations" class="list"></div>
+        </section>
+
+        <section id="smart-recommendations-section" class="card wide" hidden>
+          <h2>AI Training Recommendations</h2>
+          <p class="muted" style="margin-bottom:12px;">
+            Generated from this player's own analysis, with real training
+            videos found on YouTube.
+          </p>
+          <div id="smart-recommendations" class="list"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <nav class="mobile-nav" aria-label="Mobile navigation">
+    <a href="/dashboard">Home</a>
+    <a href="/players-dashboard">Players</a>
+    <a href="/drill-library">Train</a>
+    <a class="active" href="/assessments-dashboard">Assess</a>
+  </nav>
+
+  <script>
+    const analysisId = new URLSearchParams(location.search).get("analysis_id");
+
+    const make = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    };
+
+    const normalize = (item) => Array.isArray(item)
+      ? { attribute: item[0], score: item[1] }
+      : { attribute: item.attribute, score: item.score };
+
+    function renderAttributes(selector, values) {
+      const target = document.querySelector(selector);
+      target.replaceChildren();
+
+      if (!values?.length) {
+        target.append(make("div", "state", "No data available."));
+        return;
+      }
+
+      values.map(normalize).forEach((item) => {
+        const score = typeof item.score === "number" ? item.score : 0;
+        const box = make("div", "attribute");
+        const head = make("div", "attribute-head");
+        head.append(make("strong", "", item.attribute), make("strong", "", score));
+        const bar = make("div", "bar");
+        const fill = make("span");
+        fill.style.width = `${Math.max(0, Math.min(100, score))}%`;
+        bar.append(fill);
+        box.append(head, bar);
+        target.append(box);
+      });
+    }
+
+    function renderOverview(analysis, player) {
+      const target = document.querySelector("#assessment-overview");
+      target.replaceChildren();
+
+      const playerBox = make("div", "player");
+      playerBox.append(make(
+        "div",
+        "avatar",
+        `${player.first_name_en[0]}${player.last_name_en[0]}`.toUpperCase()
+      ));
+
+      const identity = make("div");
+      identity.append(make("h2", "", `${player.first_name_en} ${player.last_name_en}`));
+      identity.append(make("p", "muted", player.player_id));
+      playerBox.append(identity);
+
+      const values = [
+        ["Overall score", analysis.overall_score ?? "—"],
+        ["Confidence", analysis.confidence_score == null ? "—" : `${Math.round(analysis.confidence_score * 100)}%`],
+        ["Status", analysis.processing_status],
+      ];
+
+      target.append(playerBox);
+
+      values.forEach(([label, value]) => {
+        const metric = make("div", "metric");
+        metric.append(make("span", "muted", label), make("strong", "", value));
+        target.append(metric);
+      });
+
+      document.querySelector("#subtitle").textContent =
+        `${analysis.analysis_id} · ${analysis.analysis_type}`;
+    }
+
+    async function loadAssessment() {
+      if (!analysisId) {
+        document.querySelector("#assessment-overview").innerHTML =
+          '<div class="state">Analysis ID is required.</div>';
+        return;
+      }
+
+      try {
+        const analysisResponse = await fetch(`/analyses/${encodeURIComponent(analysisId)}`);
+        if (!analysisResponse.ok) throw new Error("Assessment not found.");
+
+        const analysis = await analysisResponse.json();
+        const playerResponse = await fetch(`/players/${encodeURIComponent(analysis.player_id)}`);
+        if (!playerResponse.ok) throw new Error("Player not found.");
+
+        const player = await playerResponse.json();
+        renderOverview(analysis, player);
+        renderAttributes("#assessment-strengths", analysis.strengths);
+        renderAttributes("#assessment-weaknesses", analysis.weaknesses);
+
+        const recommendations = document.querySelector("#assessment-recommendations");
+        recommendations.replaceChildren();
+
+        if (!analysis.recommendations?.length) {
+          recommendations.append(make("div", "state", "No recommendations available."));
+        } else {
+          analysis.recommendations.forEach((item) => {
+            const link = document.createElement("a");
+            link.className = "recommendation";
+            link.href = `/drill-library?analysis_id=${encodeURIComponent(analysisId)}`;
+            const text = document.createElement("span");
+            text.textContent = typeof item === "string" ? item : JSON.stringify(item);
+            const arrow = document.createElement("span");
+            arrow.className = "arrow";
+            arrow.textContent = "→";
+            link.append(text, arrow);
+            recommendations.append(link);
+          });
+        }
+
+        loadSmartRecommendations();
+      } catch (error) {
+        document.querySelector("#assessment-overview").replaceChildren(
+          make("div", "state", error.message)
+        );
+      }
+    }
+
+    async function loadSmartRecommendations() {
+      const section = document.querySelector("#smart-recommendations-section");
+      const target = document.querySelector("#smart-recommendations");
+
+      try {
+        const response = await fetch(
+          `/analyses/${encodeURIComponent(analysisId)}/smart-recommendations`
+        );
+
+        if (response.status === 404) return;
+
+        section.hidden = false;
+
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          target.replaceChildren(make(
+            "div",
+            "state",
+            result.detail || "Could not load AI recommendations right now."
+          ));
+          return;
+        }
+
+        const result = await response.json();
+        target.replaceChildren();
+
+        if (!result.focus_areas?.length) {
+          target.append(make("div", "state", "No AI recommendations available."));
+          return;
+        }
+
+        result.focus_areas.forEach((area) => {
+          const box = make("div", "focus-area");
+          box.append(make("h3", "", area.title || "Focus area"));
+          if (area.reason) box.append(make("p", "", area.reason));
+
+          if (area.videos?.length) {
+            const videoGrid = make("div", "focus-videos");
+            area.videos.forEach((video) => {
+              const videoLink = document.createElement("a");
+              videoLink.className = "focus-video";
+              videoLink.href = video.url;
+              videoLink.target = "_blank";
+              videoLink.rel = "noopener noreferrer";
+
+              if (video.thumbnail_url) {
+                const thumb = document.createElement("img");
+                thumb.src = video.thumbnail_url;
+                thumb.alt = "";
+                videoLink.append(thumb);
+              }
+
+              const info = make("div", "focus-video-info");
+              info.append(make("strong", "", video.title || "Watch video"));
+              if (video.channel) info.append(make("span", "", video.channel));
+              videoLink.append(info);
+              videoGrid.append(videoLink);
+            });
+            box.append(videoGrid);
+          }
+
+          target.append(box);
+        });
+      } catch (error) {
+        section.hidden = false;
+        target.replaceChildren(
+          make("div", "state", "Could not load AI recommendations right now.")
+        );
+      }
+    }
+
+    document.querySelector("#delete-assessment-btn").addEventListener(
+      "click",
+      async () => {
+        if (!analysisId) return;
+
+        const confirmed = confirm(
+          `Delete assessment ${analysisId}? This cannot be undone.`
+        );
+        if (!confirmed) return;
+
+        const button = document.querySelector("#delete-assessment-btn");
+        button.disabled = true;
+        button.textContent = "Deleting...";
+
+        try {
+          const response = await fetch(
+            `/analyses/${encodeURIComponent(analysisId)}`,
+            { method: "DELETE" }
+          );
+
+          if (!response.ok && response.status !== 204) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.detail || "Could not delete assessment.");
+          }
+
+          location.href = "/assessments-dashboard";
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = "Delete Assessment";
+          alert(error.message);
+        }
+      }
+    );
+
+    loadAssessment();
+  </script>
+</body>
+</html>

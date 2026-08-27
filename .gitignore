@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+cloud_platform.db
+cloud_platform_EMPTY_backup_*.db
+soccer_ai.db
+*.db-journal
+*.db-wal
+*.db-shm
+uploads/
+analysis/results/
+.pytest_cache/
+.coverage
+.DS_Store
+*.log

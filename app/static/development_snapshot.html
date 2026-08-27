@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Player Development Snapshot | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --ink: #111f35;
+      --navy: #071b35;
+      --blue: #175fc7;
+      --green: #45ba32;
+      --lime: #82d629;
+      --muted: #66758a;
+      --line: #dfe6ec;
+      --surface: #f2f5f3;
+      --white: #fff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--surface);
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    header {
+      padding: 28px max(24px, calc((100vw - 1180px) / 2));
+      color: white;
+      background:
+        linear-gradient(120deg, #06172bdf, #0a2436f2),
+        repeating-linear-gradient(135deg, transparent 0 32px, #ffffff0a 33px 34px);
+      border-bottom: 5px solid var(--lime);
+    }
+
+    .home-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 16px;
+      padding: 9px 14px;
+      border: 1px solid #ffffff3d;
+      border-radius: 999px;
+      color: white;
+      background: #ffffff12;
+      font-size: 14px;
+      font-weight: 800;
+      text-decoration: none;
+      transition: background .2s ease, color .2s ease;
+    }
+
+    .home-link:hover,
+    .home-link:focus-visible {
+      color: var(--navy);
+      background: var(--lime);
+      outline: none;
+    }
+
+    .eyebrow {
+      color: var(--lime);
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+
+    h1 { margin: 7px 0 4px; font-size: clamp(30px, 5vw, 54px); }
+    header p { margin: 0; color: #ced9e5; }
+
+    main {
+      width: min(1180px, calc(100% - 28px));
+      margin: 24px auto 54px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: white;
+      box-shadow: 0 9px 28px #0a23340d;
+    }
+
+    #snapshot-form {
+      display: grid;
+      grid-template-columns: 2fr repeat(3, 1fr) auto;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 20px;
+      padding: 18px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+    }
+
+    input, select, button {
+      width: 100%;
+      min-height: 46px;
+      border-radius: 10px;
+      font: inherit;
+    }
+
+    input, select {
+      padding: 11px 13px;
+      border: 1px solid #cfd9e1;
+      background: white;
+    }
+
+    button {
+      padding: 11px 18px;
+      border: 0;
+      color: #092035;
+      background: var(--lime);
+      font-weight: 900;
+      cursor: pointer;
+    }
+
+    #status { min-height: 24px; margin: 0 2px 12px; color: var(--muted); }
+
+    .snapshot { display: none; gap: 16px; }
+    .snapshot.ready { display: grid; }
+
+    .overview {
+      display: grid;
+      grid-template-columns: 270px minmax(0, 1fr) 310px;
+      gap: 16px;
+    }
+
+    .identity {
+      padding: 24px;
+      color: white;
+      background: linear-gradient(160deg, #0d2b3f, #071b35);
+    }
+
+    .avatar {
+      display: grid;
+      width: 112px;
+      height: 112px;
+      margin-bottom: 22px;
+      place-items: center;
+      border: 4px solid #ffffff22;
+      border-radius: 50%;
+      color: var(--navy);
+      background: var(--lime);
+      font-size: 36px;
+      font-weight: 900;
+    }
+
+    .identity h2 { margin: 0 0 18px; font-size: 30px; }
+    .facts { display: grid; gap: 14px; }
+    .fact { padding-top: 13px; border-top: 1px solid #ffffff24; }
+    .fact span { display: block; color: #aebdcc; font-size: 11px; text-transform: uppercase; }
+    .fact strong { display: block; margin-top: 3px; }
+
+    .panel { padding: 22px; }
+    .panel h2 { margin: 0 0 16px; color: #133b78; font-size: 19px; }
+
+    #ability-chart {
+      display: block;
+      width: min(100%, 420px);
+      height: auto;
+      margin: auto;
+    }
+
+    .score {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .score strong { color: var(--green); font-size: 46px; }
+    .score span { color: var(--muted); font-weight: 700; }
+    .focus-list, .tag-list { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .tag {
+      padding: 7px 10px;
+      border-radius: 999px;
+      color: #17472f;
+      background: #e8f7eb;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .coach { padding: 22px; border-left: 5px solid var(--blue); }
+    .coach p { margin: 0; color: #394a5f; line-height: 1.7; }
+
+    .lower {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    .drill-grid { display: grid; gap: 11px; }
+    .drill {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+
+    .drill strong, .drill span { display: block; }
+    .drill span { margin-top: 4px; color: var(--muted); font-size: 13px; }
+    .drill a { align-self: center; color: var(--blue); font-weight: 800; text-decoration: none; }
+
+    .empty {
+      padding: 24px;
+      border: 1px dashed #bdc8d2;
+      border-radius: 12px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .plan-meta { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .plan-meta div { padding: 13px; border-radius: 12px; background: #f3f6f8; }
+    .plan-meta span { display: block; color: var(--muted); font-size: 12px; }
+    .plan-meta strong { display: block; margin-top: 4px; }
+
+    @media (max-width: 920px) {
+      #snapshot-form { grid-template-columns: repeat(2, 1fr); }
+      .overview { grid-template-columns: 1fr 1fr; }
+      .identity { grid-row: span 2; }
+      .lower { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 620px) {
+      #snapshot-form, .overview { grid-template-columns: 1fr; }
+      .identity { grid-row: auto; }
+      main { width: min(100% - 18px, 1180px); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="home-link" href="/dashboard" aria-label="Return to dashboard">← Home</a>
+    <div class="eyebrow">Kemet FC intelligence</div>
+    <h1>Player Development Snapshot</h1>
+    <p>One view of ability, analysis insights, and the next best training actions.</p>
+  </header>
+
+  <main>
+    <form id="snapshot-form" class="card">
+      <div>
+        <label for="player-id">Player</label>
+        <select id="player-id" required>
+          <option value="">Loading players...</option>
+        </select>
+      </div>
+      <div>
+        <label for="difficulty">Training level</label>
+        <select id="difficulty">
+          <option value="">Any level</option>
+          <option value="beginner">Beginner</option>
+          <option value="intermediate">Intermediate</option>
+          <option value="advanced">Advanced</option>
+        </select>
+      </div>
+      <div>
+        <label for="duration">Target minutes</label>
+        <input id="duration" type="number" min="1" value="10">
+      </div>
+      <div>
+        <label for="equipment">Equipment</label>
+        <input id="equipment" placeholder="ball, cones">
+      </div>
+      <button type="submit">Build snapshot</button>
+    </form>
+
+    <p id="status" role="status">Choose a player to begin.</p>
+
+    <section id="snapshot" class="snapshot">
+      <div class="overview">
+        <article class="identity card">
+          <div id="avatar" class="avatar">TB</div>
+          <h2 id="player-name">Player</h2>
+          <div class="facts">
+            <div class="fact"><span>Age</span><strong id="player-age">—</strong></div>
+            <div class="fact"><span>Height</span><strong id="player-height">—</strong></div>
+            <div class="fact"><span>Preferred foot</span><strong id="player-foot">—</strong></div>
+            <div class="fact"><span>Team</span><strong id="player-team">—</strong></div>
+          </div>
+        </article>
+
+        <article class="panel card">
+          <h2>Ability profile</h2>
+          <svg id="ability-chart" viewBox="0 0 440 340" role="img" aria-label="Player ability radar chart"></svg>
+        </article>
+
+        <article class="panel card">
+          <h2>Analysis snapshot</h2>
+          <div class="score">
+            <span>Overall score</span>
+            <strong id="overall-score">—</strong>
+          </div>
+          <h3>Development focus</h3>
+          <div id="development-focus" class="focus-list"></div>
+          <h3>Strengths</h3>
+          <div id="strengths" class="tag-list"></div>
+        </article>
+      </div>
+
+      <article class="coach card">
+        <h2>Coach summary</h2>
+        <p id="coach-summary"></p>
+      </article>
+
+      <div class="lower">
+        <article class="panel card">
+          <h2>Recommended training</h2>
+          <div id="recommended-drills" class="drill-grid"></div>
+        </article>
+
+        <article class="panel card">
+          <h2>Latest training plan</h2>
+          <div id="training-plan"></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="/auth-client.js"></script>
+  <script>
+    const form = document.querySelector("#snapshot-form");
+    const status = document.querySelector("#status");
+    const snapshot = document.querySelector("#snapshot");
+    const playerSelect = document.querySelector("#player-id");
+
+    function setText(selector, value) {
+      document.querySelector(selector).textContent = value ?? "—";
+    }
+
+    function attributeName(item) {
+      if (Array.isArray(item)) return item[0];
+      if (item && typeof item === "object") return item.attribute;
+      return null;
+    }
+
+    function renderTags(selector, values, emptyText) {
+      const container = document.querySelector(selector);
+      container.replaceChildren();
+      const names = values.map(attributeName).filter(Boolean);
+
+      if (!names.length) {
+        container.append(Object.assign(document.createElement("span"), {
+          className: "tag",
+          textContent: emptyText,
+        }));
+        return;
+      }
+
+      names.forEach((name) => {
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = name;
+        container.append(tag);
+      });
+    }
+
+    function point(cx, cy, radius, angle) {
+      return [
+        cx + Math.cos(angle) * radius,
+        cy + Math.sin(angle) * radius,
+      ];
+    }
+
+    function polygonPoints(values, radius, cx, cy) {
+      return values.map((value, index) => {
+        const angle = -Math.PI / 2 + index * (Math.PI * 2 / values.length);
+        const [x, y] = point(cx, cy, radius * value, angle);
+        return `${x},${y}`;
+      }).join(" ");
+    }
+
+    function renderRadar(metrics) {
+      const svg = document.querySelector("#ability-chart");
+      const namespace = "http://www.w3.org/2000/svg";
+      const cx = 220;
+      const cy = 165;
+      const radius = 112;
+      svg.replaceChildren();
+
+      for (let level = 1; level <= 5; level += 1) {
+        const polygon = document.createElementNS(namespace, "polygon");
+        polygon.setAttribute(
+          "points",
+          polygonPoints(metrics.map(() => level / 5), radius, cx, cy)
+        );
+        polygon.setAttribute("fill", "none");
+        polygon.setAttribute("stroke", "#d5dfe8");
+        svg.append(polygon);
+      }
+
+      metrics.forEach((metric, index) => {
+        const angle = -Math.PI / 2 + index * (Math.PI * 2 / metrics.length);
+        const [x, y] = point(cx, cy, radius, angle);
+        const [labelX, labelY] = point(cx, cy, radius + 34, angle);
+        const axis = document.createElementNS(namespace, "line");
+        axis.setAttribute("x1", cx);
+        axis.setAttribute("y1", cy);
+        axis.setAttribute("x2", x);
+        axis.setAttribute("y2", y);
+        axis.setAttribute("stroke", "#d5dfe8");
+        svg.append(axis);
+
+        const label = document.createElementNS(namespace, "text");
+        label.setAttribute("x", labelX);
+        label.setAttribute("y", labelY);
+        label.setAttribute("text-anchor", "middle");
+        label.setAttribute("font-size", "12");
+        label.setAttribute("font-weight", "800");
+        label.setAttribute("fill", "#33475b");
+        label.textContent = `${metric.label} ${Math.round(metric.score)}`;
+        svg.append(label);
+      });
+
+      const profile = document.createElementNS(namespace, "polygon");
+      profile.setAttribute(
+        "points",
+        polygonPoints(
+          metrics.map((metric) => Math.max(0, Math.min(100, metric.score)) / 100),
+          radius,
+          cx,
+          cy
+        )
+      );
+      profile.setAttribute("fill", "#1765c733");
+      profile.setAttribute("stroke", "#175fc7");
+      profile.setAttribute("stroke-width", "3");
+      svg.append(profile);
+    }
+
+    function renderDrills(groups) {
+      const container = document.querySelector("#recommended-drills");
+      container.replaceChildren();
+      const seen = new Set();
+      const drills = [];
+
+      groups.forEach((group) => group.drills.forEach((drill) => {
+        if (!seen.has(drill.drill_id)) {
+          seen.add(drill.drill_id);
+          drills.push({ drill, weakness: group.weakness });
+        }
+      }));
+
+      if (!drills.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No suitable active drills found.";
+        container.append(empty);
+        return;
+      }
+
+      drills.forEach(({ drill, weakness }) => {
+        const item = document.createElement("div");
+        item.className = "drill";
+        const copy = document.createElement("div");
+        const name = document.createElement("strong");
+        const detail = document.createElement("span");
+        const link = document.createElement("a");
+        name.textContent = drill.name;
+        detail.textContent = `${weakness} · ${drill.difficulty} · ${drill.duration_minutes} min`;
+        link.href = drill.video_url;
+        link.textContent = "Watch ↗";
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        copy.append(name, detail);
+        item.append(copy, link);
+        container.append(item);
+      });
+    }
+
+    function renderPlan(plan) {
+      const container = document.querySelector("#training-plan");
+      container.replaceChildren();
+
+      if (!plan) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No saved training plan yet.";
+        container.append(empty);
+        return;
+      }
+
+      const grid = document.createElement("div");
+      grid.className = "plan-meta";
+      [
+        ["Plan", plan.plan_id],
+        ["Status", plan.status],
+        ["Level", plan.player_difficulty || "Any"],
+        ["Session", `${plan.target_duration || "—"} min`],
+      ].forEach(([label, value]) => {
+        const item = document.createElement("div");
+        const caption = document.createElement("span");
+        const content = document.createElement("strong");
+        caption.textContent = label;
+        content.textContent = value;
+        item.append(caption, content);
+        grid.append(item);
+      });
+      container.append(grid);
+    }
+
+    function render(data) {
+      const player = data.player;
+      const analysis = data.latest_analysis;
+      const initials = player.name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0].toUpperCase())
+        .join("");
+
+      setText("#avatar", initials || "TB");
+      setText("#player-name", player.name);
+      setText("#player-age", player.age);
+      setText("#player-height", `${player.height_cm} cm`);
+      setText("#player-foot", player.preferred_foot);
+      setText("#player-team", player.team_id || "Unassigned");
+      setText("#overall-score", analysis?.overall_score ?? "—");
+      setText("#coach-summary", data.coach_summary);
+
+      const focus = document.querySelector("#development-focus");
+      focus.replaceChildren();
+      (data.development_focus.length
+        ? data.development_focus
+        : ["Awaiting analysis"]
+      ).forEach((name) => {
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = name;
+        focus.append(tag);
+      });
+
+      renderTags("#strengths", analysis?.strengths || [], "Awaiting analysis");
+      renderRadar(data.ability_profile);
+      renderDrills(data.drill_recommendations);
+      renderPlan(data.latest_training_plan);
+      snapshot.classList.add("ready");
+    }
+
+    async function loadSnapshot(playerId) {
+      status.textContent = "Building player snapshot...";
+      snapshot.classList.remove("ready");
+      const params = new URLSearchParams();
+      const difficulty = document.querySelector("#difficulty").value;
+      const duration = document.querySelector("#duration").value;
+      const equipment = document.querySelector("#equipment").value.trim();
+      if (difficulty) params.set("player_difficulty", difficulty);
+      if (duration) params.set("target_duration", duration);
+      if (equipment) params.set("available_equipment", equipment);
+
+      try {
+        const response = await fetch(
+          `/players/${encodeURIComponent(playerId)}/development-snapshot?${params}`
+        );
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not build snapshot.");
+        render(data);
+        status.textContent = `Snapshot ready for ${data.player.name}.`;
+        const url = new URL(window.location.href);
+        url.searchParams.set("player_id", playerId);
+        window.history.replaceState({}, "", url);
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      loadSnapshot(playerSelect.value);
+    });
+
+    const initialPlayerId = new URLSearchParams(window.location.search)
+      .get("player_id");
+
+    async function loadPlayers() {
+      playerSelect.disabled = true;
+
+      try {
+        const response = await fetch("/players");
+        const players = await response.json();
+        if (!response.ok) {
+          throw new Error(players.detail || "Could not load players.");
+        }
+
+        playerSelect.replaceChildren();
+        const prompt = document.createElement("option");
+        prompt.value = "";
+        prompt.textContent = players.length
+          ? "Choose a player"
+          : "No players available";
+        playerSelect.append(prompt);
+
+        players
+          .slice()
+          .sort((left, right) => {
+            const leftName = `${left.first_name_en} ${left.last_name_en}`;
+            const rightName = `${right.first_name_en} ${right.last_name_en}`;
+            return leftName.localeCompare(rightName);
+          })
+          .forEach((player) => {
+            const option = document.createElement("option");
+            option.value = player.player_id;
+            option.textContent = `${player.first_name_en} ${player.last_name_en}`.trim();
+            playerSelect.append(option);
+          });
+
+        playerSelect.disabled = !players.length;
+
+        if (initialPlayerId) {
+          playerSelect.value = initialPlayerId;
+          if (playerSelect.value) {
+            loadSnapshot(initialPlayerId);
+          } else {
+            status.textContent = "The selected player is not available.";
+          }
+        } else if (!players.length) {
+          status.textContent = "Add a player before building a snapshot.";
+        }
+      } catch (error) {
+        playerSelect.replaceChildren();
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "Players unavailable";
+        playerSelect.append(option);
+        status.textContent = error.message;
+      }
+    }
+
+    loadPlayers();
+  </script>
+</body>
+</html>

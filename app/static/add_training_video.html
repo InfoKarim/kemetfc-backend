@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Add Training Video | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root { --navy:#0b2940; --green:#7cdd18; --muted:#627086; }
+    * { box-sizing: border-box; }
+    body { margin:0; font:16px system-ui,sans-serif; color:#10223a; background:#f3f7f4; }
+    header { padding:38px max(24px,calc((100% - 920px)/2)); color:white; background:var(--navy); border-bottom:7px solid var(--green); }
+    header h1 { margin:0 0 8px; font-size:clamp(34px,6vw,56px); }
+    header p { margin:0; color:#cedae4; }
+    .home-link { display:inline-block; margin-top:16px; padding:9px 14px; border-radius:9px; color:#08213a; background:var(--green); font-weight:800; text-decoration:none; }
+    main { width:min(920px,calc(100% - 32px)); margin:30px auto; }
+    form { display:flex; flex-direction:column; gap:18px; }
+    .entry {
+      display:grid; grid-template-columns:1fr 1fr; gap:18px;
+      padding:26px; border:1px solid #d7e1dd; border-radius:20px; background:white;
+      box-shadow:0 12px 32px #10223a12;
+    }
+    .entry-header {
+      grid-column:1/-1; display:flex; align-items:center; justify-content:space-between;
+    }
+    .entry-header h2 { margin:0; font-size:19px; color:#0b2940; }
+    .remove-entry {
+      padding:8px 14px; border:1px solid #e3b2b2; border-radius:9px; font-weight:750;
+      color:#a4293a; background:#fdf2f2; cursor:pointer;
+    }
+    label { display:block; margin-bottom:7px; color:#42536a; font-weight:750; }
+    input,select,textarea { width:100%; padding:13px; border:1px solid #cbd8df; border-radius:10px; font:inherit; }
+    textarea { min-height:105px; resize:vertical; }
+    .wide { grid-column:1/-1; }
+    .choice { padding:16px; border:1px solid #dbe4df; border-radius:12px; background:#f8fbf9; }
+    small { display:block; margin-top:6px; color:var(--muted); }
+    .actions { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    button,.cancel { padding:14px 22px; border:0; border-radius:11px; font-weight:800; text-decoration:none; cursor:pointer; }
+    button { color:#08213a; background:var(--green); }
+    button:disabled { opacity:.6; cursor:default; }
+    .cancel { color:white; background:var(--navy); }
+    .add-entry { color:#0b2940; background:#e4f0e8; border:1px dashed #9fc4ab; }
+    #status { color:var(--muted); white-space:pre-line; }
+    @media(max-width:650px) { .entry { grid-template-columns:1fr; } .wide { grid-column:auto; } }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <header>
+    <h1 id="page-title">Add Training Video</h1>
+    <p id="page-description">Add one or more uploaded drill videos or external Facebook/YouTube training links.</p>
+    <a class="home-link" href="/dashboard">Home</a>
+  </header>
+  <main>
+    <form id="training-video-form">
+      <div id="entries-container"></div>
+      <div class="actions">
+        <button id="add-entry" class="add-entry" type="button">+ Add another video</button>
+      </div>
+      <p id="status" role="status"></p>
+      <div class="actions"><a class="cancel" href="/drill-library">Cancel</a><button id="save" type="submit">Add to Drill Library</button></div>
+    </form>
+  </main>
+
+  <template id="entry-template">
+    <div class="entry">
+      <div class="entry-header">
+        <h2 class="entry-title">Video 1</h2>
+        <button type="button" class="remove-entry" hidden>Remove</button>
+      </div>
+      <div><label>Training name</label><input data-field="name" required></div>
+      <div><label>Skill category</label><input data-field="category" placeholder="Passing, Vision, Shooting" required></div>
+      <div class="wide"><label>Description</label><textarea data-field="description" required></textarea></div>
+      <div><label>Minimum age</label><input data-field="min-age" type="number" min="1" required></div>
+      <div><label>Maximum age</label><input data-field="max-age" type="number" min="1" required></div>
+      <div><label>Difficulty</label><select data-field="difficulty"><option>beginner</option><option>intermediate</option><option>advanced</option></select></div>
+      <div><label>Duration (minutes)</label><input data-field="duration" type="number" min="1" required></div>
+      <div class="wide"><label>Equipment</label><input data-field="equipment" placeholder="ball, cones — leave empty for any equipment"></div>
+      <div class="wide"><label>Library status</label><select data-field="active"><option value="true">Active</option><option value="false">Inactive</option></select></div>
+      <div class="choice wide">
+        <label>Upload MP4 training video</label>
+        <input data-field="video-file" type="file" accept=".mp4,.mov,.avi,.mkv,.webm,.m4v,video/*">
+        <small data-field="file-help">Choose an MP4 up to 500 MB, or provide an external link below—not both.</small>
+      </div>
+      <div class="choice wide">
+        <label>External training link</label>
+        <input data-field="video-url" type="text" inputmode="url" placeholder="https://www.facebook.com/reel/...">
+        <small>Facebook Reel, YouTube, or another HTTPS training-video link.</small>
+      </div>
+    </div>
+  </template>
+
+  <script>
+    const form = document.querySelector("#training-video-form");
+    const status = document.querySelector("#status");
+    const save = document.querySelector("#save");
+    const entriesContainer = document.querySelector("#entries-container");
+    const entryTemplate = document.querySelector("#entry-template");
+    const addEntryButton = document.querySelector("#add-entry");
+    const maxUploadBytes = 500 * 1024 * 1024;
+    const editingId = new URLSearchParams(location.search).get("drill_id");
+    let existingDrill = null;
+
+    function field(entry, name) {
+      return entry.querySelector(`[data-field="${name}"]`);
+    }
+
+    function renumberEntries() {
+      const entries = entriesContainer.querySelectorAll(".entry");
+      entries.forEach((entry, index) => {
+        entry.querySelector(".entry-title").textContent = `Video ${index + 1}`;
+        entry.querySelector(".remove-entry").hidden = editingId ? true : entries.length === 1;
+      });
+    }
+
+    function addEntry() {
+      const entry = entryTemplate.content.firstElementChild.cloneNode(true);
+      entriesContainer.append(entry);
+      renumberEntries();
+      return entry;
+    }
+
+    entriesContainer.addEventListener("change", (event) => {
+      if (event.target.matches('[data-field="video-file"]')) {
+        const entry = event.target.closest(".entry");
+        const file = event.target.files[0];
+        if (file) field(entry, "video-url").value = "";
+        field(entry, "file-help").textContent = file
+          ? `${file.name} — ${(file.size / 1024 / 1024).toFixed(1)} MB`
+          : "Choose an MP4 up to 500 MB, or provide an external link below—not both.";
+      }
+    });
+
+    entriesContainer.addEventListener("click", (event) => {
+      if (event.target.matches(".remove-entry")) {
+        event.target.closest(".entry").remove();
+        renumberEntries();
+      }
+    });
+
+    addEntryButton.addEventListener("click", () => addEntry());
+
+    async function loadDrillForEditing() {
+      const entry = addEntry();
+      if (!editingId) return;
+
+      addEntryButton.hidden = true;
+      document.querySelector("#page-title").textContent = "Edit Training Video";
+      document.querySelector("#page-description").textContent =
+        `Update ${editingId}. Its automatic ID will not change.`;
+      save.textContent = "Save changes";
+      save.disabled = true;
+      status.textContent = "Loading training details...";
+      try {
+        const response = await fetch(`/drills/${encodeURIComponent(editingId)}`);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Training video not found.");
+        existingDrill = data;
+        field(entry, "name").value = data.name;
+        field(entry, "category").value = data.category;
+        field(entry, "description").value = data.description;
+        field(entry, "min-age").value = data.min_age;
+        field(entry, "max-age").value = data.max_age;
+        field(entry, "difficulty").value = data.difficulty;
+        field(entry, "duration").value = data.duration_minutes;
+        field(entry, "equipment").value = data.equipment.join(", ");
+        field(entry, "active").value = String(data.active);
+        if (!data.video_url.startsWith("/uploads/drills/")) {
+          field(entry, "video-url").value = data.video_url;
+        } else {
+          field(entry, "file-help").textContent = "Current uploaded MP4 will be kept unless you choose a replacement.";
+        }
+        status.textContent = "Edit any field, then save changes.";
+        save.disabled = false;
+      } catch (error) {
+        status.textContent = error.message;
+        save.disabled = true;
+      }
+    }
+
+    function normalizeVideoUrl(value) {
+      let candidate = value.trim();
+      const markdownLink = candidate.match(/^\[[^\]]*\]\((https?:\/\/[^)]+)\)$/i);
+      if (markdownLink) candidate = markdownLink[1];
+      if (/^(www\.|facebook\.com\/|youtube\.com\/|youtu\.be\/)/i.test(candidate)) {
+        candidate = `https://${candidate}`;
+      }
+      let parsed;
+      try {
+        parsed = new URL(candidate);
+      } catch {
+        throw new Error("Enter a complete video link, for example https://www.facebook.com/reel/123.");
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error("The training video link must start with http:// or https://.");
+      }
+      return parsed.href;
+    }
+
+    function readEntry(entry) {
+      const file = field(entry, "video-file").files[0];
+      const videoUrlInput = field(entry, "video-url").value.trim();
+
+      if ((!editingId && !file && !videoUrlInput) || (file && videoUrlInput)) {
+        throw new Error("Choose one source: an MP4 file or an external link.");
+      }
+      if (file && file.size > maxUploadBytes) {
+        throw new Error("Video exceeds the 500 MB limit.");
+      }
+
+      const drill = {
+        name: field(entry, "name").value.trim(),
+        category: field(entry, "category").value.trim(),
+        description: field(entry, "description").value.trim(),
+        min_age: Number(field(entry, "min-age").value),
+        max_age: Number(field(entry, "max-age").value),
+        difficulty: field(entry, "difficulty").value,
+        duration_minutes: Number(field(entry, "duration").value),
+        equipment: field(entry, "equipment").value.split(",").map(item => item.trim()).filter(Boolean),
+        active: field(entry, "active").value === "true"
+      };
+      if (editingId) drill.drill_id = editingId;
+
+      return { drill, file, videoUrlInput };
+    }
+
+    async function submitEntry({ drill, file, videoUrlInput }) {
+      let response;
+      if (file) {
+        const upload = new FormData();
+        upload.append("metadata", JSON.stringify(drill));
+        upload.append("video", file);
+        response = await fetch("/drills/upload", { method: "POST", body: upload });
+      } else {
+        const videoUrl = videoUrlInput
+          ? normalizeVideoUrl(videoUrlInput)
+          : existingDrill.video_url;
+        const target = editingId
+          ? `/drills/${encodeURIComponent(editingId)}`
+          : "/drills";
+        response = await fetch(target, {
+          method: editingId ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...drill, video_url: videoUrl })
+        });
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      const result = contentType.includes("application/json")
+        ? await response.json()
+        : { detail: await response.text() };
+
+      if (!response.ok) {
+        const fallback = response.status >= 500
+          ? "The server could not save the training video. Please try again."
+          : "Could not add training video.";
+        throw new Error(
+          result.detail && result.detail !== "Internal Server Error"
+            ? result.detail
+            : fallback
+        );
+      }
+
+      return result;
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const entries = Array.from(entriesContainer.querySelectorAll(".entry"));
+
+      let parsedEntries;
+      try {
+        parsedEntries = entries.map(readEntry);
+      } catch (error) {
+        status.textContent = error.message;
+        return;
+      }
+
+      save.disabled = true;
+      const successes = [];
+      const failures = [];
+
+      for (let index = 0; index < parsedEntries.length; index += 1) {
+        status.textContent = parsedEntries.length > 1
+          ? `Adding video ${index + 1} of ${parsedEntries.length}...`
+          : (editingId ? "Saving changes..." : "Adding training video...");
+        try {
+          const result = await submitEntry(parsedEntries[index]);
+          successes.push(result.drill_id);
+        } catch (error) {
+          failures.push(`${parsedEntries[index].drill.name || `Video ${index + 1}`}: ${error.message}`);
+        }
+      }
+
+      if (!failures.length) {
+        status.textContent = editingId
+          ? `Training video ${successes[0]} updated.`
+          : successes.length > 1
+            ? `${successes.length} training videos added.`
+            : `Training video ${successes[0]} added.`;
+        location.href = "/drill-library";
+        return;
+      }
+
+      status.textContent = successes.length
+        ? `${successes.length} of ${parsedEntries.length} videos added. Failed: ${failures.join("; ")}`
+        : `Could not add training video(s). Failed: ${failures.join("; ")}`;
+      save.disabled = false;
+    });
+
+    loadDrillForEditing();
+  </script>
+</body>
+</html>
