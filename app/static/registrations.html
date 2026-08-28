@@ -268,6 +268,20 @@
     .delete-registration:hover { background: #ffe9e9; }
     .delete-registration:disabled { opacity: .6; cursor: wait; }
 
+    .convert-registration {
+      padding: 5px 10px;
+      border: 1px solid #bfdcff;
+      border-radius: 8px;
+      color: #0866f5;
+      background: #eef5ff;
+      font-size: 11px;
+      font-weight: 800;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .convert-registration:hover { background: #dfebff; }
+
     .state {
       grid-column: 1 / -1;
       padding: 50px 20px;
@@ -398,6 +412,21 @@
         Object.values(consents).every((value) => value === true);
     }
 
+    function buildAddPlayerUrl(registration) {
+      const nameParts = (registration.player_name || "").trim().split(/\s+/);
+      const firstName = nameParts.shift() || "";
+      const lastName = nameParts.join(" ");
+
+      const params = new URLSearchParams();
+      if (firstName) params.set("first_name", firstName);
+      if (lastName) params.set("last_name", lastName);
+      if (registration.player_date_of_birth) {
+        params.set("dob", registration.player_date_of_birth);
+      }
+
+      return `/add-player?${params.toString()}`;
+    }
+
     function render() {
       const query = search.value.toLowerCase().trim();
 
@@ -487,6 +516,10 @@
           `consent-badge${consentsOk ? "" : " incomplete"}`,
           consentsOk ? "All consents confirmed" : "Consent incomplete"
         ));
+
+        const convertLink = make("a", "convert-registration", "Add as player");
+        convertLink.href = buildAddPlayerUrl(registration);
+        footerActions.append(convertLink);
 
         const deleteButton = make("button", "delete-registration", "Delete");
         deleteButton.type = "button";

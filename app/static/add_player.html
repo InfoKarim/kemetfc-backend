@@ -250,6 +250,22 @@
     const params = new URLSearchParams(location.search);
     const editingPlayerId = params.get("player_id");
 
+    function applyRegistrationPrefill() {
+      if (editingPlayerId) return;
+
+      const firstName = params.get("first_name");
+      const lastName = params.get("last_name");
+      const dob = params.get("dob");
+      if (!firstName && !lastName && !dob) return;
+
+      if (firstName) document.querySelector("#first-name-en").value = firstName;
+      if (lastName) document.querySelector("#last-name-en").value = lastName;
+      if (dob) document.querySelector("#date-of-birth").value = dob;
+
+      document.querySelector("#form-subtitle").textContent =
+        "Pre-filled from an assessment day registration. Complete the profile below.";
+    }
+
     function fillGroup(group, values) {
       if (!values) return;
       document.querySelectorAll(`[data-group="${group}"] [data-field]`)
@@ -302,7 +318,7 @@
       }
     }
 
-    loadTeams().then(loadPlayerForEdit);
+    loadTeams().then(loadPlayerForEdit).then(applyRegistrationPrefill);
 
     document.querySelector("#player-form").addEventListener(
       "submit",
