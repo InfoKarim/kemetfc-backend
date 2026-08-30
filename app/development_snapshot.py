@@ -121,6 +121,7 @@ def build_development_snapshot(
             "team_id": player.team_id,
             "height_cm": player.physical_profile.height_cm,
             "preferred_foot": player.physical_profile.dominant_foot,
+            "photo_filename": player.photo_filename,
         },
         "ability_profile": ability_profile,
         "latest_analysis": (
