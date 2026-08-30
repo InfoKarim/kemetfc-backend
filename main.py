@@ -1745,6 +1745,9 @@ def _debug_jobs(
             if existing is None:
                 requeue_log.append(f"{job_id}: not found")
                 continue
+            if existing.attempt_count >= existing.max_attempts:
+                existing.attempt_count = 0
+                db.commit()
             try:
                 if existing.status == "processing":
                     service.transition_job(
