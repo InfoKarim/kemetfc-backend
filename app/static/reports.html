@@ -28,7 +28,8 @@
     #report-content { display: grid; gap: 18px; }
     .profile { display: grid; grid-template-columns: 1.3fr repeat(3, 1fr); gap: 14px; }
     .identity { display: flex; align-items: center; gap: 14px; }
-    .avatar { display: grid; width: 64px; height: 64px; place-items: center; border-radius: 50%; color: white; background: #1265ed; font-size: 21px; font-weight: 850; }
+    .avatar { display: grid; width: 64px; height: 64px; place-items: center; overflow: hidden; border-radius: 50%; color: white; background: #1265ed; font-size: 21px; font-weight: 850; }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
     .metric { padding: 15px; border-radius: 11px; background: #f7f9fc; }
     .metric strong { display: block; margin-top: 7px; font-size: 24px; }
     .two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
@@ -190,11 +191,17 @@
 
       const profile = make("section", "card profile");
       const identity = make("div", "identity");
-      identity.append(make(
-        "div",
-        "avatar",
-        `${player.first_name_en[0]}${player.last_name_en[0]}`.toUpperCase()
-      ));
+      const avatar = make("div", "avatar");
+      if (player.photo_filename) {
+        const img = document.createElement("img");
+        img.src = `/uploads/avatars/${player.photo_filename}`;
+        img.alt = "";
+        avatar.append(img);
+      } else {
+        avatar.textContent =
+          `${player.first_name_en[0]}${player.last_name_en[0]}`.toUpperCase();
+      }
+      identity.append(avatar);
 
       const name = make("div");
       name.append(make("h2", "", `${player.first_name_en} ${player.last_name_en}`));

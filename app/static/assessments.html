@@ -168,11 +168,13 @@
       height: 40px;
       flex: 0 0 auto;
       place-items: center;
+      overflow: hidden;
       border-radius: 50%;
       color: white;
       background: linear-gradient(145deg, #1265ed, #0b2f67);
       font-weight: 800;
     }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
 
     .player strong, .player span { display: block; }
     .player span { margin-top: 3px; color: var(--muted); font-size: 12px; }
@@ -420,6 +422,22 @@
         .toUpperCase();
     };
 
+    const makeAvatar = (playerId) => {
+      const avatar = make("div", "avatar");
+      const player = players.get(playerId);
+
+      if (player?.photo_filename) {
+        const img = document.createElement("img");
+        img.src = `/uploads/avatars/${player.photo_filename}`;
+        img.alt = "";
+        avatar.append(img);
+      } else {
+        avatar.textContent = initials(playerId);
+      }
+
+      return avatar;
+    };
+
     const scoreClass = (score) => {
       if (score >= 70) return "good";
       if (score >= 50) return "average";
@@ -509,7 +527,7 @@
         });
 
         const player = make("div", "player");
-        player.append(make("div", "avatar", initials(assessment.player_id)));
+        player.append(makeAvatar(assessment.player_id));
 
         const identity = make("div");
         identity.append(make(
