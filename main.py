@@ -1705,7 +1705,18 @@ def _debug_jobs(
     if token != "kemet-debug-2026":
         raise HTTPException(status_code=404)
 
-    from app.db_models import VideoAnalysisJobDB
+    from app.db_models import VideoAnalysisJobDB, VideoDB
+
+    videos = db.query(VideoDB).all()
+    video_info = [
+        {
+            "video_id": v.video_id,
+            "file_path": v.file_path,
+            "file_format": v.file_format,
+            "video_type": v.video_type,
+        }
+        for v in videos
+    ]
 
     requeue_log = []
     if requeue:
@@ -1738,7 +1749,7 @@ def _debug_jobs(
         .all()
     )
 
-    return {"requeue_log": requeue_log, "jobs": [
+    return {"requeue_log": requeue_log, "videos": video_info, "jobs": [
         {
             "job_id": j.job_id,
             "video_id": j.video_id,
