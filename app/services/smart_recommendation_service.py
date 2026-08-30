@@ -284,7 +284,10 @@ def get_smart_recommendations(
 
     for area in focus_areas:
         keywords = area.get("search_keywords") or area.get("title", "")
-        area["videos"] = search_training_videos(keywords)
+        try:
+            area["videos"] = search_training_videos(keywords)
+        except RecommendationError:
+            area["videos"] = []
 
     return focus_areas
 
