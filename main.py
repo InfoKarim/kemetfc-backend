@@ -230,6 +230,7 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
+    "/_debug/avatar-check",
 }
 HTML_PAGE_PATHS = {
     "/",
