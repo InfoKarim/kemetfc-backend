@@ -230,7 +230,6 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
-    "/_debug/avatar-check",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -877,44 +876,6 @@ def get_uploaded_avatar(filename: str):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     return RedirectResponse(download_url, status_code=307)
-
-
-@app.get("/_debug/avatar-check")
-def debug_avatar_check(filename: str, token: str):
-    if token != "6i_SIeEwdAv6xHSSu_mwIgw1J-h6uC4m":
-        raise HTTPException(status_code=404)
-
-    from app.avatar_upload import get_avatar_storage
-
-    storage = get_avatar_storage()
-    result = {
-        "backend": type(storage).__name__,
-        "local_path": None,
-        "download_url": None,
-        "download_url_error": None,
-        "head_object_ok": None,
-        "head_object_error": None,
-    }
-
-    local_path = storage.local_path(filename)
-    result["local_path"] = str(local_path) if local_path else None
-
-    try:
-        result["download_url"] = storage.create_download_url(filename)
-    except Exception as error:
-        result["download_url_error"] = str(error)
-
-    if hasattr(storage, "client"):
-        try:
-            storage.client.head_object(
-                Bucket=storage.bucket, Key=storage._key(filename)
-            )
-            result["head_object_ok"] = True
-        except Exception as error:
-            result["head_object_ok"] = False
-            result["head_object_error"] = str(error)
-
-    return result
 
 
 @app.get("/seasons")
