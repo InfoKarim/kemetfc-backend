@@ -1711,7 +1711,17 @@ def _debug_jobs(
     if requeue:
         service = VideoAnalysisJobService(db=db)
         for job_id in [j.strip() for j in requeue.split(",") if j.strip()]:
+            existing = db.get(VideoAnalysisJobDB, job_id)
+            if existing is None:
+                requeue_log.append(f"{job_id}: not found")
+                continue
             try:
+                if existing.status == "processing":
+                    service.transition_job(
+                        job_id=job_id,
+                        status="failed",
+                        error_message="Cancelled: orphaned by worker restart",
+                    )
                 result = service.transition_job(
                     job_id=job_id, status="queued"
                 )
