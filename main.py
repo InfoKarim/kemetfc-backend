@@ -687,7 +687,8 @@ async def add_operational_headers(request: Request, call_next):
     )
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https://i.ytimg.com; "
         "media-src 'self' https:; connect-src 'self'; "
         "object-src 'none'; frame-ancestors 'none'; base-uri 'self'"
     )
@@ -2599,6 +2600,64 @@ def get_player_development_snapshot(
         target_duration=target_duration,
         available_equipment=equipment,
     )
+
+
+@app.get("/players/{player_id}/smart-recommendations")
+def get_player_smart_recommendations(
+    player_id: str,
+    db: Session = Depends(get_db),
+):
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if not is_smart_recommendations_configured():
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    analyses = AnalysisService(db=db).get_analyses_by_player(player_id)
+    latest_analysis = max(
+        analyses, key=lambda analysis: analysis.created_at, default=None
+    )
+
+    if latest_analysis is not None:
+        weaknesses = latest_analysis.weaknesses
+        strengths = latest_analysis.strengths
+        source = "analysis"
+    else:
+        profile_scores = [
+            ("Speed", player.physical_profile.speed),
+            ("Stamina", player.physical_profile.stamina),
+            ("Passing", player.technical_profile.passing),
+            ("Dribbling", player.technical_profile.dribbling),
+            ("Ball Control", player.technical_profile.ball_control),
+            ("Game IQ", player.mental_profile.decision_making),
+        ]
+        ranked = sorted(profile_scores, key=lambda item: item[1])
+        weaknesses = [
+            {"attribute": name, "score": score}
+            for name, score in ranked[:3]
+        ]
+        strengths = [
+            {"attribute": name, "score": score}
+            for name, score in ranked[-3:]
+        ]
+        source = "profile"
+
+    try:
+        focus_areas = get_smart_recommendations(
+            player_name=f"{player.first_name_en} {player.last_name_en}",
+            age=calculate_player_age(player.date_of_birth),
+            weaknesses=weaknesses,
+            strengths=strengths,
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    return {"focus_areas": focus_areas, "source": source}
 
 
 
