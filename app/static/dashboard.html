@@ -288,6 +288,7 @@
       height: 78px;
       flex: 0 0 78px;
       place-items: center;
+      overflow: hidden;
       border: 4px solid #dceaff;
       border-radius: 50%;
       color: white;
@@ -295,6 +296,7 @@
       font-size: 26px;
       font-weight: 900;
     }
+    .avatar img { width: 100%; height: 100%; object-fit: cover; }
 
     .player-card h3 { margin: 0 0 5px; }
 
@@ -1438,7 +1440,15 @@ function renderPlayer(players, analyses) {
       const layout = make("div", "player-overview");
       const card = make("div", "player-card");
       const initials = `${player.first_name_en?.[0] || ""}${player.last_name_en?.[0] || ""}`;
-      const avatar = make("div", "avatar", initials || "P");
+      const avatar = make("div", "avatar");
+      if (player.photo_filename) {
+        const img = document.createElement("img");
+        img.src = `/uploads/avatars/${player.photo_filename}`;
+        img.alt = "";
+        avatar.append(img);
+      } else {
+        avatar.textContent = initials || "P";
+      }
       const info = make("div");
       info.append(make(
         "h3",
