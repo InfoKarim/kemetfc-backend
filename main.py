@@ -220,7 +220,6 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
-    "/_debug/jobs",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -1696,36 +1695,6 @@ def get_all_videos(
 ):
     service = VideoService(db=db)
     return service.get_all_videos()
-
-
-@app.get("/_debug/jobs")
-def _debug_jobs(token: str, db: Session = Depends(get_db)):
-    if token != "kemet-debug-2026":
-        raise HTTPException(status_code=404)
-
-    from app.db_models import VideoAnalysisJobDB
-
-    jobs = (
-        db.query(VideoAnalysisJobDB)
-        .order_by(VideoAnalysisJobDB.created_at.desc())
-        .limit(10)
-        .all()
-    )
-
-    return [
-        {
-            "job_id": j.job_id,
-            "video_id": j.video_id,
-            "status": j.status,
-            "attempt_count": j.attempt_count,
-            "max_attempts": j.max_attempts,
-            "error_message": j.error_message,
-            "created_at": str(j.created_at),
-            "started_at": str(j.started_at) if j.started_at else None,
-            "completed_at": str(j.completed_at) if j.completed_at else None,
-        }
-        for j in jobs
-    ]
 
 
 @app.post("/videos/{video_id}/analysis-jobs", status_code=201)
