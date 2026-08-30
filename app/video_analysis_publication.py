@@ -14,6 +14,45 @@ def _bounded_score(value: float) -> float:
     return round(min(max(float(value), 0.0), 100.0), 2)
 
 
+JOINT_SYMMETRY_LABELS = {
+    "hip": "Hip Symmetry",
+    "knee": "Knee Symmetry",
+    "ankle": "Ankle Symmetry",
+    "elbow": "Elbow Symmetry",
+}
+
+
+def _joint_symmetry_attributes(
+    feature_summary: dict,
+) -> list[tuple[str, float]]:
+    """Score how evenly each joint moved on the left vs. right side.
+
+    A big gap between a player's left and right knee/hip/ankle/elbow
+    angles (averaged across the video) is a sport-agnostic sign of a
+    mobility or technique issue, so this doesn't require guessing at
+    sport-specific "ideal" angle ranges.
+    """
+    attributes = []
+
+    for joint, label in JOINT_SYMMETRY_LABELS.items():
+        left = feature_summary.get(f"left_{joint}_angle_degrees", {}).get(
+            "mean"
+        )
+        right = feature_summary.get(f"right_{joint}_angle_degrees", {}).get(
+            "mean"
+        )
+
+        if left is None or right is None:
+            continue
+
+        asymmetry_degrees = abs(left - right)
+        attributes.append(
+            (label, _bounded_score(100 - asymmetry_degrees * 2))
+        )
+
+    return attributes
+
+
 def _rated_attributes(result: dict) -> list[tuple[str, float]]:
     movement = result.get("movement_analysis") or {}
     analysis_type = movement.get("analysis_type") or result.get(
@@ -93,11 +132,15 @@ def _rated_attributes(result: dict) -> list[tuple[str, float]]:
         return attributes
 
     detection_rate = summary.get("detection_rate")
+    feature_summary = (result.get("features") or {}).get("summary") or {}
+    attributes = _joint_symmetry_attributes(feature_summary)
 
-    if detection_rate is None:
-        return []
+    if detection_rate is not None:
+        attributes.append(
+            ("Movement Visibility", _bounded_score(detection_rate * 100))
+        )
 
-    return [("Movement Visibility", _bounded_score(detection_rate * 100))]
+    return attributes
 
 
 def project_analysis_result(result: dict) -> dict:

@@ -44,6 +44,33 @@ def test_projects_generic_pose_detection_quality():
     ]
 
 
+def test_projects_pose_estimation_joint_symmetry_from_measurements():
+    projected = project_analysis_result(
+        {
+            "analysis_type": "pose_estimation",
+            "summary": {"detection_rate": 0.9},
+            "features": {
+                "summary": {
+                    "left_knee_angle_degrees": {"mean": 170.0},
+                    "right_knee_angle_degrees": {"mean": 130.0},
+                    "left_hip_angle_degrees": {"mean": 160.0},
+                    "right_hip_angle_degrees": {"mean": 158.0},
+                }
+            },
+        }
+    )
+
+    attributes = {
+        item["attribute"]: item["score"]
+        for item in projected["strengths"] + projected["weaknesses"]
+    }
+
+    # 40 degree knee gap -> heavily penalized; 2 degree hip gap -> fine.
+    assert attributes["Knee Symmetry"] == 20.0
+    assert attributes["Hip Symmetry"] == 96.0
+    assert attributes["Movement Visibility"] == 90.0
+
+
 def test_projects_full_match_target_metrics():
     projected = project_analysis_result(
         {
