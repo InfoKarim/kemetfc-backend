@@ -1742,6 +1742,7 @@ def _debug_jobs(
         {
             "job_id": j.job_id,
             "video_id": j.video_id,
+            "analysis_type": j.analysis_type,
             "status": j.status,
             "attempt_count": j.attempt_count,
             "max_attempts": j.max_attempts,
