@@ -82,6 +82,19 @@
     }
     .delete-player:hover { background: #ffe9e9; }
     .delete-player:disabled { opacity: .6; cursor: wait; }
+    .delete-assessment-item {
+      padding: 5px 10px !important;
+      border: 1px solid #f3c9c9 !important;
+      border-radius: 8px !important;
+      color: #b83232 !important;
+      background: #fff5f5 !important;
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700 !important;
+      cursor: pointer;
+    }
+    .delete-assessment-item:hover { background: #ffe9e9 !important; }
+    .delete-assessment-item:disabled { opacity: .6 !important; cursor: wait; }
     h1, h2, h3, p { margin-top: 0; }
 
     .profile {
@@ -483,10 +496,50 @@
       assessments.slice().reverse().slice(0, 5).forEach((analysis) => {
         const item = make("article", "item");
         const head = make("div", "item-head");
-        head.append(
-          make("strong", "", analysis.analysis_type),
-          make("span", "badge", analysis.processing_status)
-        );
+        head.append(make("strong", "", analysis.analysis_type));
+
+        const actions = make("div");
+        actions.style.display = "flex";
+        actions.style.alignItems = "center";
+        actions.style.gap = "8px";
+        actions.append(make("span", "badge", analysis.processing_status));
+
+        const deleteButton = make("button", "delete-assessment-item", "Delete");
+        deleteButton.type = "button";
+        deleteButton.addEventListener("click", async () => {
+          if (!window.confirm(
+            `Delete this ${analysis.analysis_type} assessment? This cannot be undone.`
+          )) {
+            return;
+          }
+
+          deleteButton.disabled = true;
+          deleteButton.textContent = "Deleting...";
+
+          try {
+            const response = await fetch(
+              `/analyses/${encodeURIComponent(analysis.analysis_id)}`,
+              { method: "DELETE" }
+            );
+
+            if (!response.ok) {
+              const data = await response.json().catch(() => ({}));
+              throw new Error(data.detail || "Could not delete assessment.");
+            }
+
+            item.remove();
+            if (!target.children.length) {
+              target.append(make("div", "empty", "No assessments available."));
+            }
+          } catch (error) {
+            deleteButton.disabled = false;
+            deleteButton.textContent = "Delete";
+            alert(error.message);
+          }
+        });
+        actions.append(deleteButton);
+        head.append(actions);
+
         item.append(head);
         item.append(make(
           "p",
