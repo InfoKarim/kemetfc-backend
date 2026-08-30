@@ -1699,11 +1699,27 @@ def get_all_videos(
 
 
 @app.get("/_debug/jobs")
-def _debug_jobs(token: str, db: Session = Depends(get_db)):
+def _debug_jobs(
+    token: str, requeue: str = "", db: Session = Depends(get_db)
+):
     if token != "kemet-debug-2026":
         raise HTTPException(status_code=404)
 
     from app.db_models import VideoAnalysisJobDB
+
+    requeue_log = []
+    if requeue:
+        service = VideoAnalysisJobService(db=db)
+        for job_id in [j.strip() for j in requeue.split(",") if j.strip()]:
+            try:
+                result = service.transition_job(
+                    job_id=job_id, status="queued"
+                )
+                requeue_log.append(
+                    f"{job_id}: {'requeued' if result else 'not found'}"
+                )
+            except ValueError as error:
+                requeue_log.append(f"{job_id}: error: {error}")
 
     jobs = (
         db.query(VideoAnalysisJobDB)
@@ -1712,7 +1728,7 @@ def _debug_jobs(token: str, db: Session = Depends(get_db)):
         .all()
     )
 
-    return [
+    return {"requeue_log": requeue_log, "jobs": [
         {
             "job_id": j.job_id,
             "video_id": j.video_id,
@@ -1725,7 +1741,7 @@ def _debug_jobs(token: str, db: Session = Depends(get_db)):
             "completed_at": str(j.completed_at) if j.completed_at else None,
         }
         for j in jobs
-    ]
+    ]}
 
 
 @app.post("/videos/{video_id}/analysis-jobs", status_code=201)
