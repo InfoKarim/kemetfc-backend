@@ -698,7 +698,8 @@ async def add_operational_headers(request: Request, call_next):
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: https://i.ytimg.com; "
+        "img-src 'self' data: https://i.ytimg.com "
+        "https://*.r2.cloudflarestorage.com; "
         "media-src 'self' https:; connect-src 'self'; "
         "object-src 'none'; frame-ancestors 'none'; base-uri 'self'"
     )
