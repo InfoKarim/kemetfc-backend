@@ -21,6 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api_schemas import (
+    AddPlanVideoSchema,
     AnalysisDrillRecommendationSchema,
     AnalysisSchema,
     ChangeOwnPasswordSchema,
@@ -76,6 +77,7 @@ from app.development_snapshot import build_development_snapshot, calculate_playe
 from app.services.smart_recommendation_service import (
     RecommendationError,
     get_smart_recommendations,
+    get_sports_medicine_notes,
     is_configured as is_smart_recommendations_configured,
 )
 from app.drill_recommendations import build_drill_recommendations
@@ -2602,6 +2604,35 @@ def get_player_development_snapshot(
     )
 
 
+def _resolve_player_weaknesses_strengths(player, db: Session):
+    analyses = AnalysisService(db=db).get_analyses_by_player(
+        player.player_id
+    )
+    latest_analysis = max(
+        analyses, key=lambda analysis: analysis.created_at, default=None
+    )
+
+    if latest_analysis is not None:
+        return latest_analysis.weaknesses, latest_analysis.strengths, "analysis"
+
+    profile_scores = [
+        ("Speed", player.physical_profile.speed),
+        ("Stamina", player.physical_profile.stamina),
+        ("Passing", player.technical_profile.passing),
+        ("Dribbling", player.technical_profile.dribbling),
+        ("Ball Control", player.technical_profile.ball_control),
+        ("Game IQ", player.mental_profile.decision_making),
+    ]
+    ranked = sorted(profile_scores, key=lambda item: item[1])
+    weaknesses = [
+        {"attribute": name, "score": score} for name, score in ranked[:3]
+    ]
+    strengths = [
+        {"attribute": name, "score": score} for name, score in ranked[-3:]
+    ]
+    return weaknesses, strengths, "profile"
+
+
 @app.get("/players/{player_id}/smart-recommendations")
 def get_player_smart_recommendations(
     player_id: str,
@@ -2618,34 +2649,9 @@ def get_player_smart_recommendations(
             detail="Smart recommendations are not configured",
         )
 
-    analyses = AnalysisService(db=db).get_analyses_by_player(player_id)
-    latest_analysis = max(
-        analyses, key=lambda analysis: analysis.created_at, default=None
+    weaknesses, strengths, source = _resolve_player_weaknesses_strengths(
+        player, db
     )
-
-    if latest_analysis is not None:
-        weaknesses = latest_analysis.weaknesses
-        strengths = latest_analysis.strengths
-        source = "analysis"
-    else:
-        profile_scores = [
-            ("Speed", player.physical_profile.speed),
-            ("Stamina", player.physical_profile.stamina),
-            ("Passing", player.technical_profile.passing),
-            ("Dribbling", player.technical_profile.dribbling),
-            ("Ball Control", player.technical_profile.ball_control),
-            ("Game IQ", player.mental_profile.decision_making),
-        ]
-        ranked = sorted(profile_scores, key=lambda item: item[1])
-        weaknesses = [
-            {"attribute": name, "score": score}
-            for name, score in ranked[:3]
-        ]
-        strengths = [
-            {"attribute": name, "score": score}
-            for name, score in ranked[-3:]
-        ]
-        source = "profile"
 
     try:
         focus_areas = get_smart_recommendations(
@@ -2658,6 +2664,39 @@ def get_player_smart_recommendations(
         raise HTTPException(status_code=502, detail=str(error))
 
     return {"focus_areas": focus_areas, "source": source}
+
+
+@app.get("/players/{player_id}/sports-medicine-notes")
+def get_player_sports_medicine_notes(
+    player_id: str,
+    db: Session = Depends(get_db),
+):
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if not is_smart_recommendations_configured():
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    weaknesses, strengths, source = _resolve_player_weaknesses_strengths(
+        player, db
+    )
+
+    try:
+        notes = get_sports_medicine_notes(
+            player_name=f"{player.first_name_en} {player.last_name_en}",
+            age=calculate_player_age(player.date_of_birth),
+            weaknesses=weaknesses,
+            strengths=strengths,
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    return {"notes": notes, "source": source}
 
 
 
@@ -2702,6 +2741,70 @@ def update_training_plan_status(
         )
 
     plan.status = status_data.status
+    service.update_plan(plan)
+    return plan
+
+
+@app.post("/training-plans/{plan_id}/recommendations/videos", status_code=201)
+def add_video_to_training_plan(
+    plan_id: str,
+    video_data: AddPlanVideoSchema,
+    db: Session = Depends(get_db),
+):
+    service = TrainingPlanService(db=db)
+    plan = service.get_plan(plan_id)
+
+    if plan is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Training plan not found",
+        )
+
+    video_drill = {
+        "drill_id": None,
+        "name": video_data.title,
+        "category": video_data.weakness,
+        "description": (
+            f"AI-suggested video via {video_data.channel}"
+            if video_data.channel
+            else "AI-suggested training video"
+        ),
+        "min_age": 0,
+        "max_age": 99,
+        "difficulty": None,
+        "duration_minutes": None,
+        "equipment": [],
+        "video_url": video_data.url,
+        "active": True,
+    }
+
+    recommendations = list(plan.recommendations or [])
+    group = next(
+        (
+            item
+            for item in recommendations
+            if item.get("weakness") == video_data.weakness
+        ),
+        None,
+    )
+
+    if group is None:
+        group = {
+            "weakness": video_data.weakness,
+            "weakness_score": None,
+            "drills": [],
+        }
+        recommendations.append(group)
+
+    drills = list(group.get("drills") or [])
+
+    if not any(
+        drill.get("video_url") == video_data.url for drill in drills
+    ):
+        drills.append(video_drill)
+
+    group["drills"] = drills
+    plan.recommendations = recommendations
     service.update_plan(plan)
     return plan
 

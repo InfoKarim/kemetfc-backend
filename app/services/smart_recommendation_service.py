@@ -123,6 +123,51 @@ def generate_focus_areas(
     return focus_areas[:max_items]
 
 
+def generate_sports_medicine_notes(
+    player_name: str,
+    age: int,
+    weaknesses: list,
+    strengths: list,
+    max_items: int = 3,
+) -> list[dict]:
+    prompt = (
+        "You are a youth sports medicine physician giving a coach general, "
+        "educational background on a young athlete's movement measurements. "
+        "This is NOT a diagnosis and NOT a treatment plan — it is "
+        "informational context only, and a licensed professional must "
+        "evaluate the athlete in person before any medical or training "
+        "decisions are made.\n"
+        f"Player: {player_name}, age {age}.\n"
+        f"Measured weaknesses: {_describe(weaknesses)}\n"
+        f"Measured strengths: {_describe(strengths)}\n\n"
+        f"Give exactly {max_items} general, non-diagnostic notes a coach "
+        "should keep in mind (e.g. mobility work, load management, warm-up "
+        "focus, or when it's worth suggesting the family see a sports "
+        "medicine professional). Do not name or imply any specific medical "
+        "condition, injury, or diagnosis. Reply with ONLY a JSON array (no "
+        "prose, no markdown fences), where each item has this shape: "
+        '{"title": "short note name", '
+        '"note": "one or two sentences of general, non-diagnostic guidance, '
+        'referencing the player\'s own measurements"}'
+    )
+
+    raw_text = _call_anthropic(prompt)
+    match = re.search(r"\[.*\]", raw_text, re.DOTALL)
+
+    if match is None:
+        raise RecommendationError("Could not parse AI recommendations")
+
+    try:
+        notes = json.loads(match.group(0))
+    except json.JSONDecodeError as error:
+        raise RecommendationError("Could not parse AI recommendations") from error
+
+    if not isinstance(notes, list):
+        raise RecommendationError("Could not parse AI recommendations")
+
+    return notes[:max_items]
+
+
 def search_training_videos(query: str, max_results: int = 3) -> list[dict]:
     api_key = get_youtube_api_key()
 
@@ -197,3 +242,20 @@ def get_smart_recommendations(
         area["videos"] = search_training_videos(keywords)
 
     return focus_areas
+
+
+def get_sports_medicine_notes(
+    player_name: str,
+    age: int,
+    weaknesses: list,
+    strengths: list,
+) -> list[dict]:
+    if not is_configured():
+        raise RecommendationError(
+            "Smart recommendations are not configured "
+            "(ANTHROPIC_API_KEY is missing)"
+        )
+
+    return generate_sports_medicine_notes(
+        player_name, age, weaknesses, strengths
+    )

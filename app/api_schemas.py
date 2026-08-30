@@ -143,6 +143,14 @@ class UpdateTrainingPlanStatusSchema(BaseModel):
     ]
 
 
+class AddPlanVideoSchema(BaseModel):
+    weakness: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=300)
+    url: str = Field(min_length=1, max_length=2000)
+    channel: str | None = Field(default=None, max_length=200)
+    thumbnail_url: str | None = Field(default=None, max_length=2000)
+
+
 class VideoSchema(BaseModel):
     video_id: str | None = None
     record_id: str
