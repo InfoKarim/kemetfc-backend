@@ -1248,9 +1248,6 @@
     fetch("/auth/me")
       .then((response) => response.json())
       .then((data) => {
-        if (data.user?.role === "admin") {
-          document.querySelector("#admin-users-link").hidden = false;
-        }
         if (data.user) setUpAccountPanel(data.user);
       });
 

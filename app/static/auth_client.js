@@ -324,6 +324,11 @@
 
         ensureAccountWidget(data.user);
 
+        if (data.user.role === "admin") {
+          const usersLink = document.querySelector("#admin-users-link");
+          if (usersLink) usersLink.hidden = false;
+        }
+
         if (data.user.role !== "admin") {
           const enabled = new Set(data.user.feature_permissions || []);
 
