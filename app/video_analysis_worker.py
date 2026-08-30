@@ -1,3 +1,4 @@
+import logging
 import os
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -16,6 +17,8 @@ from app.video_analysis_publication import VideoAnalysisPublisher
 
 
 ProgressCallback = Callable[[float], None]
+
+logger = logging.getLogger(__name__)
 VideoPathResolver = Callable[[VideoData], Path]
 
 
@@ -170,6 +173,7 @@ class VideoAnalysisWorker:
                 result_path=result_path,
             )
         except Exception as error:
+            logger.exception("analysis_job_processing_failed job_id=%s", job_id)
             self.db.rollback()
             self.publisher.mark_video_failed(job.video_id, str(error))
             failed = self.job_service.transition_job(
