@@ -53,7 +53,13 @@ from app.api_schemas import (
     VideoSchema,
 )
 from app.analysis_result_storage import get_analysis_result_storage
-from app.avatar_upload import AvatarUploadError, avatar_path, delete_avatar, save_avatar
+from app.avatar_upload import (
+    AvatarUploadError,
+    avatar_download_url,
+    avatar_local_path,
+    delete_avatar,
+    save_avatar,
+)
 from app.config import (
     get_app_environment,
     get_auth_cookie_secure,
@@ -855,12 +861,20 @@ def get_uploaded_avatar(filename: str):
     if not re.fullmatch(r"[A-Za-z0-9_-]+\.(jpg|png|webp)", filename):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
-    path = avatar_path(filename)
+    path = avatar_local_path(filename)
 
-    if not path.is_file():
+    if path is not None:
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Avatar not found")
+
+        return FileResponse(path)
+
+    download_url = avatar_download_url(filename)
+
+    if download_url is None:
         raise HTTPException(status_code=404, detail="Avatar not found")
 
-    return FileResponse(path)
+    return RedirectResponse(download_url, status_code=307)
 
 
 @app.get("/seasons")
