@@ -220,8 +220,6 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
-    "/_debug/jobs",
-    "/_debug/report",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -1697,95 +1695,6 @@ def get_all_videos(
 ):
     service = VideoService(db=db)
     return service.get_all_videos()
-
-
-_debug_store: dict = {}
-
-
-@app.post("/_debug/report")
-def _debug_report(token: str, note: str = "", text: str = ""):
-    if token != "kemet-debug-2026":
-        raise HTTPException(status_code=404)
-    _debug_store[note or "default"] = text
-    return {"stored": True}
-
-
-@app.get("/_debug/report")
-def _debug_report_read(token: str):
-    if token != "kemet-debug-2026":
-        raise HTTPException(status_code=404)
-    return _debug_store
-
-
-@app.get("/_debug/jobs")
-def _debug_jobs(
-    token: str, requeue: str = "", db: Session = Depends(get_db)
-):
-    if token != "kemet-debug-2026":
-        raise HTTPException(status_code=404)
-
-    from app.db_models import VideoAnalysisJobDB, VideoDB
-
-    videos = db.query(VideoDB).all()
-    video_info = [
-        {
-            "video_id": v.video_id,
-            "file_path": v.file_path,
-            "file_format": v.file_format,
-            "video_type": v.video_type,
-        }
-        for v in videos
-    ]
-
-    requeue_log = []
-    if requeue:
-        service = VideoAnalysisJobService(db=db)
-        for job_id in [j.strip() for j in requeue.split(",") if j.strip()]:
-            existing = db.get(VideoAnalysisJobDB, job_id)
-            if existing is None:
-                requeue_log.append(f"{job_id}: not found")
-                continue
-            if existing.attempt_count >= existing.max_attempts:
-                existing.attempt_count = 0
-                db.commit()
-            try:
-                if existing.status == "processing":
-                    service.transition_job(
-                        job_id=job_id,
-                        status="failed",
-                        error_message="Cancelled: orphaned by worker restart",
-                    )
-                result = service.transition_job(
-                    job_id=job_id, status="queued"
-                )
-                requeue_log.append(
-                    f"{job_id}: {'requeued' if result else 'not found'}"
-                )
-            except ValueError as error:
-                requeue_log.append(f"{job_id}: error: {error}")
-
-    jobs = (
-        db.query(VideoAnalysisJobDB)
-        .order_by(VideoAnalysisJobDB.created_at.desc())
-        .limit(10)
-        .all()
-    )
-
-    return {"requeue_log": requeue_log, "videos": video_info, "jobs": [
-        {
-            "job_id": j.job_id,
-            "video_id": j.video_id,
-            "analysis_type": j.analysis_type,
-            "status": j.status,
-            "attempt_count": j.attempt_count,
-            "max_attempts": j.max_attempts,
-            "error_message": j.error_message,
-            "created_at": str(j.created_at),
-            "started_at": str(j.started_at) if j.started_at else None,
-            "completed_at": str(j.completed_at) if j.completed_at else None,
-        }
-        for j in jobs
-    ]}
 
 
 @app.post("/videos/{video_id}/analysis-jobs", status_code=201)
