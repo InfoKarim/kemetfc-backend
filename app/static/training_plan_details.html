@@ -156,6 +156,73 @@
       font: inherit;
     }
 
+    .plan-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+
+    .edit-plan-btn, .delete-plan-btn {
+      padding: 9px 12px !important;
+      border-radius: 9px !important;
+      font: inherit;
+      font-weight: 750 !important;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .edit-plan-btn {
+      border: 1px solid #d7e0eb !important;
+      background: #eef3f8 !important;
+      color: #16233B !important;
+    }
+    .edit-plan-btn:hover { background: #e3ebf3 !important; }
+
+    .delete-plan-btn {
+      border: 1px solid #f3c9c9 !important;
+      background: #fff5f5 !important;
+      color: #b83232 !important;
+    }
+    .delete-plan-btn:hover { background: #ffe9e9 !important; }
+    .delete-plan-btn:disabled { opacity: .6; cursor: wait; }
+
+    .edit-plan-form {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 20px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: white;
+    }
+    .edit-plan-form input {
+      width: 100%;
+      padding: 11px;
+      border: 1px solid #d7e0eb;
+      border-radius: 9px;
+      background: white;
+      font: inherit;
+      color: #16233B !important;
+    }
+    .edit-plan-actions { display: flex; gap: 10px; margin-top: 6px; }
+    .save-plan-btn {
+      padding: 10px 16px !important;
+      border: 0 !important;
+      border-radius: 9px !important;
+      color: white !important;
+      background: var(--blue) !important;
+      font: inherit;
+      font-weight: 750 !important;
+      cursor: pointer;
+    }
+    .save-plan-btn:disabled { opacity: .6; cursor: wait; }
+    .cancel-plan-btn {
+      padding: 10px 16px !important;
+      border: 1px solid #d7e0eb !important;
+      border-radius: 9px !important;
+      background: white !important;
+      color: #16233B !important;
+      font: inherit;
+      font-weight: 750 !important;
+      cursor: pointer;
+    }
+
     #recommendations {
       display: grid;
       gap: 18px;
@@ -223,7 +290,10 @@
 
     .drill-content { padding: 14px; }
 
-    #ai-recommendations { margin-top: 18px; }
+    #ai-recommendations {
+      margin-top: 18px; padding: 22px; border: 1px solid var(--line);
+      border-radius: 14px; background: white !important;
+    }
     #ai-recommendations h2 { margin: 0 0 4px; color: #16233B !important; }
     .recommendation-source { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
     .focus-area { padding: 16px; border-left: 4px solid #1265ed; border-radius: 8px; background: #f5f8ff; margin-bottom: 12px; }
@@ -251,7 +321,10 @@
     .add-to-library-btn:hover { background: #eefbf3 !important; }
     .add-to-library-btn:disabled { opacity: .7 !important; cursor: default; border-color: #cbd7e4 !important; color: #69768a !important; }
 
-    #coaching-insights { margin-top: 18px; }
+    #coaching-insights {
+      margin-top: 18px; padding: 22px; border: 1px solid var(--line);
+      border-radius: 14px; background: white !important;
+    }
     #coaching-insights h2 { margin: 0 0 4px; color: #16233B !important; }
     .coaching-insight {
       padding: 14px 16px; border-left: 4px solid #17a957; border-radius: 8px;
@@ -260,7 +333,10 @@
     .coaching-insight h3 { font-size: 15px; margin: 0 0 4px; color: #16233B !important; }
     .coaching-insight p { margin: 0; color: #16233B !important; font-size: 13.5px; line-height: 1.5; }
 
-    #medicine-notes { margin-top: 18px; }
+    #medicine-notes {
+      margin-top: 18px; padding: 22px; border: 1px solid var(--line);
+      border-radius: 14px; background: white !important;
+    }
     #medicine-notes h2 { margin: 0 0 4px; color: #16233B !important; }
     .medicine-disclaimer {
       margin: 0 0 14px; padding: 10px 12px; border-radius: 8px;
@@ -411,6 +487,85 @@
       return select;
     }
 
+    function makeEditPlanForm(plan) {
+      const form = make("div", "edit-plan-form");
+      form.hidden = true;
+
+      form.append(make("label", "", "Player difficulty"));
+      const difficultySelect = document.createElement("select");
+      for (const value of ["beginner", "intermediate", "advanced"]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent =
+          value.charAt(0).toUpperCase() + value.slice(1);
+        option.selected = plan.player_difficulty === value;
+        difficultySelect.append(option);
+      }
+      form.append(difficultySelect);
+
+      form.append(make("label", "", "Target duration (minutes)"));
+      const durationInput = document.createElement("input");
+      durationInput.type = "number";
+      durationInput.min = "1";
+      durationInput.value = plan.target_duration;
+      form.append(durationInput);
+
+      form.append(make("label", "", "Available equipment (comma-separated)"));
+      const equipmentInput = document.createElement("input");
+      equipmentInput.type = "text";
+      equipmentInput.value = plan.available_equipment.join(", ");
+      form.append(equipmentInput);
+
+      const actions = make("div", "edit-plan-actions");
+      const saveButton = make("button", "save-plan-btn", "Save changes");
+      saveButton.type = "button";
+      const cancelButton = make("button", "cancel-plan-btn", "Cancel");
+      cancelButton.type = "button";
+      cancelButton.addEventListener("click", () => {
+        form.hidden = true;
+      });
+
+      saveButton.addEventListener("click", async () => {
+        saveButton.disabled = true;
+        saveButton.textContent = "Saving...";
+
+        try {
+          const response = await fetch(
+            `/training-plans/${encodeURIComponent(plan.plan_id)}`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                player_difficulty: difficultySelect.value,
+                target_duration: Number(durationInput.value),
+                available_equipment: equipmentInput.value
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              }),
+            }
+          );
+
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(data.detail || "Could not update plan.");
+          }
+
+          message.textContent = "Plan updated.";
+          await loadPlan();
+        } catch (error) {
+          saveButton.disabled = false;
+          saveButton.textContent = "Save changes";
+          message.textContent = error.message;
+        }
+      });
+
+      actions.append(saveButton, cancelButton);
+      form.append(actions);
+      return form;
+    }
+
     function makeDrill(drill) {
       const card = make("article", "drill");
       const media = make("div", "media");
@@ -484,8 +639,53 @@
       const statusControl = make("div");
       statusControl.append(make("label", "", "Plan status"));
       statusControl.append(makeStatusSelect(plan));
+
+      const editForm = makeEditPlanForm(plan);
+
+      const planActions = make("div", "plan-actions");
+      const editButton = make("button", "edit-plan-btn", "Edit Plan");
+      editButton.type = "button";
+      editButton.addEventListener("click", () => {
+        editForm.hidden = !editForm.hidden;
+      });
+
+      const deleteButton = make("button", "delete-plan-btn", "Delete Plan");
+      deleteButton.type = "button";
+      deleteButton.addEventListener("click", async () => {
+        if (!window.confirm(
+          `Delete training plan ${plan.plan_id}? This cannot be undone.`
+        )) {
+          return;
+        }
+
+        deleteButton.disabled = true;
+        deleteButton.textContent = "Deleting...";
+
+        try {
+          const response = await fetch(
+            `/training-plans/${encodeURIComponent(plan.plan_id)}`,
+            { method: "DELETE" }
+          );
+
+          const data = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(data.detail || "Could not delete training plan.");
+          }
+
+          window.location.href = "/training-plans-dashboard";
+        } catch (error) {
+          deleteButton.disabled = false;
+          deleteButton.textContent = "Delete Plan";
+          message.textContent = error.message;
+        }
+      });
+
+      planActions.append(editButton, deleteButton);
+      statusControl.append(planActions);
+
       summary.append(summaryContent, statusControl);
-      details.append(summary);
+      details.append(summary, editForm);
 
       const recommendations = make("section");
       recommendations.id = "recommendations";
@@ -692,6 +892,12 @@
             grid.append(item);
           });
           box.append(grid);
+        } else {
+          box.append(make(
+            "p",
+            "recommendation-source",
+            "No videos available right now — try again later."
+          ));
         }
 
         container.append(box);

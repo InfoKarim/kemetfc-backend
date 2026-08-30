@@ -143,6 +143,16 @@ class UpdateTrainingPlanStatusSchema(BaseModel):
     ]
 
 
+class UpdateTrainingPlanDetailsSchema(BaseModel):
+    player_difficulty: Literal[
+        "beginner",
+        "intermediate",
+        "advanced",
+    ] | None = None
+    target_duration: int | None = Field(default=None, gt=0)
+    available_equipment: list[str] | None = None
+
+
 class AddPlanVideoSchema(BaseModel):
     weakness: str = Field(min_length=1, max_length=200)
     title: str = Field(min_length=1, max_length=300)

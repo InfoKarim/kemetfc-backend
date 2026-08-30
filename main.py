@@ -46,6 +46,7 @@ from app.api_schemas import (
     ReviewVideoAnalysisJobSchema,
     TeamSchema,
     PlayerVideoUploadMetadataSchema,
+    UpdateTrainingPlanDetailsSchema,
     UpdateTrainingPlanStatusSchema,
     UpdateUserSchema,
     UpdateVideoAnalysisJobSchema,
@@ -2776,6 +2777,51 @@ def update_training_plan_status(
     plan.status = status_data.status
     service.update_plan(plan)
     return plan
+
+
+@app.patch("/training-plans/{plan_id}")
+def update_training_plan_details(
+    plan_id: str,
+    plan_data: UpdateTrainingPlanDetailsSchema,
+    db: Session = Depends(get_db),
+):
+    service = TrainingPlanService(db=db)
+    plan = service.get_plan(plan_id)
+
+    if plan is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Training plan not found",
+        )
+
+    if plan_data.player_difficulty is not None:
+        plan.player_difficulty = plan_data.player_difficulty
+
+    if plan_data.target_duration is not None:
+        plan.target_duration = plan_data.target_duration
+
+    if plan_data.available_equipment is not None:
+        plan.available_equipment = plan_data.available_equipment
+
+    service.update_plan(plan)
+    return plan
+
+
+@app.delete("/training-plans/{plan_id}")
+def delete_training_plan(
+    plan_id: str,
+    db: Session = Depends(get_db),
+):
+    service = TrainingPlanService(db=db)
+    deleted = service.delete_plan(plan_id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Training plan not found",
+        )
+
+    return {"message": "Training plan deleted"}
 
 
 @app.post("/training-plans/{plan_id}/recommendations/videos", status_code=201)
