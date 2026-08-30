@@ -220,7 +220,6 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
-    "/_debug/snapshot",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -2601,49 +2600,6 @@ def get_player_development_snapshot(
         available_equipment=equipment,
     )
 
-
-@app.get("/_debug/snapshot")
-def _debug_snapshot(player_id: str, token: str, db: Session = Depends(get_db)):
-    if token != "kemet-debug-2026":
-        raise HTTPException(status_code=404)
-
-    player = PlayerService(db=db).get_player(player_id)
-    if player is None:
-        raise HTTPException(status_code=404, detail="Player not found")
-
-    analyses = AnalysisService(db=db).get_analyses_by_player(player_id)
-    drills = DrillService(db=db).get_all_drills()
-    plans = TrainingPlanService(db=db).get_plans_by_player(player_id)
-
-    return {
-        "analyses_count": len(analyses),
-        "analyses": [
-            {
-                "id": a.analysis_id,
-                "status": a.processing_status,
-                "approved": a.approved,
-                "weaknesses": a.weaknesses,
-            }
-            for a in analyses
-        ],
-        "drills_count": len(drills),
-        "drills": [
-            {
-                "id": d.drill_id,
-                "category": d.category,
-                "active": d.active,
-                "min_age": d.min_age,
-                "max_age": d.max_age,
-            }
-            for d in drills
-        ],
-        "snapshot": build_development_snapshot(
-            player=player,
-            analyses=analyses,
-            drills=drills,
-            training_plans=plans,
-        ),
-    }
 
 
 @app.get("/training-plans")
