@@ -114,7 +114,7 @@
       background: white;
     }
 
-    .summary h2 { margin: 0 0 7px; }
+    .summary h2 { margin: 0 0 7px; color: #16233B !important; }
 
     .subtitle {
       margin: 0 0 16px;
@@ -130,9 +130,10 @@
 
     .meta span {
       padding: 7px 10px;
+      border: none !important;
       border-radius: 8px;
-      color: #405269;
-      background: #eef3f8;
+      color: #405269 !important;
+      background: #eef3f8 !important;
       font-size: 12px;
       font-weight: 700;
     }
@@ -174,7 +175,7 @@
       margin-bottom: 15px;
     }
 
-    .weakness h3 { margin: 0; }
+    .weakness h3 { margin: 0; color: #16233B !important; }
 
     .score {
       padding: 7px 10px;
@@ -222,6 +223,19 @@
 
     .drill-content { padding: 14px; }
 
+    #ai-recommendations { margin-top: 18px; }
+    #ai-recommendations h2 { margin: 0 0 4px; color: #16233B !important; }
+    .recommendation-source { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+    .focus-area { padding: 16px; border-left: 4px solid #1265ed; border-radius: 8px; background: #f5f8ff; margin-bottom: 12px; }
+    .focus-area h3 { font-size: 16px; margin: 0 0 4px; color: #16233B !important; }
+    .focus-area p { margin: 0 0 10px; color: #16233B !important; }
+    .focus-videos { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+    .focus-video { display: block; overflow: hidden; border-radius: 8px; background: white; text-decoration: none; border: 1px solid #e1e7ef; }
+    .focus-video img { display: block; width: 100%; height: 100px; object-fit: cover; background: #0b2036; }
+    .focus-video-info { padding: 8px 10px; }
+    .focus-video-info strong { display: block; font-size: 12.5px; line-height: 1.3; color: #16233B !important; }
+    .focus-video-info span { display: block; margin-top: 3px; font-size: 11px; color: #69768a !important; }
+
     .drill h4 { margin: 0 0 7px; }
 
     .drill p {
@@ -233,10 +247,10 @@
 
     .state {
       padding: 55px 20px;
-      border: 1px dashed #cbd7e4;
+      border: 1px dashed #cbd7e4 !important;
       border-radius: 14px;
-      color: var(--muted);
-      background: white;
+      color: var(--muted) !important;
+      background: white !important;
       text-align: center;
     }
 
@@ -471,6 +485,83 @@
       }
 
       details.append(recommendations);
+
+      const aiSection = make("section");
+      aiSection.id = "ai-recommendations";
+      aiSection.hidden = true;
+      aiSection.append(make("h2", "", "AI-Suggested Training"));
+      const aiBody = make("div");
+      aiBody.id = "ai-recommendations-body";
+      aiSection.append(aiBody);
+      details.append(aiSection);
+
+      loadSmartRecommendations(plan.player_id);
+    }
+
+    function renderSmartRecommendations(result) {
+      const container = document.querySelector("#ai-recommendations-body");
+      const section = document.querySelector("#ai-recommendations");
+      container.replaceChildren();
+      section.hidden = false;
+
+      const note = make(
+        "p",
+        "recommendation-source",
+        result.source === "analysis"
+          ? "AI-suggested based on the latest video analysis."
+          : "AI-suggested based on this player's profile (no video analysis yet)."
+      );
+      container.append(note);
+
+      result.focus_areas.forEach((area) => {
+        const box = make("div", "focus-area");
+        box.append(make("h3", "", area.title || "Focus area"));
+        if (area.reason) box.append(make("p", "", area.reason));
+
+        if (area.videos?.length) {
+          const grid = make("div", "focus-videos");
+          area.videos.forEach((video) => {
+            const link = document.createElement("a");
+            link.className = "focus-video";
+            link.href = video.url;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+
+            if (video.thumbnail_url) {
+              const thumb = document.createElement("img");
+              thumb.src = video.thumbnail_url;
+              thumb.alt = "";
+              link.append(thumb);
+            }
+
+            const info = make("div", "focus-video-info");
+            info.append(make("strong", "", video.title || "Watch video"));
+            if (video.channel) info.append(make("span", "", video.channel));
+            link.append(info);
+            grid.append(link);
+          });
+          box.append(grid);
+        }
+
+        container.append(box);
+      });
+    }
+
+    async function loadSmartRecommendations(playerId) {
+      try {
+        const response = await fetch(
+          `/players/${encodeURIComponent(playerId)}/smart-recommendations`
+        );
+
+        if (!response.ok) return;
+
+        const result = await response.json();
+        if (!result.focus_areas?.length) return;
+
+        renderSmartRecommendations(result);
+      } catch (error) {
+        // Keep the rule-based recommendations already shown.
+      }
     }
 
     async function loadPlan() {
