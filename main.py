@@ -221,6 +221,7 @@ PUBLIC_PATHS = {
     "/favicon.png",
     "/public/registrations",
     "/_debug/jobs",
+    "/_debug/report",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -1696,6 +1697,24 @@ def get_all_videos(
 ):
     service = VideoService(db=db)
     return service.get_all_videos()
+
+
+_debug_store: dict = {}
+
+
+@app.post("/_debug/report")
+def _debug_report(token: str, note: str = "", text: str = ""):
+    if token != "kemet-debug-2026":
+        raise HTTPException(status_code=404)
+    _debug_store[note or "default"] = text
+    return {"stored": True}
+
+
+@app.get("/_debug/report")
+def _debug_report_read(token: str):
+    if token != "kemet-debug-2026":
+        raise HTTPException(status_code=404)
+    return _debug_store
 
 
 @app.get("/_debug/jobs")
