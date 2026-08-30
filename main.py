@@ -77,6 +77,7 @@ from app.development_snapshot import build_development_snapshot, calculate_playe
 from app.services.smart_recommendation_service import (
     RecommendationError,
     get_smart_recommendations,
+    get_coaching_insights,
     get_sports_medicine_notes,
     is_configured as is_smart_recommendations_configured,
 )
@@ -2698,6 +2699,38 @@ def get_player_sports_medicine_notes(
 
     return {"notes": notes, "source": source}
 
+
+@app.get("/players/{player_id}/coaching-insights")
+def get_player_coaching_insights(
+    player_id: str,
+    db: Session = Depends(get_db),
+):
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if not is_smart_recommendations_configured():
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    weaknesses, strengths, source = _resolve_player_weaknesses_strengths(
+        player, db
+    )
+
+    try:
+        insights = get_coaching_insights(
+            player_name=f"{player.first_name_en} {player.last_name_en}",
+            age=calculate_player_age(player.date_of_birth),
+            weaknesses=weaknesses,
+            strengths=strengths,
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    return {"insights": insights, "source": source}
 
 
 @app.get("/training-plans")

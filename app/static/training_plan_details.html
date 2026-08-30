@@ -243,6 +243,22 @@
     }
     .add-to-plan-btn:hover { background: #eef5ff !important; }
     .add-to-plan-btn:disabled { opacity: .7 !important; cursor: default; border-color: #cbd7e4 !important; color: #69768a !important; }
+    .add-to-library-btn {
+      padding: 7px 10px !important; border: 1px solid #17a957 !important; border-radius: 6px !important;
+      background: white !important; color: #17a957 !important; font-size: 11px; font-weight: 700 !important;
+      cursor: pointer; text-align: center;
+    }
+    .add-to-library-btn:hover { background: #eefbf3 !important; }
+    .add-to-library-btn:disabled { opacity: .7 !important; cursor: default; border-color: #cbd7e4 !important; color: #69768a !important; }
+
+    #coaching-insights { margin-top: 18px; }
+    #coaching-insights h2 { margin: 0 0 4px; color: #16233B !important; }
+    .coaching-insight {
+      padding: 14px 16px; border-left: 4px solid #17a957; border-radius: 8px;
+      background: #f2fbf6; margin-bottom: 10px;
+    }
+    .coaching-insight h3 { font-size: 15px; margin: 0 0 4px; color: #16233B !important; }
+    .coaching-insight p { margin: 0; color: #16233B !important; font-size: 13.5px; line-height: 1.5; }
 
     #medicine-notes { margin-top: 18px; }
     #medicine-notes h2 { margin: 0 0 4px; color: #16233B !important; }
@@ -531,8 +547,20 @@
       medicineSection.append(medicineBody);
       details.append(medicineSection);
 
+      const coachingSection = make("section");
+      coachingSection.id = "coaching-insights";
+      coachingSection.hidden = true;
+      coachingSection.append(
+        make("h2", "", "Elite Coaching Insights (AI)")
+      );
+      const coachingBody = make("div");
+      coachingBody.id = "coaching-insights-body";
+      coachingSection.append(coachingBody);
+      details.append(coachingSection);
+
       loadSmartRecommendations(plan.player_id);
       loadSportsMedicineNotes(plan.player_id);
+      loadCoachingInsights(plan.player_id);
     }
 
     function renderSmartRecommendations(result) {
@@ -615,6 +643,52 @@
             });
             item.append(addButton);
 
+            const libraryButton = make(
+              "button",
+              "add-to-library-btn",
+              "+ Add to Library"
+            );
+            libraryButton.type = "button";
+            libraryButton.addEventListener("click", async () => {
+              libraryButton.disabled = true;
+              libraryButton.textContent = "Adding...";
+
+              try {
+                const response = await fetch("/drills", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    name: video.title || "Training video",
+                    category: area.title || "General",
+                    description: video.channel
+                      ? `AI-suggested video via ${video.channel}`
+                      : "AI-suggested training video",
+                    min_age: 6,
+                    max_age: 17,
+                    difficulty: "beginner",
+                    duration_minutes: 10,
+                    equipment: [],
+                    video_url: video.url,
+                    active: true,
+                  }),
+                });
+
+                if (!response.ok) {
+                  const data = await response.json().catch(() => ({}));
+                  throw new Error(
+                    data.detail || "Could not add video to the drill library."
+                  );
+                }
+
+                libraryButton.textContent = "Added to Library ✓";
+              } catch (error) {
+                libraryButton.disabled = false;
+                libraryButton.textContent = "+ Add to Library";
+                message.textContent = error.message;
+              }
+            });
+            item.append(libraryButton);
+
             grid.append(item);
           });
           box.append(grid);
@@ -678,6 +752,37 @@
         renderSportsMedicineNotes(result);
       } catch (error) {
         // No sports medicine notes available; leave the section hidden.
+      }
+    }
+
+    function renderCoachingInsights(result) {
+      const container = document.querySelector("#coaching-insights-body");
+      const section = document.querySelector("#coaching-insights");
+      container.replaceChildren();
+      section.hidden = false;
+
+      result.insights.forEach((item) => {
+        const box = make("div", "coaching-insight");
+        box.append(make("h3", "", item.title || "Insight"));
+        if (item.insight) box.append(make("p", "", item.insight));
+        container.append(box);
+      });
+    }
+
+    async function loadCoachingInsights(playerId) {
+      try {
+        const response = await fetch(
+          `/players/${encodeURIComponent(playerId)}/coaching-insights`
+        );
+
+        if (!response.ok) return;
+
+        const result = await response.json();
+        if (!result.insights?.length) return;
+
+        renderCoachingInsights(result);
+      } catch (error) {
+        // No coaching insights available; leave the section hidden.
       }
     }
 
