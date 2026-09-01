@@ -231,8 +231,6 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
-    "/_debug/full-match-jobs",
-    "/_debug/retry-stuck-job",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -2763,125 +2761,6 @@ def get_player_profile_suggestions(
         "analysis_id": latest_analysis.analysis_id,
         "suggestions": suggestions,
     }
-
-
-def _full_match_raw_diagnostics(analysis) -> dict | None:
-    import json
-
-    try:
-        job_id = analysis.analysis_id.removeprefix("AN_")
-        raw_bytes = get_analysis_result_storage().read(
-            job_id, analysis.raw_output_path
-        )
-        raw_result = json.loads(raw_bytes)
-    except Exception as error:
-        return {"error": str(error)}
-
-    return {
-        "quality_control": raw_result.get("quality_control"),
-        "target_player": raw_result.get("target_player"),
-        "summary": raw_result.get("summary"),
-    }
-
-
-@app.get("/_debug/full-match-jobs")
-def debug_full_match_jobs(token: str, db: Session = Depends(get_db)):
-    if token != "Orueg3yltNjZuxLcGs2U6PioH7rbzicv":
-        raise HTTPException(status_code=404)
-
-    from app.db_models import AnalysisDB, VideoAnalysisJobDB
-
-    jobs = (
-        db.query(VideoAnalysisJobDB)
-        .filter(VideoAnalysisJobDB.analysis_type == "full_match")
-        .order_by(VideoAnalysisJobDB.created_at.desc())
-        .all()
-    )
-
-    result = []
-
-    for job in jobs:
-        analysis = (
-            db.query(AnalysisDB)
-            .filter(
-                AnalysisDB.video_id == job.video_id,
-                AnalysisDB.analysis_type == "full_match",
-            )
-            .order_by(AnalysisDB.created_at.desc())
-            .first()
-        )
-        result.append({
-            "job_id": job.job_id,
-            "video_id": job.video_id,
-            "status": job.status,
-            "created_at": job.created_at.isoformat(),
-            "started_at": job.started_at.isoformat() if job.started_at else None,
-            "completed_at": (
-                job.completed_at.isoformat() if job.completed_at else None
-            ),
-            "progress_percent": job.progress_percent,
-            "attempt_count": job.attempt_count,
-            "max_attempts": job.max_attempts,
-            "error_message": job.error_message,
-            "analysis": (
-                {
-                    "analysis_id": analysis.analysis_id,
-                    "overall_score": analysis.overall_score,
-                    "confidence_score": analysis.confidence_score,
-                    "strengths": analysis.strengths,
-                    "weaknesses": analysis.weaknesses,
-                    "recommendations": analysis.recommendations,
-                    "raw_diagnostics": _full_match_raw_diagnostics(analysis),
-                }
-                if analysis is not None
-                else None
-            ),
-        })
-
-    return result
-
-
-@app.post("/_debug/retry-stuck-job")
-def debug_retry_stuck_job(
-    token: str, job_id: str, db: Session = Depends(get_db)
-):
-    if token != "Orueg3yltNjZuxLcGs2U6PioH7rbzicv":
-        raise HTTPException(status_code=404)
-
-    from app.db_models import VideoAnalysisJobDB
-
-    old_job = db.get(VideoAnalysisJobDB, job_id)
-
-    if old_job is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-
-    job_service = VideoAnalysisJobService(db=db)
-    job_service.transition_job(
-        job_id=job_id,
-        status="cancelled",
-    )
-
-    new_job_id = next_entity_id(db, "analysis_job")
-    new_job = VideoAnalysisJobData(
-        job_id=new_job_id,
-        video_id=old_job.video_id,
-        analysis_type=old_job.analysis_type,
-        status="queued",
-        created_at=datetime.now(),
-        started_at=None,
-        completed_at=None,
-        progress_percent=0.0,
-        attempt_count=0,
-        max_attempts=old_job.max_attempts,
-        model_name=None,
-        model_version=None,
-        result_path=None,
-        error_message=None,
-        target_track_id=old_job.target_track_id,
-    )
-    job_service.add_job(new_job)
-
-    return {"cancelled_job_id": job_id, "new_job_id": new_job_id}
 
 
 @app.get("/players/{player_id}/smart-recommendations")
