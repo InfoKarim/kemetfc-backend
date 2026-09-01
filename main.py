@@ -2765,6 +2765,25 @@ def get_player_profile_suggestions(
     }
 
 
+def _full_match_raw_diagnostics(analysis) -> dict | None:
+    import json
+
+    try:
+        job_id = analysis.analysis_id.removeprefix("AN_")
+        raw_bytes = get_analysis_result_storage().read(
+            job_id, analysis.raw_output_path
+        )
+        raw_result = json.loads(raw_bytes)
+    except Exception as error:
+        return {"error": str(error)}
+
+    return {
+        "quality_control": raw_result.get("quality_control"),
+        "target_player": raw_result.get("target_player"),
+        "summary": raw_result.get("summary"),
+    }
+
+
 @app.get("/_debug/full-match-jobs")
 def debug_full_match_jobs(token: str, db: Session = Depends(get_db)):
     if token != "Orueg3yltNjZuxLcGs2U6PioH7rbzicv":
@@ -2811,6 +2830,8 @@ def debug_full_match_jobs(token: str, db: Session = Depends(get_db)):
                     "confidence_score": analysis.confidence_score,
                     "strengths": analysis.strengths,
                     "weaknesses": analysis.weaknesses,
+                    "recommendations": analysis.recommendations,
+                    "raw_diagnostics": _full_match_raw_diagnostics(analysis),
                 }
                 if analysis is not None
                 else None
