@@ -54,7 +54,8 @@ def _call_anthropic(prompt: str) -> str:
     )
 
     try:
-        with urllib.request.urlopen(
+        # ANTHROPIC_API_URL is a hardcoded https constant, not user input — no SSRF risk.
+        with urllib.request.urlopen(  # nosec B310
             request, timeout=REQUEST_TIMEOUT_SECONDS
         ) as response:
             payload = json.loads(response.read())
@@ -230,7 +231,9 @@ def search_training_videos(query: str, max_results: int = 3) -> list[dict]:
     })
 
     try:
-        with urllib.request.urlopen(
+        # YOUTUBE_SEARCH_URL is a hardcoded https constant; `params` only ever lands in the
+        # query string via urlencode, so it can't redirect the request to a different host.
+        with urllib.request.urlopen(  # nosec B310
             f"{YOUTUBE_SEARCH_URL}?{params}",
             timeout=REQUEST_TIMEOUT_SECONDS,
         ) as response:
