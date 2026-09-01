@@ -235,3 +235,84 @@ def test_get_tactical_scores_requires_anthropic_key(monkeypatch):
 
     with pytest.raises(service.RecommendationError):
         service.get_tactical_scores("Test Player", 12, [], [])
+
+
+def test_generate_profile_scores_parses_json_object_from_model_reply(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    fields = {
+        "ball_control": "<0-100 integer>  # Ball control",
+        "dribbling": "<0-100 integer>  # Dribbling",
+    }
+    scores_payload = {
+        "ball_control": 75,
+        "dribbling": 70,
+        "reasoning": "Strong close control, needs more explosive dribbling.",
+    }
+    anthropic_payload = {
+        "content": [{
+            "type": "text",
+            "text": f"Here you go:\n{json.dumps(scores_payload)}",
+        }]
+    }
+
+    def fake_urlopen(request, timeout=None):
+        assert request.full_url == service.ANTHROPIC_API_URL
+        return FakeHTTPResponse(anthropic_payload)
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", fake_urlopen)
+
+    result = service.generate_profile_scores(
+        profile_name="technical",
+        fields=fields,
+        player_name="Test Player",
+        age=12,
+        weaknesses=[{"attribute": "Dribbling", "score": 60}],
+        strengths=[{"attribute": "Ball Control", "score": 80}],
+    )
+
+    assert result["profile"] == {"ball_control": 75.0, "dribbling": 70.0}
+    assert result["reasoning"] == "Strong close control, needs more explosive dribbling."
+
+
+def test_generate_profile_scores_raises_on_missing_keys(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    anthropic_payload = {
+        "content": [{
+            "type": "text",
+            "text": json.dumps({"ball_control": 75}),
+        }]
+    }
+
+    def fake_urlopen(request, timeout=None):
+        return FakeHTTPResponse(anthropic_payload)
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(service.RecommendationError):
+        service.generate_profile_scores(
+            profile_name="technical",
+            fields={
+                "ball_control": "<0-100 integer>",
+                "dribbling": "<0-100 integer>",
+            },
+            player_name="Test Player",
+            age=12,
+            weaknesses=[],
+            strengths=[],
+        )
+
+
+def test_get_profile_scores_requires_anthropic_key(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "")
+
+    with pytest.raises(service.RecommendationError):
+        service.get_profile_scores(
+            profile_name="technical",
+            fields={"ball_control": "<0-100 integer>"},
+            player_name="Test Player",
+            age=12,
+            weaknesses=[],
+            strengths=[],
+        )

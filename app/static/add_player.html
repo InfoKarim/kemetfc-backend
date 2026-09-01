@@ -159,11 +159,19 @@
 
           <section id="technical-profile" class="card">
             <h2>Technical Profile</h2>
+            <button id="suggest-technical-btn" type="button" class="suggest-tactical" hidden>
+              Suggest Technical Profile with Claude AI
+            </button>
+            <p id="technical-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
             <div class="fields" data-group="technical"></div>
           </section>
 
           <section id="mental-profile" class="card">
             <h2>Mental Profile</h2>
+            <button id="suggest-mental-btn" type="button" class="suggest-tactical" hidden>
+              Suggest Mental Profile with Claude AI
+            </button>
+            <p id="mental-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
             <div class="fields" data-group="mental"></div>
           </section>
 
@@ -179,6 +187,14 @@
 
           <section id="match-performance" class="card">
             <h2>Match Performance</h2>
+            <p class="muted" style="font-size: 12.5px;">
+              Real recorded match stats belong here. Use the AI suggestion only as a
+              placeholder starting point when no real stats exist yet.
+            </p>
+            <button id="suggest-match-btn" type="button" class="suggest-tactical" hidden>
+              Suggest Match Performance with Claude AI
+            </button>
+            <p id="match-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
             <div class="fields" data-group="match"></div>
           </section>
         </div>
@@ -461,35 +477,34 @@
       }
     );
 
-    if (editingPlayerId) {
-      document.querySelector("#suggest-tactical-btn").hidden = false;
-    }
+    function wireSuggestButton({ group, endpoint, buttonId, reasoningId, resultKey, onFilled }) {
+      const button = document.querySelector(`#${buttonId}`);
+      const reasoningEl = document.querySelector(`#${reasoningId}`);
+      const defaultLabel = button.textContent.trim();
 
-    document.querySelector("#suggest-tactical-btn").addEventListener(
-      "click",
-      async () => {
+      if (editingPlayerId) button.hidden = false;
+
+      button.addEventListener("click", async () => {
         if (!editingPlayerId) return;
 
-        const button = document.querySelector("#suggest-tactical-btn");
-        const reasoningEl = document.querySelector("#tactical-ai-reasoning");
         button.disabled = true;
         button.textContent = "Asking Claude AI...";
         reasoningEl.hidden = true;
 
         try {
           const response = await fetch(
-            `/players/${encodeURIComponent(editingPlayerId)}/tactical-assessment`
+            `/players/${encodeURIComponent(editingPlayerId)}/${endpoint}`
           );
           const result = await response.json().catch(() => ({}));
 
           if (!response.ok) {
             throw new Error(
-              result.detail || "Could not generate a tactical assessment."
+              result.detail || `Could not generate a ${group} assessment.`
             );
           }
 
-          fillGroup("tactical", result.tactical_profile);
-          updateTacticalWeightedTotal();
+          fillGroup(group, result[resultKey]);
+          if (onFilled) onFilled();
 
           if (result.reasoning) {
             reasoningEl.textContent = result.reasoning;
@@ -499,11 +514,44 @@
           button.textContent = "Suggested — review the values below before saving";
         } catch (error) {
           button.disabled = false;
-          button.textContent = "Suggest Tactical Profile with Claude AI";
+          button.textContent = defaultLabel;
           document.querySelector("#form-status").textContent = error.message;
         }
-      }
-    );
+      });
+    }
+
+    wireSuggestButton({
+      group: "technical",
+      endpoint: "technical-assessment",
+      buttonId: "suggest-technical-btn",
+      reasoningId: "technical-ai-reasoning",
+      resultKey: "technical_profile",
+    });
+
+    wireSuggestButton({
+      group: "mental",
+      endpoint: "mental-assessment",
+      buttonId: "suggest-mental-btn",
+      reasoningId: "mental-ai-reasoning",
+      resultKey: "mental_profile",
+    });
+
+    wireSuggestButton({
+      group: "tactical",
+      endpoint: "tactical-assessment",
+      buttonId: "suggest-tactical-btn",
+      reasoningId: "tactical-ai-reasoning",
+      resultKey: "tactical_profile",
+      onFilled: updateTacticalWeightedTotal,
+    });
+
+    wireSuggestButton({
+      group: "match",
+      endpoint: "match-performance-assessment",
+      buttonId: "suggest-match-btn",
+      reasoningId: "match-ai-reasoning",
+      resultKey: "match_performance",
+    });
 
     loadTeams().then(loadPlayerForEdit).then(loadProfileSuggestions).then(applyRegistrationPrefill);
 

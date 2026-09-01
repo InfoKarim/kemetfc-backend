@@ -400,3 +400,75 @@ def get_tactical_scores(
         )
 
     return generate_tactical_scores(player_name, age, weaknesses, strengths)
+
+
+def generate_profile_scores(
+    profile_name: str,
+    fields: dict,
+    player_name: str,
+    age: int,
+    weaknesses: list,
+    strengths: list,
+    extra_guidance: str = "",
+) -> dict:
+    field_lines = "\n".join(f'  "{key}": {hint}' for key, hint in fields.items())
+    prompt = (
+        "You are an elite football scout, the kind a top European academy "
+        "would ask to assess a young player's profile.\n"
+        f"Player: {player_name}, age {age}.\n"
+        f"Measured weaknesses: {_describe(weaknesses)}\n"
+        f"Measured strengths: {_describe(strengths)}\n\n"
+        f"Estimate the player's {profile_name} profile below. Where the "
+        "available data is sparse or unrelated to a given field, estimate "
+        f"conservatively rather than guessing wildly.{extra_guidance} Reply "
+        "with ONLY a JSON object (no prose, no markdown fences) with "
+        'exactly these keys, plus a "reasoning" key:\n'
+        f"{{\n{field_lines}\n"
+        '  "reasoning": "two or three sentences explaining the overall '
+        'estimate, referencing the player\'s own data"\n'
+        "}"
+    )
+
+    raw_text = _call_anthropic(prompt)
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+
+    if match is None:
+        raise RecommendationError("Could not parse AI recommendations")
+
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError as error:
+        raise RecommendationError("Could not parse AI recommendations") from error
+
+    if not isinstance(parsed, dict):
+        raise RecommendationError("Could not parse AI recommendations")
+
+    required_keys = set(fields) | {"reasoning"}
+
+    if not required_keys.issubset(parsed):
+        raise RecommendationError("Could not parse AI recommendations")
+
+    return {
+        "profile": {key: float(parsed[key]) for key in fields},
+        "reasoning": parsed["reasoning"],
+    }
+
+
+def get_profile_scores(
+    profile_name: str,
+    fields: dict,
+    player_name: str,
+    age: int,
+    weaknesses: list,
+    strengths: list,
+    extra_guidance: str = "",
+) -> dict:
+    if not is_configured():
+        raise RecommendationError(
+            "Smart recommendations are not configured "
+            "(ANTHROPIC_API_KEY is missing)"
+        )
+
+    return generate_profile_scores(
+        profile_name, fields, player_name, age, weaknesses, strengths, extra_guidance
+    )

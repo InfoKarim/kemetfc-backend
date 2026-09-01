@@ -87,13 +87,14 @@ from app.services.smart_recommendation_service import (
     get_coaching_insights,
     get_sports_medicine_notes,
     get_tactical_scores,
+    get_profile_scores,
     is_configured as is_smart_recommendations_configured,
 )
 from app.drill_recommendations import build_drill_recommendations
 from app.drill_ranking import rank_drills
 from app.drill_upload import DrillUploadError, save_drill_video
-from app.match_performance import MatchPerformance
-from app.mental_profile import MentalProfile
+from app.match_performance import MatchPerformance, MATCH_PERFORMANCE_FIELD_HINTS
+from app.mental_profile import MentalProfile, MENTAL_FIELD_HINTS
 from app.tactical_profile import TacticalProfile
 from app.migration_health import (
     DatabaseSchemaNotCurrent,
@@ -128,7 +129,7 @@ from app.services.training_plan_service import TrainingPlanService
 from app.services.team_service import TeamService
 from app.services.video_service import VideoDeletionError, VideoService
 from app.services.video_analysis_job_service import VideoAnalysisJobService
-from app.technical_profile import TechnicalProfile
+from app.technical_profile import TechnicalProfile, TECHNICAL_FIELD_HINTS
 from app.video_storage import (
     VideoStorageError,
     get_drill_video_storage,
@@ -2918,6 +2919,129 @@ def get_player_tactical_assessment(
 
     return {
         "tactical_profile": result["tactical_profile"],
+        "reasoning": result["reasoning"],
+        "source": source,
+    }
+
+
+@app.get("/players/{player_id}/technical-assessment")
+def get_player_technical_assessment(
+    player_id: str,
+    db: Session = Depends(get_db),
+):
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if not is_smart_recommendations_configured():
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    weaknesses, strengths, source = _resolve_player_weaknesses_strengths(
+        player, db
+    )
+
+    try:
+        result = get_profile_scores(
+            profile_name="technical",
+            fields=TECHNICAL_FIELD_HINTS,
+            player_name=f"{player.first_name_en} {player.last_name_en}",
+            age=calculate_player_age(player.date_of_birth),
+            weaknesses=weaknesses,
+            strengths=strengths,
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    return {
+        "technical_profile": result["profile"],
+        "reasoning": result["reasoning"],
+        "source": source,
+    }
+
+
+@app.get("/players/{player_id}/mental-assessment")
+def get_player_mental_assessment(
+    player_id: str,
+    db: Session = Depends(get_db),
+):
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if not is_smart_recommendations_configured():
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    weaknesses, strengths, source = _resolve_player_weaknesses_strengths(
+        player, db
+    )
+
+    try:
+        result = get_profile_scores(
+            profile_name="mental",
+            fields=MENTAL_FIELD_HINTS,
+            player_name=f"{player.first_name_en} {player.last_name_en}",
+            age=calculate_player_age(player.date_of_birth),
+            weaknesses=weaknesses,
+            strengths=strengths,
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    return {
+        "mental_profile": result["profile"],
+        "reasoning": result["reasoning"],
+        "source": source,
+    }
+
+
+@app.get("/players/{player_id}/match-performance-assessment")
+def get_player_match_performance_assessment(
+    player_id: str,
+    db: Session = Depends(get_db),
+):
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if not is_smart_recommendations_configured():
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    weaknesses, strengths, source = _resolve_player_weaknesses_strengths(
+        player, db
+    )
+
+    try:
+        result = get_profile_scores(
+            profile_name="match performance",
+            fields=MATCH_PERFORMANCE_FIELD_HINTS,
+            player_name=f"{player.first_name_en} {player.last_name_en}",
+            age=calculate_player_age(player.date_of_birth),
+            weaknesses=weaknesses,
+            strengths=strengths,
+            extra_guidance=(
+                " This player has no recorded stats for a real match yet, "
+                "so treat this as an illustrative starting estimate only — "
+                "a coach must replace it with the player's actual recorded "
+                "match stats as soon as they exist."
+            ),
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    return {
+        "match_performance": result["profile"],
         "reasoning": result["reasoning"],
         "source": source,
     }

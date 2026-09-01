@@ -965,6 +965,152 @@ def test_tactical_assessment_unknown_player_returns_404():
     assert response.status_code == 404
 
 
+def test_technical_assessment_returns_ai_scores(monkeypatch):
+    import main
+
+    create_test_player("P622")
+
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+
+    fake_technical_profile = {
+        "ball_control": 75.0,
+        "dribbling": 70.0,
+        "passing": 80.0,
+        "shooting": 60.0,
+        "finishing": 65.0,
+    }
+
+    def fake_get_profile_scores(**kwargs):
+        return {
+            "profile": fake_technical_profile,
+            "reasoning": "Based on the player's profile data.",
+        }
+
+    monkeypatch.setattr(main, "get_profile_scores", fake_get_profile_scores)
+
+    response = client.get("/players/P622/technical-assessment")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["technical_profile"] == fake_technical_profile
+    assert body["reasoning"] == "Based on the player's profile data."
+    assert body["source"] == "profile"
+
+
+def test_technical_assessment_not_configured_returns_404(monkeypatch):
+    import main
+
+    create_test_player("P623")
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+
+    response = client.get("/players/P623/technical-assessment")
+    assert response.status_code == 404
+
+
+def test_technical_assessment_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/technical-assessment")
+    assert response.status_code == 404
+
+
+def test_mental_assessment_returns_ai_scores(monkeypatch):
+    import main
+
+    create_test_player("P624")
+
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+
+    fake_mental_profile = {
+        "decision_making": 75.0,
+        "concentration": 70.0,
+        "composure": 80.0,
+        "positioning": 60.0,
+        "vision": 65.0,
+    }
+
+    def fake_get_profile_scores(**kwargs):
+        return {
+            "profile": fake_mental_profile,
+            "reasoning": "Based on the player's profile data.",
+        }
+
+    monkeypatch.setattr(main, "get_profile_scores", fake_get_profile_scores)
+
+    response = client.get("/players/P624/mental-assessment")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mental_profile"] == fake_mental_profile
+    assert body["reasoning"] == "Based on the player's profile data."
+    assert body["source"] == "profile"
+
+
+def test_mental_assessment_not_configured_returns_404(monkeypatch):
+    import main
+
+    create_test_player("P625")
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+
+    response = client.get("/players/P625/mental-assessment")
+    assert response.status_code == 404
+
+
+def test_mental_assessment_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/mental-assessment")
+    assert response.status_code == 404
+
+
+def test_match_performance_assessment_returns_ai_scores(monkeypatch):
+    import main
+
+    create_test_player("P626")
+
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+
+    fake_match_performance = {
+        "minutes_played": 75,
+        "goals": 1,
+        "assists": 2,
+        "shots": 4,
+        "shots_on_target": 2,
+        "passes_attempted": 40,
+        "passes_completed": 32,
+        "tackles": 3,
+        "interceptions": 2,
+        "rating": 7.2,
+    }
+
+    def fake_get_profile_scores(**kwargs):
+        return {
+            "profile": fake_match_performance,
+            "reasoning": "Illustrative estimate based on the player's profile data.",
+        }
+
+    monkeypatch.setattr(main, "get_profile_scores", fake_get_profile_scores)
+
+    response = client.get("/players/P626/match-performance-assessment")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["match_performance"] == fake_match_performance
+    assert body["reasoning"] == "Illustrative estimate based on the player's profile data."
+    assert body["source"] == "profile"
+
+
+def test_match_performance_assessment_not_configured_returns_404(monkeypatch):
+    import main
+
+    create_test_player("P627")
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+
+    response = client.get("/players/P627/match-performance-assessment")
+    assert response.status_code == 404
+
+
+def test_match_performance_assessment_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/match-performance-assessment")
+    assert response.status_code == 404
+
+
 def test_create_analysis_with_unknown_player_returns_404():
     analysis_data = {
         "analysis_id": "AN404",
