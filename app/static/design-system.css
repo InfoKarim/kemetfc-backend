@@ -218,7 +218,8 @@ button:disabled { cursor: not-allowed !important; opacity: .45; filter: grayscal
 .permission, .quality, .recommendation-form, .score:not(.good):not(.average):not(.low),
 .status, .step,
 .summary, .tag, .tags, .team-card, .track, .user-card, .video-card, .weakness,
-.home-feature, .journey, .meta, .plan-meta, .quick-actions-panel, .calendar-head {
+.home-feature, .journey, .meta, .plan-meta, .quick-actions-panel, .calendar-head,
+.tactical-ai-reasoning, .weighted-total {
   color: #16233B !important;
 }
 
