@@ -5,6 +5,7 @@ from app.physical_profile import PhysicalProfile
 from app.technical_profile import TechnicalProfile
 from app.mental_profile import MentalProfile
 from app.match_performance import MatchPerformance
+from app.tactical_profile import TacticalProfile
 from app.scoring import calculate_overall_score, get_score_label
 
 def test_get_score_label():
@@ -62,6 +63,12 @@ def test_calculate_overall_score():
             tackles=1,
             interceptions=0,
             rating=8.5,
+        ),
+        tactical_profile=TacticalProfile(
+            game_understanding=70.0,
+            defensive_positioning=68.0,
+            off_ball_movement=72.0,
+            pressing_intensity=69.0,
         ),
     )
 

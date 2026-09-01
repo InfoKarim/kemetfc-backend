@@ -93,6 +93,7 @@ from app.drill_ranking import rank_drills
 from app.drill_upload import DrillUploadError, save_drill_video
 from app.match_performance import MatchPerformance
 from app.mental_profile import MentalProfile
+from app.tactical_profile import TacticalProfile
 from app.migration_health import (
     DatabaseSchemaNotCurrent,
     require_database_at_head,
@@ -1971,6 +1972,9 @@ def create_player(
         match_performance=MatchPerformance(
             **player_data.match_performance.model_dump()
         ),
+        tactical_profile=TacticalProfile(
+            **player_data.tactical_profile.model_dump()
+        ),
         created_at=utcnow(),
     )
 
@@ -2141,6 +2145,9 @@ def update_player(
         ),
         match_performance=MatchPerformance(
             **player_data.match_performance.model_dump()
+        ),
+        tactical_profile=TacticalProfile(
+            **player_data.tactical_profile.model_dump()
         ),
         created_at=existing_player.created_at,
         photo_filename=existing_player.photo_filename,
@@ -2634,12 +2641,43 @@ def _resolve_player_weaknesses_strengths(player, db: Session):
 
     profile_scores = [
         ("Speed", player.physical_profile.speed),
+        ("Acceleration", player.physical_profile.acceleration),
+        ("Agility", player.physical_profile.agility),
         ("Stamina", player.physical_profile.stamina),
-        ("Passing", player.technical_profile.passing),
-        ("Dribbling", player.technical_profile.dribbling),
+        ("Strength", player.physical_profile.strength),
         ("Ball Control", player.technical_profile.ball_control),
-        ("Game IQ", player.mental_profile.decision_making),
+        ("Dribbling", player.technical_profile.dribbling),
+        ("Passing", player.technical_profile.passing),
+        ("Shooting", player.technical_profile.shooting),
+        ("Finishing", player.technical_profile.finishing),
+        ("Decision Making", player.mental_profile.decision_making),
+        ("Concentration", player.mental_profile.concentration),
+        ("Composure", player.mental_profile.composure),
+        ("Positioning", player.mental_profile.positioning),
+        ("Vision", player.mental_profile.vision),
+        ("Game Understanding", player.tactical_profile.game_understanding),
+        ("Defensive Positioning", player.tactical_profile.defensive_positioning),
+        ("Off-Ball Movement", player.tactical_profile.off_ball_movement),
+        ("Pressing Intensity", player.tactical_profile.pressing_intensity),
     ]
+
+    # Match performance is raw match counts, not a 0-100 rating like the profiles
+    # above, so it can't be ranked alongside them directly. Only include it when
+    # the player has actually logged minutes — a player with no matches yet would
+    # otherwise show misleading "weaknesses" like Goals: 0 or Tackles: 0.
+    match = player.match_performance
+    if match.minutes_played > 0:
+        if match.passes_attempted > 0:
+            profile_scores.append((
+                "Pass Accuracy",
+                match.passes_completed / match.passes_attempted * 100,
+            ))
+        if match.shots > 0:
+            profile_scores.append((
+                "Shot Accuracy",
+                match.shots_on_target / match.shots * 100,
+            ))
+
     ranked = sorted(profile_scores, key=lambda item: item[1])
     weaknesses = [
         {"attribute": name, "score": score} for name, score in ranked[:3]

@@ -122,6 +122,11 @@
             <div class="fields" data-group="mental"></div>
           </section>
 
+          <section id="tactical-profile" class="card">
+            <h2>Tactical Profile</h2>
+            <div class="fields" data-group="tactical"></div>
+          </section>
+
           <section id="match-performance" class="card">
             <h2>Match Performance</h2>
             <div class="fields" data-group="match"></div>
@@ -163,6 +168,12 @@
         ["composure", "Composure", 70],
         ["positioning", "Positioning", 70],
         ["vision", "Vision", 70]
+      ],
+      tactical: [
+        ["game_understanding", "Game understanding", 70],
+        ["defensive_positioning", "Defensive positioning", 70],
+        ["off_ball_movement", "Off-ball movement", 70],
+        ["pressing_intensity", "Pressing intensity", 70]
       ],
       match: [
         ["minutes_played", "Minutes played", 0],
@@ -307,6 +318,7 @@
         fillGroup("physical", player.physical_profile);
         fillGroup("technical", player.technical_profile);
         fillGroup("mental", player.mental_profile);
+        fillGroup("tactical", player.tactical_profile);
         fillGroup("match", player.match_performance);
 
         if (player.team_id) {
@@ -344,6 +356,7 @@
           physical_profile: readGroup("physical"),
           technical_profile: readGroup("technical"),
           mental_profile: readGroup("mental"),
+          tactical_profile: readGroup("tactical"),
           match_performance: readGroup("match")
         };
 

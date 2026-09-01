@@ -38,6 +38,7 @@ class PlayerDB(Base):
     technical_profile: Mapped[dict] = mapped_column(JSON)
     mental_profile: Mapped[dict] = mapped_column(JSON)
     match_performance: Mapped[dict] = mapped_column(JSON)
+    tactical_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     photo_filename: Mapped[str | None] = mapped_column(String, nullable=True)
 

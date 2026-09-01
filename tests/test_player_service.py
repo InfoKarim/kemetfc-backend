@@ -5,6 +5,7 @@ from app.physical_profile import PhysicalProfile
 from app.technical_profile import TechnicalProfile
 from app.mental_profile import MentalProfile
 from app.match_performance import MatchPerformance
+from app.tactical_profile import TacticalProfile
 from app.services.player_service import PlayerService
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -94,6 +95,12 @@ def test_add_and_get_player():
             interceptions=0,
             rating=8.5,
         ),
+        tactical_profile=TacticalProfile(
+            game_understanding=70.0,
+            defensive_positioning=68.0,
+            off_ball_movement=72.0,
+            pressing_intensity=69.0,
+        ),
     )
 
     service.add_player(player)
@@ -156,6 +163,12 @@ def test_get_all_players():
             interceptions=0,
             rating=8.5,
         ),
+        tactical_profile=TacticalProfile(
+            game_understanding=70.0,
+            defensive_positioning=68.0,
+            off_ball_movement=72.0,
+            pressing_intensity=69.0,
+        ),
     )
 
     service.add_player(player)
@@ -211,6 +224,12 @@ def test_delete_player():
             tackles=1,
             interceptions=0,
             rating=8.5,
+        ),
+        tactical_profile=TacticalProfile(
+            game_understanding=70.0,
+            defensive_positioning=68.0,
+            off_ball_movement=72.0,
+            pressing_intensity=69.0,
         ),
     )
 
@@ -275,6 +294,12 @@ def test_update_player():
             interceptions=0,
             rating=8.5,
         ),
+        tactical_profile=TacticalProfile(
+            game_understanding=70.0,
+            defensive_positioning=68.0,
+            off_ball_movement=72.0,
+            pressing_intensity=69.0,
+        ),
     )
 
     service.add_player(player)
@@ -332,6 +357,12 @@ def test_update_unknown_player_returns_false():
             tackles=1,
             interceptions=0,
             rating=8.5,
+        ),
+        tactical_profile=TacticalProfile(
+            game_understanding=70.0,
+            defensive_positioning=68.0,
+            off_ball_movement=72.0,
+            pressing_intensity=69.0,
         ),
     )
 

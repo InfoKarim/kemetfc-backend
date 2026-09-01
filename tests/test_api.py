@@ -250,6 +250,12 @@ def create_test_player(player_id="P100"):
             "interceptions": 2,
             "rating": 8.2,
         },
+        "tactical_profile": {
+            "game_understanding": 70.0,
+            "defensive_positioning": 68.0,
+            "off_ball_movement": 72.0,
+            "pressing_intensity": 69.0,
+        },
     }
 
     response = client.post("/players", json=player_data)
@@ -539,6 +545,12 @@ def test_create_player():
             "tackles": 3,
             "interceptions": 2,
             "rating": 8.2,
+        },
+        "tactical_profile": {
+            "game_understanding": 70.0,
+            "defensive_positioning": 68.0,
+            "off_ball_movement": 72.0,
+            "pressing_intensity": 69.0,
         },
     }
 

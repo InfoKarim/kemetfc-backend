@@ -43,6 +43,13 @@ class MatchPerformanceSchema(BaseModel):
     rating: float
 
 
+class TacticalProfileSchema(BaseModel):
+    game_understanding: float
+    defensive_positioning: float
+    off_ball_movement: float
+    pressing_intensity: float
+
+
 class PlayerSchema(BaseModel):
     player_id: str | None = None
     first_name_ar: str
@@ -55,6 +62,7 @@ class PlayerSchema(BaseModel):
     technical_profile: TechnicalProfileSchema
     mental_profile: MentalProfileSchema
     match_performance: MatchPerformanceSchema
+    tactical_profile: TacticalProfileSchema
     team_id: str | None = None
 
 

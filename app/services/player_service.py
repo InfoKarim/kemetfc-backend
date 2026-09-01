@@ -6,7 +6,19 @@ from app.player import Player
 from app.physical_profile import PhysicalProfile
 from app.technical_profile import TechnicalProfile
 from app.mental_profile import MentalProfile
+from app.tactical_profile import TacticalProfile
 from app.match_performance import MatchPerformance
+
+
+# Players created before the Tactical Profile field existed have no stored
+# value for it — default to a neutral midpoint rather than crashing or
+# silently excluding them from tactical-aware features until re-scored.
+_DEFAULT_TACTICAL_PROFILE = {
+    "game_understanding": 70.0,
+    "defensive_positioning": 70.0,
+    "off_ball_movement": 70.0,
+    "pressing_intensity": 70.0,
+}
 
 
 class PlayerService:
@@ -27,6 +39,7 @@ class PlayerService:
             technical_profile=player.technical_profile.__dict__,
             mental_profile=player.mental_profile.__dict__,
             match_performance=player.match_performance.__dict__,
+            tactical_profile=player.tactical_profile.__dict__,
             created_at=player.created_at,
             photo_filename=player.photo_filename,
         )
@@ -45,6 +58,9 @@ class PlayerService:
             technical_profile=TechnicalProfile(**db_player.technical_profile),
             mental_profile=MentalProfile(**db_player.mental_profile),
             match_performance=MatchPerformance(**db_player.match_performance),
+            tactical_profile=TacticalProfile(
+                **(db_player.tactical_profile or _DEFAULT_TACTICAL_PROFILE)
+            ),
             created_at=db_player.created_at,
             photo_filename=db_player.photo_filename,
         )

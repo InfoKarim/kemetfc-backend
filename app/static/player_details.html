@@ -476,6 +476,7 @@
         ["Technical", average(player.technical_profile)],
         ["Physical", average(player.physical_profile)],
         ["Mental", average(player.mental_profile)],
+        ["Tactical", average(player.tactical_profile)],
       ].forEach(([label, value]) => {
         const box = make("div", "score");
         box.append(make("span", "muted", label));
