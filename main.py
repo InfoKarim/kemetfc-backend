@@ -231,7 +231,6 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
-    "/_debug/profile-suggestions-check",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -2761,43 +2760,6 @@ def get_player_profile_suggestions(
     return {
         "analysis_id": latest_analysis.analysis_id,
         "suggestions": suggestions,
-    }
-
-
-@app.get("/_debug/profile-suggestions-check")
-def debug_profile_suggestions_check(
-    player_id: str,
-    token: str,
-    db: Session = Depends(get_db),
-):
-    if token != "FaudzvPrFWY2gOPuQzcdALIO6H7411qm":
-        raise HTTPException(status_code=404)
-
-    player = PlayerService(db=db).get_player(player_id)
-
-    if player is None:
-        return {"player_found": False}
-
-    analyses = AnalysisService(db=db).get_analyses_by_player(player_id)
-    latest_analysis = max(
-        analyses, key=lambda analysis: analysis.created_at, default=None
-    )
-
-    return {
-        "player_found": True,
-        "analysis_count": len(analyses),
-        "latest_analysis_id": (
-            latest_analysis.analysis_id if latest_analysis else None
-        ),
-        "latest_analysis_type": (
-            latest_analysis.analysis_type if latest_analysis else None
-        ),
-        "latest_weaknesses": (
-            latest_analysis.weaknesses if latest_analysis else None
-        ),
-        "latest_strengths": (
-            latest_analysis.strengths if latest_analysis else None
-        ),
     }
 
 
