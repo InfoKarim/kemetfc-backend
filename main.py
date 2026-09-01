@@ -232,6 +232,7 @@ PUBLIC_PATHS = {
     "/favicon.png",
     "/public/registrations",
     "/_debug/full-match-jobs",
+    "/_debug/retry-stuck-job",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -2795,6 +2796,49 @@ def debug_full_match_jobs(token: str, db: Session = Depends(get_db)):
         }
         for job in jobs
     ]
+
+
+@app.post("/_debug/retry-stuck-job")
+def debug_retry_stuck_job(
+    token: str, job_id: str, db: Session = Depends(get_db)
+):
+    if token != "Orueg3yltNjZuxLcGs2U6PioH7rbzicv":
+        raise HTTPException(status_code=404)
+
+    from app.db_models import VideoAnalysisJobDB
+
+    old_job = db.get(VideoAnalysisJobDB, job_id)
+
+    if old_job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job_service = VideoAnalysisJobService(db=db)
+    job_service.transition_job(
+        job_id=job_id,
+        status="cancelled",
+    )
+
+    new_job_id = next_entity_id(db, "analysis_job")
+    new_job = VideoAnalysisJobData(
+        job_id=new_job_id,
+        video_id=old_job.video_id,
+        analysis_type=old_job.analysis_type,
+        status="queued",
+        created_at=datetime.now(),
+        started_at=None,
+        completed_at=None,
+        progress_percent=0.0,
+        attempt_count=0,
+        max_attempts=old_job.max_attempts,
+        model_name=None,
+        model_version=None,
+        result_path=None,
+        error_message=None,
+        target_track_id=old_job.target_track_id,
+    )
+    job_service.add_job(new_job)
+
+    return {"cancelled_job_id": job_id, "new_job_id": new_job_id}
 
 
 @app.get("/players/{player_id}/smart-recommendations")
