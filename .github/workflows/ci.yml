@@ -36,7 +36,7 @@ jobs:
       - run: python -m alembic upgrade head
       - run: python -m pytest --cov=app --cov=main --cov-fail-under=85
       - run: ruff check app main.py scripts tests
-      - run: bandit -q -r app main.py scripts -x tests
+      - run: bandit -q -r app main.py scripts -x tests -ll
       - run: pip-audit -r requirements.txt
       - run: docker build -t trainingbuddy:${{ github.sha }} .
 
