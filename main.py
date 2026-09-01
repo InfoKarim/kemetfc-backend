@@ -231,6 +231,7 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
+    "/_debug/full-match-jobs",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -2761,6 +2762,39 @@ def get_player_profile_suggestions(
         "analysis_id": latest_analysis.analysis_id,
         "suggestions": suggestions,
     }
+
+
+@app.get("/_debug/full-match-jobs")
+def debug_full_match_jobs(token: str, db: Session = Depends(get_db)):
+    if token != "Orueg3yltNjZuxLcGs2U6PioH7rbzicv":
+        raise HTTPException(status_code=404)
+
+    from app.db_models import VideoAnalysisJobDB
+
+    jobs = (
+        db.query(VideoAnalysisJobDB)
+        .filter(VideoAnalysisJobDB.analysis_type == "full_match")
+        .order_by(VideoAnalysisJobDB.created_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "job_id": job.job_id,
+            "video_id": job.video_id,
+            "status": job.status,
+            "created_at": job.created_at.isoformat(),
+            "started_at": job.started_at.isoformat() if job.started_at else None,
+            "completed_at": (
+                job.completed_at.isoformat() if job.completed_at else None
+            ),
+            "progress_percent": job.progress_percent,
+            "attempt_count": job.attempt_count,
+            "max_attempts": job.max_attempts,
+            "error_message": job.error_message,
+        }
+        for job in jobs
+    ]
 
 
 @app.get("/players/{player_id}/smart-recommendations")
