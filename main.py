@@ -2688,6 +2688,81 @@ def _resolve_player_weaknesses_strengths(player, db: Session):
     return weaknesses, strengths, "profile"
 
 
+# Maps a video-analysis attribute name (see app/video_analysis_publication.py's
+# _rated_attributes) onto the matching player-profile field, when one exists.
+# Most analysis attributes (joint symmetry, movement visibility, explosiveness,
+# ball involvement, work rate, coordination, balance) don't correspond to a
+# profile field at all — this only covers the ones that genuinely overlap.
+_ANALYSIS_ATTRIBUTE_TO_PROFILE_FIELD = {
+    "Speed": ("physical_profile", "speed"),
+    "Acceleration": ("physical_profile", "acceleration"),
+    "Agility": ("physical_profile", "agility"),
+    "Stamina": ("physical_profile", "stamina"),
+    "Strength": ("physical_profile", "strength"),
+    "Ball Control": ("technical_profile", "ball_control"),
+    "Dribbling": ("technical_profile", "dribbling"),
+    "Passing": ("technical_profile", "passing"),
+    "Shooting": ("technical_profile", "shooting"),
+    "Finishing": ("technical_profile", "finishing"),
+    "Decision Making": ("mental_profile", "decision_making"),
+    "Concentration": ("mental_profile", "concentration"),
+    "Composure": ("mental_profile", "composure"),
+    "Positioning": ("mental_profile", "positioning"),
+    "Vision": ("mental_profile", "vision"),
+    "Game Understanding": ("tactical_profile", "game_understanding"),
+    "Defensive Positioning": ("tactical_profile", "defensive_positioning"),
+    "Off-Ball Movement": ("tactical_profile", "off_ball_movement"),
+    "Pressing Intensity": ("tactical_profile", "pressing_intensity"),
+}
+
+
+@app.get("/players/{player_id}/profile-suggestions")
+def get_player_profile_suggestions(
+    player_id: str,
+    db: Session = Depends(get_db),
+):
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    analyses = AnalysisService(db=db).get_analyses_by_player(player_id)
+    latest_analysis = max(
+        analyses, key=lambda analysis: analysis.created_at, default=None
+    )
+
+    if latest_analysis is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No video analysis available for this player yet",
+        )
+
+    suggestions: dict[str, dict[str, float]] = {}
+
+    for item in (latest_analysis.weaknesses or []) + (
+        latest_analysis.strengths or []
+    ):
+        if isinstance(item, dict):
+            attribute, score = item.get("attribute"), item.get("score")
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            attribute, score = item
+        else:
+            continue
+
+        mapping = _ANALYSIS_ATTRIBUTE_TO_PROFILE_FIELD.get(attribute or "")
+
+        if mapping is None or not isinstance(score, (int, float)):
+            continue
+
+        group, field = mapping
+        suggestions.setdefault(group, {})[field] = score
+
+    return {
+        "analysis_id": latest_analysis.analysis_id,
+        "suggestions": suggestions,
+    }
+
+
 @app.get("/players/{player_id}/smart-recommendations")
 def get_player_smart_recommendations(
     player_id: str,

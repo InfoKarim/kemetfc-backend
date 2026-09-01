@@ -844,7 +844,69 @@ def test_smart_recommendations_upstream_failure_returns_502(monkeypatch):
 def test_smart_recommendations_missing_analysis_returns_404():
     response = client.get("/analyses/DOES_NOT_EXIST/smart-recommendations")
     assert response.status_code == 404
-    
+
+
+def test_profile_suggestions_maps_matching_attributes_from_latest_analysis():
+    create_test_player("P610")
+    create_test_analysis("AN610", player_id="P610")
+
+    response = client.get("/players/P610/profile-suggestions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["analysis_id"] == "AN610"
+    assert body["suggestions"]["technical_profile"]["shooting"] == 65.0
+    assert body["suggestions"]["physical_profile"]["stamina"] == 80.0
+
+
+def test_profile_suggestions_ignores_unmapped_attributes():
+    create_test_player("P611")
+    analysis_data = {
+        "analysis_id": "AN611",
+        "video_id": "VID001",
+        "player_id": "P611",
+        "created_at": "2026-08-12T10:00:00",
+        "analysis_type": "pose_estimation",
+        "model_name": "soccer_player_analyzer",
+        "model_version": "1.0",
+        "processing_status": "completed",
+        "processed_at": "2026-08-12T10:01:00",
+        "confidence_score": 0.95,
+        "overall_score": 75.0,
+        "strengths": [{"attribute": "Movement Visibility", "score": 91.0}],
+        "weaknesses": [{"attribute": "Knee Symmetry", "score": 60.0}],
+        "recommendations": [],
+        "raw_output_path": "/analysis/test.json",
+        "requires_human_review": False,
+        "human_review_status": "not_required",
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "review_notes": None,
+        "approved": False,
+        "approved_by": None,
+        "approved_at": None,
+    }
+    assert client.post("/analyses", json=analysis_data).status_code == 201
+
+    response = client.get("/players/P611/profile-suggestions")
+
+    assert response.status_code == 200
+    assert response.json()["suggestions"] == {}
+
+
+def test_profile_suggestions_missing_analysis_returns_404():
+    create_test_player("P612")
+
+    response = client.get("/players/P612/profile-suggestions")
+
+    assert response.status_code == 404
+
+
+def test_profile_suggestions_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/profile-suggestions")
+    assert response.status_code == 404
+
+
 def test_create_analysis_with_unknown_player_returns_404():
     analysis_data = {
         "analysis_id": "AN404",

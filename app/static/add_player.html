@@ -34,6 +34,19 @@
     .profile-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
     .profile-grid .fields { grid-template-columns: repeat(2, 1fr); }
     .actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .apply-suggestions {
+      margin-top: 16px;
+      padding: 11px 16px;
+      border: 1px solid #1265ed;
+      border-radius: 9px;
+      background: #eef5ff;
+      color: #1265ed;
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .apply-suggestions:hover { background: #dfeaff; }
+    .apply-suggestions:disabled { opacity: .6; cursor: default; }
     button, .secondary {
       padding: 12px 18px;
       border-radius: 9px;
@@ -80,6 +93,8 @@
       <a class="back" href="/players-dashboard">← Back to Players</a>
       <h1 id="form-title">Add Player</h1>
       <p id="form-subtitle" class="muted">Create a complete player profile for assessment and training.</p>
+
+      <button id="apply-suggestions-btn" type="button" class="apply-suggestions" hidden></button>
 
       <form id="player-form">
         <section id="basic-information" class="card">
@@ -331,7 +346,51 @@
       }
     }
 
-    loadTeams().then(loadPlayerForEdit).then(applyRegistrationPrefill);
+    let profileSuggestions = null;
+
+    async function loadProfileSuggestions() {
+      if (!editingPlayerId) return;
+
+      try {
+        const response = await fetch(
+          `/players/${encodeURIComponent(editingPlayerId)}/profile-suggestions`
+        );
+
+        if (!response.ok) return;
+
+        const result = await response.json();
+        const fieldCount = Object.values(result.suggestions || {})
+          .reduce((total, group) => total + Object.keys(group).length, 0);
+
+        if (!fieldCount) return;
+
+        profileSuggestions = result.suggestions;
+        const button = document.querySelector("#apply-suggestions-btn");
+        button.hidden = false;
+        button.textContent =
+          `Apply ${fieldCount} field${fieldCount === 1 ? "" : "s"} from latest video analysis`;
+      } catch (error) {
+        // No suggestions available; leave the button hidden.
+      }
+    }
+
+    document.querySelector("#apply-suggestions-btn").addEventListener(
+      "click",
+      () => {
+        if (!profileSuggestions) return;
+
+        fillGroup("physical", profileSuggestions.physical_profile);
+        fillGroup("technical", profileSuggestions.technical_profile);
+        fillGroup("mental", profileSuggestions.mental_profile);
+        fillGroup("tactical", profileSuggestions.tactical_profile);
+
+        const button = document.querySelector("#apply-suggestions-btn");
+        button.disabled = true;
+        button.textContent = "Applied — review the values below before saving";
+      }
+    );
+
+    loadTeams().then(loadPlayerForEdit).then(loadProfileSuggestions).then(applyRegistrationPrefill);
 
     document.querySelector("#player-form").addEventListener(
       "submit",
