@@ -2770,7 +2770,7 @@ def debug_full_match_jobs(token: str, db: Session = Depends(get_db)):
     if token != "Orueg3yltNjZuxLcGs2U6PioH7rbzicv":
         raise HTTPException(status_code=404)
 
-    from app.db_models import VideoAnalysisJobDB
+    from app.db_models import AnalysisDB, VideoAnalysisJobDB
 
     jobs = (
         db.query(VideoAnalysisJobDB)
@@ -2779,8 +2779,19 @@ def debug_full_match_jobs(token: str, db: Session = Depends(get_db)):
         .all()
     )
 
-    return [
-        {
+    result = []
+
+    for job in jobs:
+        analysis = (
+            db.query(AnalysisDB)
+            .filter(
+                AnalysisDB.video_id == job.video_id,
+                AnalysisDB.analysis_type == "full_match",
+            )
+            .order_by(AnalysisDB.created_at.desc())
+            .first()
+        )
+        result.append({
             "job_id": job.job_id,
             "video_id": job.video_id,
             "status": job.status,
@@ -2793,9 +2804,20 @@ def debug_full_match_jobs(token: str, db: Session = Depends(get_db)):
             "attempt_count": job.attempt_count,
             "max_attempts": job.max_attempts,
             "error_message": job.error_message,
-        }
-        for job in jobs
-    ]
+            "analysis": (
+                {
+                    "analysis_id": analysis.analysis_id,
+                    "overall_score": analysis.overall_score,
+                    "confidence_score": analysis.confidence_score,
+                    "strengths": analysis.strengths,
+                    "weaknesses": analysis.weaknesses,
+                }
+                if analysis is not None
+                else None
+            ),
+        })
+
+    return result
 
 
 @app.post("/_debug/retry-stuck-job")
