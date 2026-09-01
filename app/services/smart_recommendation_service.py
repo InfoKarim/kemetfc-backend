@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 
 from app.config import get_anthropic_api_key, get_youtube_api_key
+from app.tactical_profile import TACTICAL_CATEGORY_WEIGHTS
 
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
@@ -327,3 +328,75 @@ def get_coaching_insights(
     return generate_coaching_insights(
         player_name, age, weaknesses, strengths
     )
+
+
+def generate_tactical_scores(
+    player_name: str,
+    age: int,
+    weaknesses: list,
+    strengths: list,
+) -> dict:
+    category_lines = "\n".join(
+        f'  "{category}": <0-100 integer>  # weight {weight * 100:.0f}%'
+        for category, weight in TACTICAL_CATEGORY_WEIGHTS.items()
+    )
+    prompt = (
+        "You are an elite football tactical analyst, the kind a top European "
+        "academy would ask to assess a young player's tactical profile.\n"
+        f"Player: {player_name}, age {age}.\n"
+        f"Measured weaknesses: {_describe(weaknesses)}\n"
+        f"Measured strengths: {_describe(strengths)}\n\n"
+        "Estimate this player's tactical profile across exactly these "
+        "categories, each scored 0-100 (a coach's judgment, not a "
+        "measurement — if the available data is sparse or mostly physical/"
+        "technical rather than tactical, estimate conservatively around a "
+        "neutral 60-70 baseline for that category rather than guessing "
+        "wildly). Reply with ONLY a JSON object (no prose, no markdown "
+        "fences) with exactly these keys, plus a \"reasoning\" key:\n"
+        f"{{\n{category_lines}\n"
+        '  "reasoning": "two or three sentences explaining the overall '
+        'estimate, referencing the player\'s own data"\n'
+        "}"
+    )
+
+    raw_text = _call_anthropic(prompt)
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+
+    if match is None:
+        raise RecommendationError("Could not parse AI recommendations")
+
+    try:
+        parsed = json.loads(match.group(0))
+    except json.JSONDecodeError as error:
+        raise RecommendationError("Could not parse AI recommendations") from error
+
+    if not isinstance(parsed, dict):
+        raise RecommendationError("Could not parse AI recommendations")
+
+    required_keys = set(TACTICAL_CATEGORY_WEIGHTS) | {"reasoning"}
+
+    if not required_keys.issubset(parsed):
+        raise RecommendationError("Could not parse AI recommendations")
+
+    return {
+        "tactical_profile": {
+            category: float(parsed[category])
+            for category in TACTICAL_CATEGORY_WEIGHTS
+        },
+        "reasoning": parsed["reasoning"],
+    }
+
+
+def get_tactical_scores(
+    player_name: str,
+    age: int,
+    weaknesses: list,
+    strengths: list,
+) -> dict:
+    if not is_configured():
+        raise RecommendationError(
+            "Smart recommendations are not configured "
+            "(ANTHROPIC_API_KEY is missing)"
+        )
+
+    return generate_tactical_scores(player_name, age, weaknesses, strengths)

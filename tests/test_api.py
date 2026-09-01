@@ -251,10 +251,14 @@ def create_test_player(player_id="P100"):
             "rating": 8.2,
         },
         "tactical_profile": {
-            "game_understanding": 70.0,
-            "defensive_positioning": 68.0,
-            "off_ball_movement": 72.0,
-            "pressing_intensity": 69.0,
+            "positioning_spatial_intelligence": 70.0,
+            "attacking_contribution_in_possession": 68.0,
+            "attacking_contribution_off_ball": 72.0,
+            "defensive_tactical_contribution": 69.0,
+            "transitions": 71.0,
+            "decision_quality": 70.0,
+            "collective_coordination": 68.0,
+            "set_piece_contribution": 65.0,
         },
     }
 
@@ -547,10 +551,14 @@ def test_create_player():
             "rating": 8.2,
         },
         "tactical_profile": {
-            "game_understanding": 70.0,
-            "defensive_positioning": 68.0,
-            "off_ball_movement": 72.0,
-            "pressing_intensity": 69.0,
+            "positioning_spatial_intelligence": 70.0,
+            "attacking_contribution_in_possession": 68.0,
+            "attacking_contribution_off_ball": 72.0,
+            "defensive_tactical_contribution": 69.0,
+            "transitions": 71.0,
+            "decision_quality": 70.0,
+            "collective_coordination": 68.0,
+            "set_piece_contribution": 65.0,
         },
     }
 
@@ -904,6 +912,56 @@ def test_profile_suggestions_missing_analysis_returns_404():
 
 def test_profile_suggestions_unknown_player_returns_404():
     response = client.get("/players/DOES_NOT_EXIST/profile-suggestions")
+    assert response.status_code == 404
+
+
+def test_tactical_assessment_returns_ai_scores(monkeypatch):
+    import main
+
+    create_test_player("P620")
+
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+
+    fake_tactical_profile = {
+        "positioning_spatial_intelligence": 75.0,
+        "attacking_contribution_in_possession": 70.0,
+        "attacking_contribution_off_ball": 80.0,
+        "defensive_tactical_contribution": 60.0,
+        "transitions": 72.0,
+        "decision_quality": 68.0,
+        "collective_coordination": 74.0,
+        "set_piece_contribution": 65.0,
+    }
+
+    def fake_get_tactical_scores(**kwargs):
+        return {
+            "tactical_profile": fake_tactical_profile,
+            "reasoning": "Based on the player's profile data.",
+        }
+
+    monkeypatch.setattr(main, "get_tactical_scores", fake_get_tactical_scores)
+
+    response = client.get("/players/P620/tactical-assessment")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tactical_profile"] == fake_tactical_profile
+    assert body["reasoning"] == "Based on the player's profile data."
+    assert body["source"] == "profile"
+
+
+def test_tactical_assessment_not_configured_returns_404(monkeypatch):
+    import main
+
+    create_test_player("P621")
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+
+    response = client.get("/players/P621/tactical-assessment")
+    assert response.status_code == 404
+
+
+def test_tactical_assessment_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/tactical-assessment")
     assert response.status_code == 404
 
 

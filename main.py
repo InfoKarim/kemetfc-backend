@@ -86,6 +86,7 @@ from app.services.smart_recommendation_service import (
     get_smart_recommendations,
     get_coaching_insights,
     get_sports_medicine_notes,
+    get_tactical_scores,
     is_configured as is_smart_recommendations_configured,
 )
 from app.drill_recommendations import build_drill_recommendations
@@ -2655,10 +2656,32 @@ def _resolve_player_weaknesses_strengths(player, db: Session):
         ("Composure", player.mental_profile.composure),
         ("Positioning", player.mental_profile.positioning),
         ("Vision", player.mental_profile.vision),
-        ("Game Understanding", player.tactical_profile.game_understanding),
-        ("Defensive Positioning", player.tactical_profile.defensive_positioning),
-        ("Off-Ball Movement", player.tactical_profile.off_ball_movement),
-        ("Pressing Intensity", player.tactical_profile.pressing_intensity),
+        (
+            "Positioning & Spatial Intelligence",
+            player.tactical_profile.positioning_spatial_intelligence,
+        ),
+        (
+            "Attacking Contribution (In Possession)",
+            player.tactical_profile.attacking_contribution_in_possession,
+        ),
+        (
+            "Attacking Contribution (Off Ball)",
+            player.tactical_profile.attacking_contribution_off_ball,
+        ),
+        (
+            "Defensive Tactical Contribution",
+            player.tactical_profile.defensive_tactical_contribution,
+        ),
+        ("Transitions", player.tactical_profile.transitions),
+        ("Decision Quality (Tactical)", player.tactical_profile.decision_quality),
+        (
+            "Collective Coordination",
+            player.tactical_profile.collective_coordination,
+        ),
+        (
+            "Set-Piece Contribution",
+            player.tactical_profile.set_piece_contribution,
+        ),
     ]
 
     # Match performance is raw match counts, not a 0-100 rating like the profiles
@@ -2709,10 +2732,11 @@ _ANALYSIS_ATTRIBUTE_TO_PROFILE_FIELD = {
     "Composure": ("mental_profile", "composure"),
     "Positioning": ("mental_profile", "positioning"),
     "Vision": ("mental_profile", "vision"),
-    "Game Understanding": ("tactical_profile", "game_understanding"),
-    "Defensive Positioning": ("tactical_profile", "defensive_positioning"),
-    "Off-Ball Movement": ("tactical_profile", "off_ball_movement"),
-    "Pressing Intensity": ("tactical_profile", "pressing_intensity"),
+    # Tactical Profile's categories (positioning/spatial intelligence,
+    # transitions, decision quality, etc.) are judgment calls about how a
+    # player reads and moves within a live match — not something pose
+    # tracking or ball tracking on their own can measure, so there's
+    # nothing to map here. See the AI tactical-assessment endpoint instead.
 }
 
 
@@ -2860,6 +2884,43 @@ def get_player_coaching_insights(
         raise HTTPException(status_code=502, detail=str(error))
 
     return {"insights": insights, "source": source}
+
+
+@app.get("/players/{player_id}/tactical-assessment")
+def get_player_tactical_assessment(
+    player_id: str,
+    db: Session = Depends(get_db),
+):
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if not is_smart_recommendations_configured():
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    weaknesses, strengths, source = _resolve_player_weaknesses_strengths(
+        player, db
+    )
+
+    try:
+        result = get_tactical_scores(
+            player_name=f"{player.first_name_en} {player.last_name_en}",
+            age=calculate_player_age(player.date_of_birth),
+            weaknesses=weaknesses,
+            strengths=strengths,
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    return {
+        "tactical_profile": result["tactical_profile"],
+        "reasoning": result["reasoning"],
+        "source": source,
+    }
 
 
 @app.get("/training-plans")

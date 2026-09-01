@@ -21,6 +21,14 @@
     .back { color: #1265ed; font-weight: 700; text-decoration: none; }
     form { display: grid; gap: 18px; margin-top: 22px; }
     .card { padding: 22px; border: 1px solid #e1e7ef; border-radius: 16px; background: white; }
+    .weighted-total {
+      margin: 16px 0 0;
+      padding: 12px 14px;
+      border-radius: 9px;
+      background: #eef5ff;
+      color: #142039;
+      font-weight: 750;
+    }
     .fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
     label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 750; }
     input, select {
@@ -47,6 +55,28 @@
     }
     .apply-suggestions:hover { background: #dfeaff; }
     .apply-suggestions:disabled { opacity: .6; cursor: default; }
+    .suggest-tactical {
+      margin: 0 0 14px;
+      padding: 11px 16px;
+      border: 1px solid #17a957;
+      border-radius: 9px;
+      background: #eefbf3;
+      color: #17a957;
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    .suggest-tactical:hover { background: #dcf6e8; }
+    .suggest-tactical:disabled { opacity: .6; cursor: default; }
+    .tactical-ai-reasoning {
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #f2fbf6;
+      color: #16233b;
+      font-size: 12.5px;
+      line-height: 1.5;
+    }
     button, .secondary {
       padding: 12px 18px;
       border-radius: 9px;
@@ -139,7 +169,12 @@
 
           <section id="tactical-profile" class="card">
             <h2>Tactical Profile</h2>
+            <button id="suggest-tactical-btn" type="button" class="suggest-tactical" hidden>
+              Suggest Tactical Profile with Claude AI
+            </button>
+            <p id="tactical-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
             <div class="fields" data-group="tactical"></div>
+            <p id="tactical-weighted-total" class="weighted-total"></p>
           </section>
 
           <section id="match-performance" class="card">
@@ -185,10 +220,14 @@
         ["vision", "Vision", 70]
       ],
       tactical: [
-        ["game_understanding", "Game understanding", 70],
-        ["defensive_positioning", "Defensive positioning", 70],
-        ["off_ball_movement", "Off-ball movement", 70],
-        ["pressing_intensity", "Pressing intensity", 70]
+        ["positioning_spatial_intelligence", "Positioning & spatial intelligence (20%)", 70],
+        ["attacking_contribution_in_possession", "Attacking contribution — in possession (15%)", 70],
+        ["attacking_contribution_off_ball", "Attacking contribution — off ball (15%)", 70],
+        ["defensive_tactical_contribution", "Defensive tactical contribution (15%)", 70],
+        ["transitions", "Transitions (15%)", 70],
+        ["decision_quality", "Decision quality / game value (10%)", 70],
+        ["collective_coordination", "Collective coordination / adaptability (5%)", 70],
+        ["set_piece_contribution", "Set-piece contribution (5%)", 70]
       ],
       match: [
         ["minutes_played", "Minutes played", 0],
@@ -203,6 +242,30 @@
         ["rating", "Rating", 0]
       ]
     };
+
+    const TACTICAL_WEIGHTS = {
+      positioning_spatial_intelligence: 0.20,
+      attacking_contribution_in_possession: 0.15,
+      attacking_contribution_off_ball: 0.15,
+      defensive_tactical_contribution: 0.15,
+      transitions: 0.15,
+      decision_quality: 0.10,
+      collective_coordination: 0.05,
+      set_piece_contribution: 0.05,
+    };
+
+    function updateTacticalWeightedTotal() {
+      let total = 0;
+
+      document.querySelectorAll('[data-group="tactical"] [data-field]')
+        .forEach((input) => {
+          const weight = TACTICAL_WEIGHTS[input.dataset.field] || 0;
+          total += (Number(input.value) || 0) * weight;
+        });
+
+      document.querySelector("#tactical-weighted-total").textContent =
+        `Weighted tactical score: ${total.toFixed(1)} / 100`;
+    }
 
     for (const [group, fields] of Object.entries(groups)) {
       const target = document.querySelector(`[data-group="${group}"]`);
@@ -229,10 +292,16 @@
             : "1";
         }
 
+        if (group === "tactical") {
+          input.addEventListener("input", updateTacticalWeightedTotal);
+        }
+
         wrapper.append(labelNode, input);
         target.append(wrapper);
       });
     }
+
+    updateTacticalWeightedTotal();
 
     const readGroup = (group) => {
       const values = {};
@@ -335,6 +404,7 @@
         fillGroup("mental", player.mental_profile);
         fillGroup("tactical", player.tactical_profile);
         fillGroup("match", player.match_performance);
+        updateTacticalWeightedTotal();
 
         if (player.team_id) {
           document.querySelector("#team-id").value = player.team_id;
@@ -383,10 +453,55 @@
         fillGroup("technical", profileSuggestions.technical_profile);
         fillGroup("mental", profileSuggestions.mental_profile);
         fillGroup("tactical", profileSuggestions.tactical_profile);
+        updateTacticalWeightedTotal();
 
         const button = document.querySelector("#apply-suggestions-btn");
         button.disabled = true;
         button.textContent = "Applied — review the values below before saving";
+      }
+    );
+
+    if (editingPlayerId) {
+      document.querySelector("#suggest-tactical-btn").hidden = false;
+    }
+
+    document.querySelector("#suggest-tactical-btn").addEventListener(
+      "click",
+      async () => {
+        if (!editingPlayerId) return;
+
+        const button = document.querySelector("#suggest-tactical-btn");
+        const reasoningEl = document.querySelector("#tactical-ai-reasoning");
+        button.disabled = true;
+        button.textContent = "Asking Claude AI...";
+        reasoningEl.hidden = true;
+
+        try {
+          const response = await fetch(
+            `/players/${encodeURIComponent(editingPlayerId)}/tactical-assessment`
+          );
+          const result = await response.json().catch(() => ({}));
+
+          if (!response.ok) {
+            throw new Error(
+              result.detail || "Could not generate a tactical assessment."
+            );
+          }
+
+          fillGroup("tactical", result.tactical_profile);
+          updateTacticalWeightedTotal();
+
+          if (result.reasoning) {
+            reasoningEl.textContent = result.reasoning;
+            reasoningEl.hidden = false;
+          }
+
+          button.textContent = "Suggested — review the values below before saving";
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = "Suggest Tactical Profile with Claude AI";
+          document.querySelector("#form-status").textContent = error.message;
+        }
       }
     );
 

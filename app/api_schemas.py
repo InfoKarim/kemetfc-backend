@@ -44,10 +44,14 @@ class MatchPerformanceSchema(BaseModel):
 
 
 class TacticalProfileSchema(BaseModel):
-    game_understanding: float
-    defensive_positioning: float
-    off_ball_movement: float
-    pressing_intensity: float
+    positioning_spatial_intelligence: float
+    attacking_contribution_in_possession: float
+    attacking_contribution_off_ball: float
+    defensive_tactical_contribution: float
+    transitions: float
+    decision_quality: float
+    collective_coordination: float
+    set_piece_contribution: float
 
 
 class PlayerSchema(BaseModel):

@@ -65,10 +65,14 @@ def test_calculate_overall_score():
             rating=8.5,
         ),
         tactical_profile=TacticalProfile(
-            game_understanding=70.0,
-            defensive_positioning=68.0,
-            off_ball_movement=72.0,
-            pressing_intensity=69.0,
+            positioning_spatial_intelligence=70.0,
+            attacking_contribution_in_possession=68.0,
+            attacking_contribution_off_ball=72.0,
+            defensive_tactical_contribution=69.0,
+            transitions=71.0,
+            decision_quality=70.0,
+            collective_coordination=68.0,
+            set_piece_contribution=65.0,
         ),
     )
 

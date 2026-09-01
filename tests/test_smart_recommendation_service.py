@@ -162,3 +162,76 @@ def test_get_smart_recommendations_attaches_videos_per_area(monkeypatch):
     result = service.get_smart_recommendations("Test Player", 12, [], [])
 
     assert result[0]["videos"] == [{"title": "A video", "url": "https://x"}]
+
+
+def test_generate_tactical_scores_parses_json_object_from_model_reply(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    scores_payload = {
+        "positioning_spatial_intelligence": 75,
+        "attacking_contribution_in_possession": 70,
+        "attacking_contribution_off_ball": 80,
+        "defensive_tactical_contribution": 60,
+        "transitions": 72,
+        "decision_quality": 68,
+        "collective_coordination": 74,
+        "set_piece_contribution": 65,
+        "reasoning": "Solid off-ball movement, defense needs work.",
+    }
+    anthropic_payload = {
+        "content": [{
+            "type": "text",
+            "text": f"Here you go:\n{json.dumps(scores_payload)}",
+        }]
+    }
+
+    def fake_urlopen(request, timeout=None):
+        assert request.full_url == service.ANTHROPIC_API_URL
+        return FakeHTTPResponse(anthropic_payload)
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", fake_urlopen)
+
+    result = service.generate_tactical_scores(
+        player_name="Test Player",
+        age=12,
+        weaknesses=[{"attribute": "Defensive Tactical Contribution", "score": 60}],
+        strengths=[{"attribute": "Off-Ball Movement", "score": 80}],
+    )
+
+    assert result["tactical_profile"] == {
+        "positioning_spatial_intelligence": 75.0,
+        "attacking_contribution_in_possession": 70.0,
+        "attacking_contribution_off_ball": 80.0,
+        "defensive_tactical_contribution": 60.0,
+        "transitions": 72.0,
+        "decision_quality": 68.0,
+        "collective_coordination": 74.0,
+        "set_piece_contribution": 65.0,
+    }
+    assert result["reasoning"] == "Solid off-ball movement, defense needs work."
+
+
+def test_generate_tactical_scores_raises_on_missing_keys(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    anthropic_payload = {
+        "content": [{
+            "type": "text",
+            "text": json.dumps({"positioning_spatial_intelligence": 75}),
+        }]
+    }
+
+    def fake_urlopen(request, timeout=None):
+        return FakeHTTPResponse(anthropic_payload)
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(service.RecommendationError):
+        service.generate_tactical_scores("Test Player", 12, [], [])
+
+
+def test_get_tactical_scores_requires_anthropic_key(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "")
+
+    with pytest.raises(service.RecommendationError):
+        service.get_tactical_scores("Test Player", 12, [], [])

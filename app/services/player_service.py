@@ -10,14 +10,20 @@ from app.tactical_profile import TacticalProfile
 from app.match_performance import MatchPerformance
 
 
-# Players created before the Tactical Profile field existed have no stored
-# value for it — default to a neutral midpoint rather than crashing or
-# silently excluding them from tactical-aware features until re-scored.
+# Players created before the Tactical Profile field existed (or before it
+# was redesigned to weighted categories) have no stored value, or a value
+# shaped for the old 4-field version — default to a neutral midpoint rather
+# than crashing or silently excluding them from tactical-aware features
+# until re-scored.
 _DEFAULT_TACTICAL_PROFILE = {
-    "game_understanding": 70.0,
-    "defensive_positioning": 70.0,
-    "off_ball_movement": 70.0,
-    "pressing_intensity": 70.0,
+    "positioning_spatial_intelligence": 70.0,
+    "attacking_contribution_in_possession": 70.0,
+    "attacking_contribution_off_ball": 70.0,
+    "defensive_tactical_contribution": 70.0,
+    "transitions": 70.0,
+    "decision_quality": 70.0,
+    "collective_coordination": 70.0,
+    "set_piece_contribution": 70.0,
 }
 
 
@@ -44,6 +50,17 @@ class PlayerService:
             photo_filename=player.photo_filename,
         )
 
+    def _tactical_profile(self, db_player: PlayerDB) -> TacticalProfile:
+        try:
+            return TacticalProfile(
+                **(db_player.tactical_profile or _DEFAULT_TACTICAL_PROFILE)
+            )
+        except TypeError:
+            # Stored value is shaped for an older version of Tactical
+            # Profile (different fields) — fall back rather than crash;
+            # the player just needs re-scoring under the current fields.
+            return TacticalProfile(**_DEFAULT_TACTICAL_PROFILE)
+
     def _to_domain(self, db_player: PlayerDB) -> Player:
         return Player(
             player_id=db_player.player_id,
@@ -58,9 +75,7 @@ class PlayerService:
             technical_profile=TechnicalProfile(**db_player.technical_profile),
             mental_profile=MentalProfile(**db_player.mental_profile),
             match_performance=MatchPerformance(**db_player.match_performance),
-            tactical_profile=TacticalProfile(
-                **(db_player.tactical_profile or _DEFAULT_TACTICAL_PROFILE)
-            ),
+            tactical_profile=self._tactical_profile(db_player),
             created_at=db_player.created_at,
             photo_filename=db_player.photo_filename,
         )
