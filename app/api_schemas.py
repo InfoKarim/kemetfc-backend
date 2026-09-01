@@ -28,6 +28,9 @@ class MentalProfileSchema(BaseModel):
     composure: float
     positioning: float
     vision: float
+    awareness: float
+    game_reading: float
+    coachability: float
 
 
 class MatchPerformanceSchema(BaseModel):

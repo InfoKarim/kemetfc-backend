@@ -26,6 +26,20 @@ _DEFAULT_TACTICAL_PROFILE = {
     "set_piece_contribution": 70.0,
 }
 
+# Players created before Mental Profile gained Awareness, Game reading, and
+# Coachability have a stored value with only the original 5 fields — default
+# the new ones to a neutral midpoint rather than crashing until re-scored.
+_DEFAULT_MENTAL_PROFILE = {
+    "decision_making": 70.0,
+    "concentration": 70.0,
+    "composure": 70.0,
+    "positioning": 70.0,
+    "vision": 70.0,
+    "awareness": 70.0,
+    "game_reading": 70.0,
+    "coachability": 70.0,
+}
+
 
 class PlayerService:
     def __init__(self, db: Session | None = None):
@@ -48,6 +62,11 @@ class PlayerService:
             tactical_profile=player.tactical_profile.__dict__,
             created_at=player.created_at,
             photo_filename=player.photo_filename,
+        )
+
+    def _mental_profile(self, db_player: PlayerDB) -> MentalProfile:
+        return MentalProfile(
+            **{**_DEFAULT_MENTAL_PROFILE, **(db_player.mental_profile or {})}
         )
 
     def _tactical_profile(self, db_player: PlayerDB) -> TacticalProfile:
@@ -73,7 +92,7 @@ class PlayerService:
             team_id=db_player.team_id,
             physical_profile=PhysicalProfile(**db_player.physical_profile),
             technical_profile=TechnicalProfile(**db_player.technical_profile),
-            mental_profile=MentalProfile(**db_player.mental_profile),
+            mental_profile=self._mental_profile(db_player),
             match_performance=MatchPerformance(**db_player.match_performance),
             tactical_profile=self._tactical_profile(db_player),
             created_at=db_player.created_at,

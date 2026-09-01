@@ -51,6 +51,9 @@ def test_calculate_overall_score():
             composure=70.0,
             positioning=70.0,
             vision=70.0,
+            awareness=70.0,
+            game_reading=70.0,
+            coachability=70.0,
         ),
         match_performance=MatchPerformance(
             minutes_played=90,

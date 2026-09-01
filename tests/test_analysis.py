@@ -40,6 +40,9 @@ def test_analyze_player_returns_top_strengths_and_weaknesses():
             composure=90.0,
             positioning=92.0,
             vision=84.0,
+            awareness=70.0,
+            game_reading=70.0,
+            coachability=70.0,
         ),
         match_performance=MatchPerformance(
             minutes_played=90,

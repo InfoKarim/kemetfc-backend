@@ -2657,6 +2657,9 @@ def _resolve_player_weaknesses_strengths(player, db: Session):
         ("Composure", player.mental_profile.composure),
         ("Positioning", player.mental_profile.positioning),
         ("Vision", player.mental_profile.vision),
+        ("Awareness", player.mental_profile.awareness),
+        ("Game Reading", player.mental_profile.game_reading),
+        ("Coachability", player.mental_profile.coachability),
         (
             "Positioning & Spatial Intelligence",
             player.tactical_profile.positioning_spatial_intelligence,

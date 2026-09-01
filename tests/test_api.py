@@ -113,6 +113,9 @@ def seed_test_dependencies():
             "composure": 68.0,
             "positioning": 71.0,
             "vision": 74.0,
+            "awareness": 70.0,
+            "game_reading": 70.0,
+            "coachability": 70.0,
         },
         match_performance={
             "minutes_played": 90,
@@ -237,6 +240,9 @@ def create_test_player(player_id="P100"):
             "composure": 68.0,
             "positioning": 71.0,
             "vision": 74.0,
+            "awareness": 70.0,
+            "game_reading": 70.0,
+            "coachability": 70.0,
         },
         "match_performance": {
             "minutes_played": 90,
@@ -537,6 +543,9 @@ def test_create_player():
             "composure": 68.0,
             "positioning": 71.0,
             "vision": 74.0,
+            "awareness": 70.0,
+            "game_reading": 70.0,
+            "coachability": 70.0,
         },
         "match_performance": {
             "minutes_played": 90,
