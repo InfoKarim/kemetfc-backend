@@ -415,6 +415,274 @@ def test_repeated_failed_logins_lock_account(monkeypatch):
     assert locked.json() == {"detail": "Invalid username or password"}
 
 
+def test_request_password_reset_unknown_username_returns_generic_message():
+    anonymous = TestClient(app)
+
+    response = anonymous.post(
+        "/auth/password-reset/request",
+        json={"username": "nobody-here"},
+    )
+
+    assert response.status_code == 200
+    assert "6-digit code" in response.json()["message"]
+
+
+def test_request_password_reset_invalid_username_returns_generic_message():
+    anonymous = TestClient(app)
+
+    response = anonymous.post(
+        "/auth/password-reset/request",
+        json={"username": "not a valid username!"},
+    )
+
+    assert response.status_code == 200
+    assert "6-digit code" in response.json()["message"]
+
+
+def test_request_password_reset_user_without_email_returns_generic_message():
+    anonymous = TestClient(app)
+
+    response = anonymous.post(
+        "/auth/password-reset/request",
+        json={"username": "testadmin"},
+    )
+
+    assert response.status_code == 200
+    assert "6-digit code" in response.json()["message"]
+
+
+def test_request_password_reset_sends_email_for_active_user_with_email(monkeypatch):
+    import main
+
+    db = TestingSessionLocal()
+    db.add(UserDB(
+        user_id="RESET_USER",
+        username="resetuser",
+        password_hash=hash_password("OriginalPassword123!"),
+        role="coach",
+        active=True,
+        email="reset-user@example.com",
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    ))
+    db.commit()
+    db.close()
+
+    sent = {}
+
+    def fake_send_password_reset_email(to_email, code):
+        sent["to_email"] = to_email
+        sent["code"] = code
+
+    monkeypatch.setattr(main, "send_password_reset_email", fake_send_password_reset_email)
+
+    anonymous = TestClient(app)
+    response = anonymous.post(
+        "/auth/password-reset/request",
+        json={"username": "resetuser"},
+    )
+
+    assert response.status_code == 200
+    assert sent["to_email"] == "reset-user@example.com"
+    assert len(sent["code"]) == 6
+
+
+def test_request_password_reset_email_failure_returns_502(monkeypatch):
+    import main
+
+    db = TestingSessionLocal()
+    db.add(UserDB(
+        user_id="RESET_USER_2",
+        username="resetuser2",
+        password_hash=hash_password("OriginalPassword123!"),
+        role="coach",
+        active=True,
+        email="reset-user-2@example.com",
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    ))
+    db.commit()
+    db.close()
+
+    def failing_send(to_email, code):
+        raise main.EmailSendError("SMTP is down")
+
+    monkeypatch.setattr(main, "send_password_reset_email", failing_send)
+
+    anonymous = TestClient(app)
+    response = anonymous.post(
+        "/auth/password-reset/request",
+        json={"username": "resetuser2"},
+    )
+
+    assert response.status_code == 502
+
+
+def test_confirm_password_reset_invalid_username_returns_400():
+    anonymous = TestClient(app)
+
+    response = anonymous.post(
+        "/auth/password-reset/confirm",
+        json={
+            "username": "not a valid username!",
+            "code": "123456",
+            "new_password": "BrandNewPassword123!",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_confirm_password_reset_unknown_username_returns_400():
+    anonymous = TestClient(app)
+
+    response = anonymous.post(
+        "/auth/password-reset/confirm",
+        json={
+            "username": "nobody-here",
+            "code": "123456",
+            "new_password": "BrandNewPassword123!",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_confirm_password_reset_wrong_code_returns_400():
+    db = TestingSessionLocal()
+    db.add(UserDB(
+        user_id="RESET_USER_3",
+        username="resetuser3",
+        password_hash=hash_password("OriginalPassword123!"),
+        role="coach",
+        active=True,
+        email="reset-user-3@example.com",
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    ))
+    db.commit()
+    db.close()
+
+    anonymous = TestClient(app)
+    response = anonymous.post(
+        "/auth/password-reset/confirm",
+        json={
+            "username": "resetuser3",
+            "code": "000000",
+            "new_password": "BrandNewPassword123!",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_confirm_password_reset_succeeds_with_valid_code():
+    from app.services.auth_service import AuthService
+
+    db = TestingSessionLocal()
+    db.add(UserDB(
+        user_id="RESET_USER_4",
+        username="resetuser4",
+        password_hash=hash_password("OriginalPassword123!"),
+        role="coach",
+        active=True,
+        email="reset-user-4@example.com",
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    ))
+    db.commit()
+
+    code = AuthService(db=db).create_password_reset_code("RESET_USER_4")
+    db.close()
+
+    anonymous = TestClient(app)
+    response = anonymous.post(
+        "/auth/password-reset/confirm",
+        json={
+            "username": "resetuser4",
+            "code": code,
+            "new_password": "BrandNewPassword123!",
+        },
+    )
+
+    assert response.status_code == 200
+
+    login_response = anonymous.post(
+        "/auth/login",
+        json={"username": "resetuser4", "password": "BrandNewPassword123!"},
+    )
+    assert login_response.status_code == 200
+
+
+def test_change_own_password_rejects_wrong_current_password():
+    own_client = TestClient(app)
+    login = own_client.post(
+        "/auth/login",
+        json={"username": "testadmin", "password": "TestAdminPassword123!"},
+    )
+    assert login.status_code == 200
+
+    response = own_client.post(
+        "/auth/me/password",
+        json={
+            "current_password": "definitely-wrong",
+            "new_password": "AnotherNewPassword123!",
+        },
+        headers={
+            "X-CSRF-Token": own_client.cookies.get(CSRF_COOKIE_NAME),
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_change_own_password_succeeds_and_revokes_session():
+    db = TestingSessionLocal()
+    db.add(UserDB(
+        user_id="CHANGE_PW_USER",
+        username="changepassworduser",
+        password_hash=hash_password("StartingPassword123!"),
+        role="coach",
+        active=True,
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    ))
+    db.commit()
+    db.close()
+
+    own_client = TestClient(app)
+    login = own_client.post(
+        "/auth/login",
+        json={"username": "changepassworduser", "password": "StartingPassword123!"},
+    )
+    assert login.status_code == 200
+    csrf_token = own_client.cookies.get(CSRF_COOKIE_NAME)
+
+    response = own_client.post(
+        "/auth/me/password",
+        json={
+            "current_password": "StartingPassword123!",
+            "new_password": "BrandNewPassword456!",
+        },
+        headers={"X-CSRF-Token": csrf_token},
+    )
+
+    assert response.status_code == 200
+
+    # Changing the password revokes the session that made the change.
+    stale_session_check = own_client.get(
+        "/auth/me",
+        headers={"X-CSRF-Token": csrf_token},
+    )
+    assert stale_session_check.status_code == 401
+
+    relogin = TestClient(app).post(
+        "/auth/login",
+        json={"username": "changepassworduser", "password": "BrandNewPassword456!"},
+    )
+    assert relogin.status_code == 200
+
+
 def test_authenticated_user_can_read_identity():
     response = client.get("/auth/me")
 
@@ -922,6 +1190,132 @@ def test_profile_suggestions_missing_analysis_returns_404():
 def test_profile_suggestions_unknown_player_returns_404():
     response = client.get("/players/DOES_NOT_EXIST/profile-suggestions")
     assert response.status_code == 404
+
+
+def test_player_smart_recommendations_returns_focus_areas(monkeypatch):
+    import main
+
+    create_test_player("P628")
+
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+
+    fake_focus_areas = [{"title": "Improve first touch", "videos": []}]
+
+    def fake_get_smart_recommendations(**kwargs):
+        return fake_focus_areas
+
+    monkeypatch.setattr(main, "get_smart_recommendations", fake_get_smart_recommendations)
+
+    response = client.get("/players/P628/smart-recommendations")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["focus_areas"] == fake_focus_areas
+    assert body["source"] == "profile"
+
+
+def test_player_smart_recommendations_not_configured_returns_404(monkeypatch):
+    import main
+
+    create_test_player("P629")
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+
+    response = client.get("/players/P629/smart-recommendations")
+    assert response.status_code == 404
+
+
+def test_player_smart_recommendations_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/smart-recommendations")
+    assert response.status_code == 404
+
+
+def test_player_sports_medicine_notes_returns_notes(monkeypatch):
+    import main
+
+    create_test_player("P630")
+
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+
+    fake_notes = ["Monitor hydration during high-intensity sessions."]
+
+    def fake_get_sports_medicine_notes(**kwargs):
+        return fake_notes
+
+    monkeypatch.setattr(main, "get_sports_medicine_notes", fake_get_sports_medicine_notes)
+
+    response = client.get("/players/P630/sports-medicine-notes")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["notes"] == fake_notes
+    assert body["source"] == "profile"
+
+
+def test_player_sports_medicine_notes_not_configured_returns_404(monkeypatch):
+    import main
+
+    create_test_player("P631")
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+
+    response = client.get("/players/P631/sports-medicine-notes")
+    assert response.status_code == 404
+
+
+def test_player_sports_medicine_notes_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/sports-medicine-notes")
+    assert response.status_code == 404
+
+
+def test_player_coaching_insights_returns_insights(monkeypatch):
+    import main
+
+    create_test_player("P632")
+
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+
+    fake_insights = ["Encourage scanning before receiving the ball."]
+
+    def fake_get_coaching_insights(**kwargs):
+        return fake_insights
+
+    monkeypatch.setattr(main, "get_coaching_insights", fake_get_coaching_insights)
+
+    response = client.get("/players/P632/coaching-insights")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["insights"] == fake_insights
+    assert body["source"] == "profile"
+
+
+def test_player_coaching_insights_not_configured_returns_404(monkeypatch):
+    import main
+
+    create_test_player("P633")
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+
+    response = client.get("/players/P633/coaching-insights")
+    assert response.status_code == 404
+
+
+def test_player_coaching_insights_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/coaching-insights")
+    assert response.status_code == 404
+
+
+def test_player_smart_recommendations_raises_502_on_recommendation_error(monkeypatch):
+    import main
+
+    create_test_player("P634")
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+
+    def fake_get_smart_recommendations(**kwargs):
+        raise main.RecommendationError("Anthropic API unavailable")
+
+    monkeypatch.setattr(main, "get_smart_recommendations", fake_get_smart_recommendations)
+
+    response = client.get("/players/P634/smart-recommendations")
+    assert response.status_code == 502
 
 
 def test_tactical_assessment_returns_ai_scores(monkeypatch):
@@ -2246,6 +2640,159 @@ def test_training_plan_rejects_invalid_status():
     assert response.status_code == 422
 
 
+def test_update_training_plan_details():
+    create_saved_training_plan(
+        "PLAN_API_DETAILS",
+        "AN_PLAN_API_DETAILS",
+    )
+
+    response = client.patch(
+        "/training-plans/PLAN_API_DETAILS",
+        json={
+            "player_difficulty": "advanced",
+            "target_duration": 45,
+            "available_equipment": ["ball", "cones"],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_difficulty"] == "advanced"
+    assert body["target_duration"] == 45
+    assert body["available_equipment"] == ["ball", "cones"]
+
+
+def test_update_training_plan_details_partial_update_keeps_other_fields():
+    create_saved_training_plan(
+        "PLAN_API_DETAILS_PARTIAL",
+        "AN_PLAN_API_DETAILS_PARTIAL",
+    )
+
+    response = client.patch(
+        "/training-plans/PLAN_API_DETAILS_PARTIAL",
+        json={"target_duration": 60},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_difficulty"] == "beginner"
+    assert body["target_duration"] == 60
+
+
+def test_update_missing_training_plan_details_returns_404():
+    response = client.patch(
+        "/training-plans/DOES_NOT_EXIST",
+        json={"target_duration": 30},
+    )
+
+    assert response.status_code == 404
+
+
+def test_delete_training_plan():
+    create_saved_training_plan(
+        "PLAN_API_DELETE",
+        "AN_PLAN_API_DELETE",
+    )
+
+    response = client.delete("/training-plans/PLAN_API_DELETE")
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Training plan deleted"}
+    assert client.get("/training-plans/PLAN_API_DELETE").status_code == 404
+
+
+def test_delete_missing_training_plan_returns_404():
+    response = client.delete("/training-plans/DOES_NOT_EXIST")
+
+    assert response.status_code == 404
+
+
+def test_add_video_to_training_plan_creates_new_recommendation_group():
+    create_saved_training_plan(
+        "PLAN_API_VIDEO",
+        "AN_PLAN_API_VIDEO",
+    )
+
+    response = client.post(
+        "/training-plans/PLAN_API_VIDEO/recommendations/videos",
+        json={
+            "weakness": "A Brand New Weakness Bucket",
+            "title": "Finishing drills",
+            "url": "https://example.com/video",
+            "channel": "Coach Channel",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    group = next(
+        item
+        for item in body["recommendations"]
+        if item["weakness"] == "A Brand New Weakness Bucket"
+    )
+    assert len(group["drills"]) == 1
+    assert group["drills"][0]["video_url"] == "https://example.com/video"
+    assert group["drills"][0]["name"] == "Finishing drills"
+    assert "Coach Channel" in group["drills"][0]["description"]
+
+
+def test_add_video_to_training_plan_appends_to_existing_group_without_duplicates():
+    create_saved_training_plan(
+        "PLAN_API_VIDEO_2",
+        "AN_PLAN_API_VIDEO_2",
+    )
+    weakness = "Another Brand New Weakness Bucket"
+
+    first = client.post(
+        "/training-plans/PLAN_API_VIDEO_2/recommendations/videos",
+        json={
+            "weakness": weakness,
+            "title": "Passing drill A",
+            "url": "https://example.com/a",
+        },
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        "/training-plans/PLAN_API_VIDEO_2/recommendations/videos",
+        json={
+            "weakness": weakness,
+            "title": "Passing drill B",
+            "url": "https://example.com/b",
+        },
+    )
+    assert second.status_code == 201
+
+    duplicate = client.post(
+        "/training-plans/PLAN_API_VIDEO_2/recommendations/videos",
+        json={
+            "weakness": weakness,
+            "title": "Passing drill A again",
+            "url": "https://example.com/a",
+        },
+    )
+    assert duplicate.status_code == 201
+
+    body = duplicate.json()
+    group = next(
+        item for item in body["recommendations"] if item["weakness"] == weakness
+    )
+    assert len(group["drills"]) == 2
+
+
+def test_add_video_to_missing_training_plan_returns_404():
+    response = client.post(
+        "/training-plans/DOES_NOT_EXIST/recommendations/videos",
+        json={
+            "weakness": "Passing",
+            "title": "Passing drill",
+            "url": "https://example.com/a",
+        },
+    )
+
+    assert response.status_code == 404
+
+
 def test_training_plans_dashboard_page():
     response = client.get("/training-plans-dashboard")
 
@@ -2302,6 +2849,20 @@ def test_players_dashboard_page():
     assert 'id="player-search"' in response.text
     assert 'id="team-filter"' in response.text
     assert 'fetch("/teams")' in response.text
+
+
+def test_body_analysis_3d_page():
+    response = client.get("/body-analysis-3d")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+
+
+def test_registrations_dashboard_page():
+    response = client.get("/registrations-dashboard")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
 
 
 def test_player_details_page():

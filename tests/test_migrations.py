@@ -95,6 +95,68 @@ def test_migration_health_rejects_database_without_migrations(tmp_path):
             require_database_at_head(connection)
 
 
+@pytest.mark.skipif(
+    not os.environ.get("POSTGRES_TEST_URL"),
+    reason="requires a real PostgreSQL instance (set POSTGRES_TEST_URL)",
+)
+def test_migrations_build_fresh_postgresql_database():
+    database_url = os.environ["POSTGRES_TEST_URL"]
+
+    def run_alembic(*args: str) -> None:
+        subprocess.run(
+            [sys.executable, "-m", "alembic", *args],
+            cwd=PROJECT_ROOT,
+            env=migration_environment(database_url),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    engine = create_engine(database_url)
+
+    # Start from a clean slate: earlier tests (or a re-run) may have left
+    # this database at head already.
+    with engine.connect() as connection:
+        connection.execute(text("DROP SCHEMA public CASCADE"))
+        connection.execute(text("CREATE SCHEMA public"))
+        connection.commit()
+
+    run_alembic("upgrade", "head")
+
+    assert set(inspect(engine).get_table_names()) == EXPECTED_TABLES
+
+    with engine.connect() as connection:
+        revision = connection.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one()
+        assert require_database_at_head(connection) == (revision,)
+
+    job_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("video_analysis_jobs")
+    }
+    assert "target_track_id" in job_columns
+    user_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("users")
+    }
+    assert "feature_permissions" in user_columns
+    assert "email" in user_columns
+
+    # Round-trip every migration down and back up for real against
+    # PostgreSQL — this is the part `alembic upgrade head --sql` (a purely
+    # offline SQL dump) can never prove, since it never executes anything.
+    run_alembic("downgrade", "base")
+    # alembic's own bookkeeping table survives a downgrade to "base" (it
+    # just becomes empty) — every table our migrations created should not.
+    assert set(inspect(engine).get_table_names()) == {"alembic_version"}
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT * FROM alembic_version")).all() == []
+
+    run_alembic("upgrade", "head")
+    assert set(inspect(engine).get_table_names()) == EXPECTED_TABLES
+
+
 def test_postgresql_migration_sql_has_single_drills_table():
     database_url = (
         "postgresql+psycopg://user:password@localhost/trainingbuddy"
