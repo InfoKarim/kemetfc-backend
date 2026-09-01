@@ -21,7 +21,9 @@ def main() -> None:
     digest = hashlib.sha256()
 
     try:
-        with urlopen(MODEL_URL) as response, temporary.open("wb") as output:
+        # MODEL_URL is a hardcoded https:// constant, not attacker-influenced
+        # input, and the download is checksum-verified below before use.
+        with urlopen(MODEL_URL) as response, temporary.open("wb") as output:  # nosec B310
             while chunk := response.read(1024 * 1024):
                 digest.update(chunk)
                 output.write(chunk)
