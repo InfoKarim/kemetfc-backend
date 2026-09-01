@@ -13,7 +13,31 @@ from sqlalchemy.orm import Session
 
 from app.analysis_result_storage import AnalysisResultStorage
 from app.db_models import AnalysisDB, PlayerDB
+from app.pose_features import extract_pose_features
 from app.video_analysis_publication import project_analysis_result
+
+
+def _with_regenerated_features(raw_result: dict) -> dict:
+    """The stored `features` dict is a frozen snapshot from whatever
+    pose_features.py computed at analysis time — measurements added to it
+    since then (e.g. body_height_pixels, needed for Speed/Agility) are
+    missing from it even though the underlying raw landmark_frames are
+    still there. Recomputing features from those raw landmarks with the
+    current logic picks up anything new."""
+    landmark_frames = raw_result.get("landmark_frames")
+    video_info = raw_result.get("video") or {}
+    image_width = video_info.get("image_width")
+    image_height = video_info.get("image_height")
+
+    if not landmark_frames or not image_width or not image_height:
+        return raw_result
+
+    return {
+        **raw_result,
+        "features": extract_pose_features(
+            landmark_frames, image_width, image_height
+        ),
+    }
 
 
 def reprocess_pose_estimation_analyses(
@@ -40,6 +64,7 @@ def reprocess_pose_estimation_analyses(
             results.append(entry)
             continue
 
+        raw_result = _with_regenerated_features(raw_result)
         player = db.get(PlayerDB, analysis.player_id)
         player_height_cm = (
             (player.physical_profile or {}).get("height_cm")
