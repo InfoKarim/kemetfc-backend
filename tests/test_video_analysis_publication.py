@@ -1,3 +1,5 @@
+import pytest
+
 from app.video_analysis_publication import project_analysis_result
 
 
@@ -69,6 +71,72 @@ def test_projects_pose_estimation_joint_symmetry_from_measurements():
     assert attributes["Knee Symmetry"] == 20.0
     assert attributes["Hip Symmetry"] == 96.0
     assert attributes["Movement Visibility"] == 90.0
+
+
+def test_projects_speed_and_agility_from_frame_by_frame_movement():
+    # body_height_pixels=150 with a real height of 150cm -> 1 pixel == 1 cm,
+    # so a steady 5cm hip move every 100ms is a constant, easy-to-check 0.5 m/s.
+    frames = [
+        {
+            "timestamp_ms": index * 100,
+            "measurements": {
+                "body_height_pixels": 150.0,
+                "hip_center_x_normalized": 0.05 * index,
+                "hip_center_y_normalized": 0.5,
+            },
+        }
+        for index in range(6)
+    ]
+
+    projected = project_analysis_result(
+        {
+            "analysis_type": "pose_estimation",
+            "summary": {"detection_rate": 0.9},
+            "video": {"image_width": 100, "image_height": 100},
+            "features": {"summary": {}, "frames": frames},
+        },
+        player_height_cm=150.0,
+    )
+
+    attributes = {
+        item["attribute"]: item["score"]
+        for item in projected["strengths"] + projected["weaknesses"]
+    }
+
+    assert attributes["Speed"] == pytest.approx(0.5 / 6.0 * 100, abs=0.1)
+    assert attributes["Acceleration"] == pytest.approx(0.0, abs=0.1)
+    assert "Agility" in attributes
+
+
+def test_speed_and_acceleration_omitted_without_player_height():
+    frames = [
+        {
+            "timestamp_ms": index * 100,
+            "measurements": {
+                "body_height_pixels": 150.0,
+                "hip_center_x_normalized": 0.05 * index,
+                "hip_center_y_normalized": 0.5,
+            },
+        }
+        for index in range(6)
+    ]
+
+    projected = project_analysis_result(
+        {
+            "analysis_type": "pose_estimation",
+            "summary": {"detection_rate": 0.9},
+            "video": {"image_width": 100, "image_height": 100},
+            "features": {"summary": {}, "frames": frames},
+        }
+    )
+
+    attribute_names = {
+        item["attribute"]
+        for item in projected["strengths"] + projected["weaknesses"]
+    }
+
+    assert "Speed" not in attribute_names
+    assert "Acceleration" not in attribute_names
 
 
 def test_projects_full_match_target_metrics():

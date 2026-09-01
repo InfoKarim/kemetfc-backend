@@ -5,6 +5,7 @@ from statistics import fmean, pstdev
 MIN_LANDMARK_CONFIDENCE = 0.5
 
 LANDMARK_INDEX = {
+    "nose": 0,
     "left_shoulder": 11,
     "right_shoulder": 12,
     "left_elbow": 13,
@@ -180,6 +181,9 @@ def calculate_frame_features(
 
     if left_hip is not None and right_hip is not None:
         features["hip_tilt_degrees"] = _line_tilt(left_hip, right_hip)
+        features["hip_center_x_normalized"] = (
+            (left_hip[0] + right_hip[0]) / 2.0 / image_width
+        )
         features["hip_center_y_normalized"] = (
             (left_hip[1] + right_hip[1]) / 2.0 / image_height
         )
@@ -188,6 +192,27 @@ def calculate_frame_features(
         features["ankle_center_y_normalized"] = (
             (left_ankle[1] + right_ankle[1]) / 2.0 / image_height
         )
+
+    nose = points["nose"]
+    ankle_points = [
+        point for point in (left_ankle, right_ankle) if point is not None
+    ]
+
+    if nose is not None and ankle_points:
+        ankle_center_x = sum(point[0] for point in ankle_points) / len(
+            ankle_points
+        )
+        ankle_center_y = sum(point[1] for point in ankle_points) / len(
+            ankle_points
+        )
+        # 2D-only (ignores MediaPipe's z, a rough relative depth, not a
+        # pixel-comparable unit) distance from nose to ankle(s) — a
+        # per-frame proxy for the player's standing height in pixels,
+        # used elsewhere to convert pixel movement into real-world speed.
+        features["body_height_pixels"] = (
+            (nose[0] - ankle_center_x) ** 2
+            + (nose[1] - ankle_center_y) ** 2
+        ) ** 0.5
 
     if all(
         point is not None

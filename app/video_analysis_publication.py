@@ -5,6 +5,10 @@ from sqlalchemy.orm import Session
 from app.data_models import AIAnalysisRecord, TrainingPlanData
 from app.db_models import AnalysisDB, DataRecordDB, PlayerDB, VideoDB
 from app.drill_recommendations import build_drill_recommendations
+from app.movement_speed_analysis import (
+    estimate_agility,
+    estimate_speed_and_acceleration,
+)
 from app.services.analysis_service import AnalysisService
 from app.services.drill_service import DrillService
 from app.services.training_plan_service import TrainingPlanService
@@ -53,7 +57,9 @@ def _joint_symmetry_attributes(
     return attributes
 
 
-def _rated_attributes(result: dict) -> list[tuple[str, float]]:
+def _rated_attributes(
+    result: dict, player_height_cm: float | None = None
+) -> list[tuple[str, float]]:
     movement = result.get("movement_analysis") or {}
     analysis_type = movement.get("analysis_type") or result.get(
         "analysis_type"
@@ -140,10 +146,26 @@ def _rated_attributes(result: dict) -> list[tuple[str, float]]:
             ("Movement Visibility", _bounded_score(detection_rate * 100))
         )
 
+    frames = (result.get("features") or {}).get("frames") or []
+    video_info = result.get("video") or {}
+    image_width = video_info.get("image_width")
+    image_height = video_info.get("image_height")
+
+    attributes.extend(estimate_agility(frames))
+
+    if player_height_cm is not None and image_width and image_height:
+        attributes.extend(
+            estimate_speed_and_acceleration(
+                frames, image_width, image_height, player_height_cm
+            )
+        )
+
     return attributes
 
 
-def project_analysis_result(result: dict) -> dict:
+def project_analysis_result(
+    result: dict, player_height_cm: float | None = None
+) -> dict:
     quality_control = result.get("quality_control") or {}
     if quality_control.get("abstained"):
         result_summary = result.get("summary") or {}
@@ -163,7 +185,7 @@ def project_analysis_result(result: dict) -> dict:
             ],
         }
 
-    attributes = _rated_attributes(result)
+    attributes = _rated_attributes(result, player_height_cm)
     strengths = [
         {"attribute": attribute, "score": score}
         for attribute, score in attributes
@@ -230,7 +252,14 @@ class VideoAnalysisPublisher:
         if record is None:
             raise ValueError("Video data record not found")
 
-        projected = project_analysis_result(result)
+        player = self.db.get(PlayerDB, record.player_id)
+        player_height_cm = (
+            (player.physical_profile or {}).get("height_cm")
+            if player is not None
+            else None
+        )
+
+        projected = project_analysis_result(result, player_height_cm)
         now = datetime.now()
         analysis = AIAnalysisRecord(
             analysis_id=f"AN_{job_id}",
