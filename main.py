@@ -231,7 +231,6 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
-    "/_debug/reprocess-pose-analyses",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -2762,23 +2761,6 @@ def get_player_profile_suggestions(
         "analysis_id": latest_analysis.analysis_id,
         "suggestions": suggestions,
     }
-
-
-@app.post("/_debug/reprocess-pose-analyses")
-def debug_reprocess_pose_analyses(
-    token: str,
-    dry_run: bool = True,
-    db: Session = Depends(get_db),
-):
-    if token != "VyYWg9kjW3_LkuUTvCi88tlYoGDidZYn":
-        raise HTTPException(status_code=404)
-
-    from app.analysis_reprocessing import reprocess_pose_estimation_analyses
-
-    results = reprocess_pose_estimation_analyses(
-        db, get_analysis_result_storage(), dry_run=dry_run
-    )
-    return {"dry_run": dry_run, "count": len(results), "results": results}
 
 
 @app.get("/players/{player_id}/smart-recommendations")
