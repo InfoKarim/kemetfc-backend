@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ML Dataset Registry | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --navy: #061a33;
+      --blue: #0866f5;
+      --green: #28b75f;
+      --orange: #ff9418;
+      --line: #dfe6ef;
+      --muted: #68778d;
+      --page: #f5f7fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: #10213b;
+      background: var(--page);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+
+    .layout {
+      display: grid;
+      min-height: 100vh;
+      grid-template-columns: 240px 1fr;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 16px;
+      color: white;
+      background: linear-gradient(180deg, #071d39, #031226);
+    }
+
+    .brand {
+      margin: 0 10px 30px;
+      color: #f5c45d;
+      font-size: 24px;
+      font-weight: 900;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 3px;
+      color: #8ca1bb;
+      font-size: 11px;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    nav { display: grid; gap: 7px; }
+
+    nav a {
+      padding: 12px 14px;
+      border-radius: 9px;
+      color: #dce7f5;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    nav a:hover,
+    nav a.active {
+      color: white;
+      background: var(--blue);
+    }
+
+    main {
+      min-width: 0;
+      padding: 26px 30px 55px;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 23px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 28px;
+      letter-spacing: -.04em;
+    }
+
+    header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      max-width: 640px;
+    }
+
+    .export-link {
+      padding: 11px 16px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      color: #10213b;
+      background: white;
+      font-weight: 700;
+      font-size: 13px;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .export-link:hover { background: #eef3f8; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(160px, 1fr));
+      gap: 15px;
+      margin-bottom: 18px;
+    }
+
+    .stat, .entry {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: white;
+      box-shadow: 0 8px 24px #15304d0a;
+    }
+
+    .stat { padding: 19px; }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .stat strong {
+      display: block;
+      margin-top: 7px;
+      font-size: 29px;
+    }
+
+    #entries-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 15px;
+    }
+
+    .entry { padding: 19px; }
+
+    .entry h2 {
+      margin: 0 0 4px;
+      font-size: 16px;
+    }
+
+    .entry .muted { color: var(--muted); font-size: 12px; }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin: 13px 0;
+    }
+
+    .tags span {
+      padding: 6px 9px;
+      border-radius: 8px;
+      color: #405269;
+      background: #eef3f8;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .status-badge {
+      padding: 5px 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: capitalize;
+    }
+
+    .status-badge.pending_review { color: #8a6d1f; background: #fdf3d8; }
+    .status-badge.approved { color: #1c8a4a; background: #e8f8ee; }
+    .status-badge.excluded { color: #b83232; background: #fff5f5; }
+
+    .entry-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .review-actions { display: flex; gap: 8px; }
+
+    .approve-btn, .exclude-btn {
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .approve-btn { border: 1px solid #bfe3cc; color: #1c8a4a; background: #e8f8ee; }
+    .approve-btn:hover { background: #d7f1e1; }
+    .exclude-btn { border: 1px solid #f3c9c9; color: #b83232; background: #fff5f5; }
+    .exclude-btn:hover { background: #ffe9e9; }
+
+    .state {
+      grid-column: 1 / -1;
+      padding: 50px 20px;
+      border: 1px dashed #cbd7e4;
+      border-radius: 14px;
+      color: var(--muted);
+      background: white;
+      text-align: center;
+    }
+
+    #page-message { min-height: 18px; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+
+    @media (max-width: 850px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; }
+      nav { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 600px) {
+      main { padding: 22px 16px 40px; }
+      header { flex-direction: column; }
+      .stats { grid-template-columns: 1fr; }
+    }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">
+        Kemet FC
+        <small>Academy Development</small>
+      </div>
+
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a href="/assessments-dashboard">Assessments</a>
+        <a id="admin-users-link" href="/admin/users" hidden>Accounts</a>
+        <a href="/registrations-dashboard">Assessment Registrations</a>
+        <a href="/training-plans-dashboard">Training Plans</a>
+        <a href="/drill-library">Drill Library</a>
+        <a href="/videos-dashboard">Videos</a>
+        <a class="active" href="/ml-dataset-registry">ML Dataset Registry</a>
+        <a href="/matches-dashboard">Matches</a>
+        <a href="/reports-dashboard">Reports</a>
+        <a href="/calendar-dashboard">Calendar</a>
+        <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <div>
+          <h1>ML Dataset Registry</h1>
+          <p>
+            Videos flagged as candidates for the real football detection training
+            dataset (see <code>ml/DATASET_CARD.md</code>). Flagging only registers a
+            candidate — a named reviewer must confirm guardian consent genuinely
+            covers every child visible in the footage (not just the one player the
+            video is officially linked to) before approving it for actual dataset
+            inclusion.
+          </p>
+        </div>
+        <a class="export-link" href="/ml-dataset-entries/export.csv">
+          Export approved sources (CSV)
+        </a>
+      </header>
+
+      <p id="page-message" role="status"></p>
+
+      <section class="stats">
+        <article class="stat">
+          <span>Pending review</span>
+          <strong id="pending-count">0</strong>
+        </article>
+        <article class="stat">
+          <span>Approved</span>
+          <strong id="approved-count">0</strong>
+        </article>
+        <article class="stat">
+          <span>Excluded</span>
+          <strong id="excluded-count">0</strong>
+        </article>
+      </section>
+
+      <section id="entries-list">
+        <div class="state">Loading dataset entries...</div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const entriesList = document.querySelector("#entries-list");
+    const message = document.querySelector("#page-message");
+
+    let entries = [];
+
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function formatDateTime(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime())
+        ? value
+        : date.toLocaleString(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          });
+    }
+
+    function updateStats() {
+      document.querySelector("#pending-count").textContent =
+        entries.filter((entry) => entry.status === "pending_review").length;
+      document.querySelector("#approved-count").textContent =
+        entries.filter((entry) => entry.status === "approved").length;
+      document.querySelector("#excluded-count").textContent =
+        entries.filter((entry) => entry.status === "excluded").length;
+    }
+
+    function render() {
+      entriesList.replaceChildren();
+
+      if (!entries.length) {
+        entriesList.append(make("div", "state", "No videos have been flagged yet."));
+        return;
+      }
+
+      entries.forEach((entry) => {
+        const card = make("article", "entry");
+        card.append(make("h2", "", entry.video_id));
+        card.append(make("p", "muted", `Entry ${entry.entry_id} · flagged ${formatDateTime(entry.flagged_at)}`));
+
+        const tags = make("div", "tags");
+        tags.append(make("span", "", entry.age_band));
+        tags.append(make("span", "", entry.sex_cohort));
+        tags.append(make("span", "", entry.camera_id));
+        tags.append(make("span", "", entry.lighting));
+        if (entry.team_id) tags.append(make("span", "", entry.team_id));
+        card.append(tags);
+
+        if (entry.notes) {
+          card.append(make("p", "muted", entry.notes));
+        }
+
+        const footer = make("div", "entry-footer");
+        footer.append(make(
+          "span",
+          `status-badge ${entry.status}`,
+          entry.status.replace("_", " ")
+        ));
+
+        if (entry.status === "pending_review") {
+          const actionsRow = make("div", "review-actions");
+
+          const approveBtn = make("button", "approve-btn", "Approve");
+          approveBtn.type = "button";
+          approveBtn.addEventListener("click", () => reviewEntry(entry.entry_id, "approved"));
+
+          const excludeBtn = make("button", "exclude-btn", "Exclude");
+          excludeBtn.type = "button";
+          excludeBtn.addEventListener("click", () => reviewEntry(entry.entry_id, "excluded"));
+
+          actionsRow.append(approveBtn, excludeBtn);
+          footer.append(actionsRow);
+        }
+
+        card.append(footer);
+        entriesList.append(card);
+      });
+    }
+
+    async function reviewEntry(entryId, status) {
+      if (status === "approved" && !confirm(
+        "Confirm you have verified guardian consent covers every child " +
+        "visible in this footage before approving it for the dataset."
+      )) {
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `/ml-dataset-entries/${encodeURIComponent(entryId)}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status }),
+          }
+        );
+        const result = await response.json();
+
+        if (!response.ok) {
+          throw new Error(result.detail || "Could not update this entry.");
+        }
+
+        entries = entries.map((entry) => entry.entry_id === entryId ? result : entry);
+        updateStats();
+        render();
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    }
+
+    async function loadEntries() {
+      try {
+        const response = await fetch("/ml-dataset-entries");
+
+        if (!response.ok) {
+          throw new Error("Could not load the dataset registry.");
+        }
+
+        entries = await response.json();
+        updateStats();
+        render();
+      } catch (error) {
+        message.textContent = error.message;
+        entriesList.replaceChildren(make("div", "state", "Dataset registry is unavailable."));
+      }
+    }
+
+    loadEntries();
+  </script>
+</body>
+</html>

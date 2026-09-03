@@ -8,6 +8,7 @@ from app.db_models import (
     GuardianConsentDB,
     IdCounterDB,
     MatchDB,
+    MLDatasetEntryDB,
     PlayerDB,
     PrivacyRequestDB,
     SeasonDB,
@@ -32,6 +33,7 @@ ENTITY_CONFIG = {
     "privacy_request": ("PRIVACY", PrivacyRequestDB),
     "season": ("SEASON", SeasonDB),
     "registration": ("REG", AssessmentRegistrationDB),
+    "ml_dataset_entry": ("MLDS", MLDatasetEntryDB),
 }
 
 

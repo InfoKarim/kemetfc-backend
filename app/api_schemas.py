@@ -340,8 +340,21 @@ class GuardianConsentSchema(BaseModel):
         "verified_email",
         "in_person",
     ]
-    purposes: list[Literal["video_analysis", "performance_tracking"]]
+    purposes: list[Literal["video_analysis", "performance_tracking", "ml_training"]]
     expires_at: datetime | None = None
+
+
+class MLDatasetEntryCreateSchema(BaseModel):
+    team_id: str | None = None
+    age_band: str = Field(min_length=2, max_length=10)
+    sex_cohort: Literal["male", "female", "mixed"]
+    camera_id: str = Field(min_length=1, max_length=100)
+    lighting: Literal["day", "night", "indoor"]
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class MLDatasetEntryReviewSchema(BaseModel):
+    status: Literal["approved", "excluded"]
 
 
 class GuardianPlayerLinkSchema(BaseModel):

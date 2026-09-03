@@ -1,6 +1,8 @@
 from pathlib import Path
 from datetime import date, datetime
+import csv
 import hmac
+import io
 import json
 import logging
 import re
@@ -36,6 +38,8 @@ from app.api_schemas import (
     DrillRecommendationSchema,
     DrillSchema,
     GuardianConsentSchema,
+    MLDatasetEntryCreateSchema,
+    MLDatasetEntryReviewSchema,
     GuardianPlayerLinkSchema,
     LoginSchema,
     MatchSchema,
@@ -123,6 +127,7 @@ from app.services.match_service import MatchService
 from app.services.message_service import MessageService
 from app.services.notification_service import NotificationService
 from app.services.player_service import PlayerService
+from app.services.ml_dataset_service import MLDatasetEntryError, MLDatasetService
 from app.services.privacy_service import PrivacyService
 from app.services.registration_service import RegistrationService
 from app.services.season_service import SeasonService
@@ -261,6 +266,7 @@ HTML_PAGE_PATHS = {
     "/reports-dashboard",
     "/calendar-dashboard",
     "/admin/users",
+    "/ml-dataset-registry",
     "/messages-page",
     "/registrations-dashboard",
 }
@@ -359,6 +365,25 @@ def consent_payload(consent) -> dict:
         "expires_at": consent.expires_at,
         "withdrawn_at": consent.withdrawn_at,
         "recorded_by_user_id": consent.recorded_by_user_id,
+    }
+
+
+def ml_dataset_entry_payload(entry) -> dict:
+    return {
+        "entry_id": entry.entry_id,
+        "video_id": entry.video_id,
+        "team_id": entry.team_id,
+        "age_band": entry.age_band,
+        "sex_cohort": entry.sex_cohort,
+        "camera_id": entry.camera_id,
+        "lighting": entry.lighting,
+        "consent_id": entry.consent_id,
+        "status": entry.status,
+        "notes": entry.notes,
+        "flagged_by_user_id": entry.flagged_by_user_id,
+        "flagged_at": entry.flagged_at,
+        "reviewed_by_user_id": entry.reviewed_by_user_id,
+        "reviewed_at": entry.reviewed_at,
     }
 
 
@@ -592,6 +617,31 @@ async def enforce_authentication(request: Request, call_next):
         )
 
     if path == "/admin/users" and authenticated["role"] != "admin":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Admin access required"},
+        )
+
+    if path == "/ml-dataset-registry" and authenticated["role"] != "admin":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Admin access required"},
+        )
+
+    if (
+        path.startswith("/videos/")
+        and path.endswith("/ml-dataset-entry")
+        and authenticated["role"] != "admin"
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Admin access required"},
+        )
+
+    if (
+        path.startswith("/ml-dataset-entries")
+        and authenticated["role"] != "admin"
+    ):
         return JSONResponse(
             status_code=403,
             content={"detail": "Admin access required"},
@@ -1229,6 +1279,14 @@ def user_management_page(request: Request):
     require_admin(request)
     return FileResponse(
         Path(__file__).parent / "app" / "static" / "user_management.html"
+    )
+
+
+@app.get("/ml-dataset-registry")
+def ml_dataset_registry_page(request: Request):
+    require_admin(request)
+    return FileResponse(
+        Path(__file__).parent / "app" / "static" / "ml_dataset_registry.html"
     )
 
 
@@ -1935,6 +1993,101 @@ def delete_video(
         )
 
     return {"message": "Video deleted"}
+
+
+@app.post("/videos/{video_id}/ml-dataset-entry", status_code=201)
+def flag_video_for_ml_dataset(
+    video_id: str,
+    entry_data: MLDatasetEntryCreateSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    service = MLDatasetService(db=db)
+
+    try:
+        entry = service.flag_video(
+            entry_id=next_entity_id(db, "ml_dataset_entry"),
+            video_id=video_id,
+            flagged_by_user_id=request.state.current_user["user_id"],
+            **entry_data.model_dump(),
+        )
+    except MLDatasetEntryError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    return ml_dataset_entry_payload(entry)
+
+
+@app.get("/ml-dataset-entries")
+def list_ml_dataset_entries(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    return [
+        ml_dataset_entry_payload(entry)
+        for entry in MLDatasetService(db=db).list_entries()
+    ]
+
+
+@app.patch("/ml-dataset-entries/{entry_id}")
+def review_ml_dataset_entry(
+    entry_id: str,
+    review_data: MLDatasetEntryReviewSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    entry = MLDatasetService(db=db).review_entry(
+        entry_id=entry_id,
+        status=review_data.status,
+        reviewed_by_user_id=request.state.current_user["user_id"],
+    )
+
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Dataset entry not found")
+
+    return ml_dataset_entry_payload(entry)
+
+
+@app.get("/ml-dataset-entries/export.csv")
+def export_ml_dataset_entries_csv(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    entries = [
+        entry
+        for entry in MLDatasetService(db=db).list_entries()
+        if entry.status == "approved"
+    ]
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "entry_id", "video_id", "team_id", "age_band", "sex_cohort",
+        "camera_id", "lighting", "consent_id", "flagged_at",
+    ])
+    for entry in entries:
+        writer.writerow([
+            entry.entry_id,
+            entry.video_id,
+            entry.team_id or "",
+            entry.age_band,
+            entry.sex_cohort,
+            entry.camera_id,
+            entry.lighting,
+            entry.consent_id,
+            entry.flagged_at.isoformat(),
+        ])
+
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=ml_dataset_sources.csv"
+        },
+    )
 
 
 @app.post("/players", status_code=201)

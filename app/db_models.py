@@ -361,6 +361,56 @@ class GuardianConsentDB(Base):
     )
 
 
+class MLDatasetEntryDB(Base):
+    """A staff-flagged candidate source video for the real football ML
+    training dataset (see ml/DATASET_CARD.md). Flagging only registers the
+    video as a candidate — it stays "pending_review" until a named reviewer
+    confirms consent coverage for every child visible in the footage (not
+    just the one player the video's record is officially linked to) and
+    marks it "approved". Frame extraction and annotation happen separately,
+    outside this app, per ml/ANNOTATION_GUIDE.md.
+    """
+
+    __tablename__ = "ml_dataset_entries"
+
+    entry_id: Mapped[str] = mapped_column(String, primary_key=True)
+    video_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("videos.video_id"),
+        unique=True,
+        index=True,
+    )
+    team_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("teams.team_id"),
+        nullable=True,
+    )
+    age_band: Mapped[str] = mapped_column(String)
+    sex_cohort: Mapped[str] = mapped_column(String)
+    camera_id: Mapped[str] = mapped_column(String)
+    lighting: Mapped[str] = mapped_column(String)
+    consent_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("guardian_consents.consent_id"),
+    )
+    status: Mapped[str] = mapped_column(String, default="pending_review")
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    flagged_by_user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+    )
+    flagged_at: Mapped[datetime] = mapped_column(DateTime)
+    reviewed_by_user_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+
 class AuditEventDB(Base):
     __tablename__ = "audit_events"
 

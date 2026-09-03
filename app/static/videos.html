@@ -37,6 +37,20 @@
     .link { color: #1265ed; font-weight: 750; text-decoration: none; }
     .delete { padding: 7px 10px; border: 0; border-radius: 7px; color: #b83232; background: #fff0f0; cursor: pointer; }
     .state { grid-column: 1 / -1; padding: 40px; color: #69768a; text-align: center; border-radius: 12px; background: white; }
+    .ml-flag-btn { padding: 7px 10px; border: 1px solid #17a957; border-radius: 7px; color: #17a957; background: #eefbf3; cursor: pointer; font: inherit; font-weight: 750; font-size: 13px; }
+    .ml-flag-btn:hover { background: #dcf6e8; }
+    .ml-status-badge { padding: 5px 8px; border-radius: 999px; font-size: 12px; font-weight: 750; }
+    .ml-status-badge.pending_review { color: #8a6d1f; background: #fdf3d8; }
+    .ml-status-badge.approved { color: #087441; background: #daf4e5; }
+    .ml-status-badge.excluded { color: #b83232; background: #fff0f0; }
+    .ml-flag-form { display: grid; gap: 8px; margin-top: 12px; padding: 12px; border: 1px solid #e1e7ef; border-radius: 10px; background: #f9fbfd; }
+    .ml-flag-form label { font-size: 12px; font-weight: 750; color: #4b596c; }
+    .ml-flag-form select, .ml-flag-form input, .ml-flag-form textarea { width: 100%; padding: 8px 10px; border: 1px solid #d8e0eb; border-radius: 7px; font: inherit; font-size: 13px; }
+    .ml-flag-form .row { display: flex; gap: 10px; }
+    .ml-flag-form .actions-row { display: flex; gap: 8px; justify-content: flex-end; }
+    .ml-flag-submit { padding: 7px 14px; border: 0; border-radius: 7px; color: white; background: #1265ed; cursor: pointer; font: inherit; font-weight: 750; font-size: 13px; }
+    .ml-flag-cancel { padding: 7px 14px; border: 1px solid #d8e0eb; border-radius: 7px; color: #142039; background: white; cursor: pointer; font: inherit; font-weight: 750; font-size: 13px; }
+    .ml-flag-error { color: #b83232; font-size: 12px; }
     .mobile-nav { display: none; }
     @media (max-width: 720px) {
       .layout { grid-template-columns: 1fr; }
@@ -89,6 +103,7 @@
         <a href="/reports-dashboard">Reports</a>
         <a href="/calendar-dashboard">Calendar</a>
               <a id="admin-users-link" href="/admin/users" hidden>Accounts</a>
+              <a id="ml-dataset-link" href="/ml-dataset-registry" hidden>ML Dataset Registry</a>
               <a href="/registrations-dashboard">Assessment Registrations</a>
               <a href="/messages-page">Messaging <span class="nav-badge" id="messaging-badge" hidden></span></a>
       </nav>
@@ -143,6 +158,10 @@
     const videoStatus = document.querySelector("#video-status");
     let videos = [];
     let jobsByVideo = {};
+    let isAdmin = false;
+    let mlDatasetEntriesByVideo = {};
+    let teams = [];
+    let openFlagFormVideoId = null;
 
     const make = (tag, className, text) => {
       const node = document.createElement(tag);
@@ -239,11 +258,174 @@
         rerun.addEventListener("click", () => rerunAnalysis(video.video_id, rerun));
         actions.append(rerun);
 
+        if (isAdmin) {
+          const existingEntry = mlDatasetEntriesByVideo[video.video_id];
+
+          if (existingEntry) {
+            const badge = make(
+              "span",
+              `ml-status-badge ${existingEntry.status}`,
+              `ML dataset: ${existingEntry.status.replace("_", " ")}`
+            );
+            actions.append(badge);
+          } else {
+            const flagBtn = make("button", "ml-flag-btn", "Flag for ML Dataset");
+            flagBtn.type = "button";
+            flagBtn.addEventListener("click", () => {
+              openFlagFormVideoId =
+                openFlagFormVideoId === video.video_id ? null : video.video_id;
+              render();
+            });
+            actions.append(flagBtn);
+          }
+        }
+
         actions.append(remove);
         content.append(actions);
+
+        if (isAdmin && openFlagFormVideoId === video.video_id) {
+          content.append(buildFlagForm(video.video_id));
+        }
+
         card.append(content);
         list.append(card);
       });
+    }
+
+    function buildFlagForm(videoId) {
+      const form = make("div", "ml-flag-form");
+
+      const teamRow = make("div", "row");
+      const teamField = make("div", "");
+      teamField.style.flex = "1";
+      teamField.append(make("label", "", "Team (optional)"));
+      const teamSelect = document.createElement("select");
+      teamSelect.append(make("option", "", "No team"));
+      teams.forEach((team) => {
+        const option = document.createElement("option");
+        option.value = team.team_id;
+        option.textContent = `${team.name} (${team.age_group})`;
+        teamSelect.append(option);
+      });
+      teamSelect.value = "";
+      teamField.append(teamSelect);
+      teamRow.append(teamField);
+      form.append(teamRow);
+
+      const row1 = make("div", "row");
+      const ageField = make("div", "");
+      ageField.style.flex = "1";
+      ageField.append(make("label", "", "Age band (e.g. U10)"));
+      const ageInput = document.createElement("input");
+      ageInput.placeholder = "U10";
+      ageField.append(ageInput);
+      row1.append(ageField);
+
+      const sexField = make("div", "");
+      sexField.style.flex = "1";
+      sexField.append(make("label", "", "Sex cohort"));
+      const sexSelect = document.createElement("select");
+      ["male", "female", "mixed"].forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value[0].toUpperCase() + value.slice(1);
+        sexSelect.append(option);
+      });
+      sexField.append(sexSelect);
+      row1.append(sexField);
+      form.append(row1);
+
+      const row2 = make("div", "row");
+      const cameraField = make("div", "");
+      cameraField.style.flex = "1";
+      cameraField.append(make("label", "", "Camera ID"));
+      const cameraInput = document.createElement("input");
+      cameraInput.placeholder = "PHONE_GIMBAL_01";
+      cameraField.append(cameraInput);
+      row2.append(cameraField);
+
+      const lightingField = make("div", "");
+      lightingField.style.flex = "1";
+      lightingField.append(make("label", "", "Lighting"));
+      const lightingSelect = document.createElement("select");
+      ["day", "night", "indoor"].forEach((value) => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value[0].toUpperCase() + value.slice(1);
+        lightingSelect.append(option);
+      });
+      lightingField.append(lightingSelect);
+      row2.append(lightingField);
+      form.append(row2);
+
+      const notesField = make("div", "");
+      notesField.append(make("label", "", "Notes (optional)"));
+      const notesInput = document.createElement("textarea");
+      notesInput.rows = 2;
+      notesField.append(notesInput);
+      form.append(notesField);
+
+      const errorEl = make("p", "ml-flag-error", "");
+      errorEl.hidden = true;
+      form.append(errorEl);
+
+      const actionsRow = make("div", "actions-row");
+      const cancelBtn = make("button", "ml-flag-cancel", "Cancel");
+      cancelBtn.type = "button";
+      cancelBtn.addEventListener("click", () => {
+        openFlagFormVideoId = null;
+        render();
+      });
+      const submitBtn = make("button", "ml-flag-submit", "Submit");
+      submitBtn.type = "button";
+      submitBtn.addEventListener("click", async () => {
+        if (!ageInput.value.trim() || !cameraInput.value.trim()) {
+          errorEl.textContent = "Age band and camera ID are required.";
+          errorEl.hidden = false;
+          return;
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Submitting...";
+        errorEl.hidden = true;
+
+        try {
+          const response = await fetch(
+            `/videos/${encodeURIComponent(videoId)}/ml-dataset-entry`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                team_id: teamSelect.value || null,
+                age_band: ageInput.value.trim(),
+                sex_cohort: sexSelect.value,
+                camera_id: cameraInput.value.trim(),
+                lighting: lightingSelect.value,
+                notes: notesInput.value.trim() || null,
+              }),
+            }
+          );
+          const result = await response.json();
+
+          if (!response.ok) {
+            throw new Error(result.detail || "Could not flag this video.");
+          }
+
+          mlDatasetEntriesByVideo[videoId] = result;
+          openFlagFormVideoId = null;
+          videoStatus.textContent = `${videoId} was flagged as an ML dataset candidate (pending review).`;
+          render();
+        } catch (error) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Submit";
+          errorEl.textContent = error.message;
+          errorEl.hidden = false;
+        }
+      });
+      actionsRow.append(cancelBtn, submitBtn);
+      form.append(actionsRow);
+
+      return form;
     }
 
     async function rerunAnalysis(videoId, button) {
@@ -304,6 +486,35 @@
       }
     }
 
+    async function loadAdminExtras() {
+      try {
+        const meResponse = await fetch("/auth/me");
+        if (!meResponse.ok) return;
+        const me = await meResponse.json();
+        isAdmin = me.user?.role === "admin";
+
+        if (!isAdmin) return;
+
+        document.querySelector("#ml-dataset-link").hidden = false;
+
+        const [teamsResponse, entriesResponse] = await Promise.all([
+          fetch("/teams"),
+          fetch("/ml-dataset-entries"),
+        ]);
+
+        if (teamsResponse.ok) teams = await teamsResponse.json();
+
+        if (entriesResponse.ok) {
+          const entries = await entriesResponse.json();
+          mlDatasetEntriesByVideo = Object.fromEntries(
+            entries.map((entry) => [entry.video_id, entry])
+          );
+        }
+      } catch {
+        // Non-admin or offline — the ML dataset UI simply stays hidden.
+      }
+    }
+
     async function loadVideos() {
       try {
         const response = await fetch("/videos");
@@ -330,7 +541,7 @@
 
     search.addEventListener("input", render);
     statusFilter.addEventListener("change", render);
-    loadVideos();
+    loadAdminExtras().then(loadVideos);
   </script>
 </body>
 </html>

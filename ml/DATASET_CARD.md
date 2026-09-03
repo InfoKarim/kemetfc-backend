@@ -2,6 +2,24 @@
 
 Status: **not yet populated with a release dataset**.
 
+## Source collection mechanism
+
+Staff can flag an existing, consented video as a dataset source candidate from
+the Video Library (`/videos-dashboard`, admin only) or review flagged
+candidates at `/ml-dataset-registry`. Flagging records `team_id`, `age_band`,
+`sex_cohort`, `camera_id`, `lighting`, and the guardian consent on file for the
+video's officially associated player — it does **not** by itself confirm
+consent for every child visible in the footage. A candidate stays
+`pending_review` until a named reviewer manually verifies consent coverage for
+the full footage and marks it `approved`; only `approved` entries are included
+in the CSV export at `/ml-dataset-entries/export.csv`.
+
+That export is a **source-video registry**, not the frame-level
+`manifest.csv` described below — it lists which raw videos may be used to
+build one. Frame extraction and annotation (producing an actual
+`manifest.csv` row per sampled image) still happen separately, per
+`ml/ANNOTATION_GUIDE.md`, outside this app.
+
 ## Purpose
 
 Consented phone-and-gimbal football footage for player, goalkeeper, referee,
@@ -36,6 +54,9 @@ recognition.
 
 ## Known gaps before release
 
-- Representative match count and subgroup counts are not yet available.
+- A source-registration mechanism now exists (see above), but zero videos
+  have been approved through it yet — representative match and subgroup
+  counts are still not available.
+- No video has undergone frame extraction or annotation into `manifest.csv`.
 - Inter-annotator agreement has not yet been measured.
 - No trained checkpoint has passed the release thresholds.

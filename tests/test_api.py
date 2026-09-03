@@ -3794,6 +3794,254 @@ def test_uploaded_video_requires_database_record(tmp_path, monkeypatch):
     assert response.json() == {"detail": "Video not found"}
 
 
+def create_test_video_for_dataset(video_id, record_id="REC001"):
+    db = TestingSessionLocal()
+    db.add(VideoDB(
+        video_id=video_id,
+        record_id=record_id,
+        video_type="match",
+        duration_seconds=2700.0,
+        recorded_at=datetime.now(),
+        session_id="SESSION_ML",
+        location_id="FIELD_ML",
+        capture_device="phone_gimbal",
+        resolution="1920x1080",
+        frame_rate_fps=30.0,
+        file_size_mb=500.0,
+        file_format="mp4",
+        file_path=f"/data/{video_id}.mp4",
+        checksum=f"checksum-{video_id}",
+        original_preserved=True,
+        ai_processing_status="pending",
+        ai_processed_at=None,
+        ai_model_version=None,
+        ai_confidence_score=None,
+        requires_human_review=False,
+        review_reason="",
+        human_review_status="not_required",
+        reviewed_by=None,
+        reviewed_at=None,
+        review_notes=None,
+        analysis_approved=False,
+        approved_by=None,
+        approved_at=None,
+    ))
+    db.commit()
+    db.close()
+
+
+def grant_ml_training_consent(player_id, consent_id):
+    response = client.post(
+        f"/players/{player_id}/guardian-consents",
+        json={
+            "consent_id": consent_id,
+            "guardian_name": "Test Parent",
+            "guardian_email": "parent@example.com",
+            "verification_method": "signed_form",
+            "purposes": ["ml_training"],
+            "expires_at": None,
+        },
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
+ML_DATASET_ENTRY_PAYLOAD = {
+    "team_id": None,
+    "age_band": "U10",
+    "sex_cohort": "mixed",
+    "camera_id": "PHONE_GIMBAL_01",
+    "lighting": "day",
+    "notes": "Season opener, home pitch.",
+}
+
+
+def test_flag_video_for_ml_dataset_requires_active_consent():
+    create_test_video_for_dataset("VID_ML_NOCONSENT")
+
+    response = client.post(
+        "/videos/VID_ML_NOCONSENT/ml-dataset-entry",
+        json=ML_DATASET_ENTRY_PAYLOAD,
+    )
+
+    assert response.status_code == 400
+    assert "consent" in response.json()["detail"].lower()
+
+
+def test_flag_video_for_ml_dataset_succeeds_with_consent():
+    create_test_video_for_dataset("VID_ML_OK")
+    grant_ml_training_consent("P001", "CONSENT_ML_OK")
+
+    response = client.post(
+        "/videos/VID_ML_OK/ml-dataset-entry",
+        json=ML_DATASET_ENTRY_PAYLOAD,
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["video_id"] == "VID_ML_OK"
+    assert body["status"] == "pending_review"
+    assert body["consent_id"] == "CONSENT_ML_OK"
+    assert body["age_band"] == "U10"
+
+
+def test_flag_video_for_ml_dataset_rejects_duplicate():
+    create_test_video_for_dataset("VID_ML_DUP")
+    grant_ml_training_consent("P001", "CONSENT_ML_DUP")
+
+    first = client.post(
+        "/videos/VID_ML_DUP/ml-dataset-entry",
+        json=ML_DATASET_ENTRY_PAYLOAD,
+    )
+    assert first.status_code == 201
+
+    second = client.post(
+        "/videos/VID_ML_DUP/ml-dataset-entry",
+        json=ML_DATASET_ENTRY_PAYLOAD,
+    )
+    assert second.status_code == 400
+    assert "already flagged" in second.json()["detail"].lower()
+
+
+def test_flag_video_for_ml_dataset_unknown_video_returns_400():
+    grant_ml_training_consent("P001", "CONSENT_ML_UNKNOWN_VIDEO")
+
+    response = client.post(
+        "/videos/DOES_NOT_EXIST/ml-dataset-entry",
+        json=ML_DATASET_ENTRY_PAYLOAD,
+    )
+
+    assert response.status_code == 400
+
+
+def test_flag_video_for_ml_dataset_requires_admin():
+    create_test_video_for_dataset("VID_ML_NONADMIN")
+    grant_ml_training_consent("P001", "CONSENT_ML_NONADMIN")
+
+    coach = client.post(
+        "/auth/users",
+        json={
+            "username": "mldataset.coach",
+            "password": "MlDatasetCoachPassword123!",
+            "role": "coach",
+            "feature_permissions": ["dashboard"],
+        },
+    )
+    assert coach.status_code == 201
+
+    coach_client = TestClient(app)
+    login = coach_client.post(
+        "/auth/login",
+        json={
+            "username": "mldataset.coach",
+            "password": "MlDatasetCoachPassword123!",
+        },
+    )
+    assert login.status_code == 200
+    coach_client.headers.update({
+        "X-CSRF-Token": coach_client.cookies.get(CSRF_COOKIE_NAME),
+    })
+
+    response = coach_client.post(
+        "/videos/VID_ML_NONADMIN/ml-dataset-entry",
+        json=ML_DATASET_ENTRY_PAYLOAD,
+    )
+    assert response.status_code == 403
+
+    list_response = coach_client.get("/ml-dataset-entries")
+    assert list_response.status_code == 403
+
+
+def test_list_and_review_ml_dataset_entries():
+    create_test_video_for_dataset("VID_ML_REVIEW")
+    grant_ml_training_consent("P001", "CONSENT_ML_REVIEW")
+
+    flagged = client.post(
+        "/videos/VID_ML_REVIEW/ml-dataset-entry",
+        json=ML_DATASET_ENTRY_PAYLOAD,
+    )
+    entry_id = flagged.json()["entry_id"]
+
+    listed = client.get("/ml-dataset-entries")
+    assert listed.status_code == 200
+    assert any(entry["entry_id"] == entry_id for entry in listed.json())
+
+    approved = client.patch(
+        f"/ml-dataset-entries/{entry_id}",
+        json={"status": "approved"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+    assert approved.json()["reviewed_by_user_id"] is not None
+
+
+def test_review_unknown_ml_dataset_entry_returns_404():
+    response = client.patch(
+        "/ml-dataset-entries/DOES_NOT_EXIST",
+        json={"status": "approved"},
+    )
+    assert response.status_code == 404
+
+
+def test_export_ml_dataset_entries_csv_only_includes_approved():
+    create_test_video_for_dataset("VID_ML_CSV_APPROVED")
+    create_test_video_for_dataset("VID_ML_CSV_PENDING")
+    grant_ml_training_consent("P001", "CONSENT_ML_CSV")
+
+    approved_entry = client.post(
+        "/videos/VID_ML_CSV_APPROVED/ml-dataset-entry",
+        json=ML_DATASET_ENTRY_PAYLOAD,
+    ).json()
+    client.post(
+        "/videos/VID_ML_CSV_PENDING/ml-dataset-entry",
+        json=ML_DATASET_ENTRY_PAYLOAD,
+    )
+    client.patch(
+        f"/ml-dataset-entries/{approved_entry['entry_id']}",
+        json={"status": "approved"},
+    )
+
+    response = client.get("/ml-dataset-entries/export.csv")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/csv")
+    assert "VID_ML_CSV_APPROVED" in response.text
+    assert "VID_ML_CSV_PENDING" not in response.text
+
+
+def test_ml_dataset_registry_page_requires_admin():
+    coach = client.post(
+        "/auth/users",
+        json={
+            "username": "registry.coach",
+            "password": "RegistryCoachPassword123!",
+            "role": "coach",
+            "feature_permissions": ["dashboard"],
+        },
+    )
+    assert coach.status_code == 201
+
+    coach_client = TestClient(app)
+    login = coach_client.post(
+        "/auth/login",
+        json={
+            "username": "registry.coach",
+            "password": "RegistryCoachPassword123!",
+        },
+    )
+    assert login.status_code == 200
+
+    response = coach_client.get("/ml-dataset-registry")
+    assert response.status_code == 403
+
+
+def test_ml_dataset_registry_page_loads_for_admin():
+    response = client.get("/ml-dataset-registry")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+
+
 def test_matches_dashboard_page():
     response = client.get("/matches-dashboard")
 
