@@ -449,7 +449,9 @@
     );
     const analysisSelect = document.querySelector("#analysis-id");
     const toggleReference = document.querySelector("#toggle-reference");
+    let allDrills = [];
     let drills = [];
+    let recommendedOnly = false;
     let showReferenceLibrary = false;
 
     function make(tag, className, text) {
@@ -532,6 +534,7 @@
         : "Latest analysis selected automatically.";
 
       loadSmartRecommendations();
+      fetchRecommendations();
     }
 
     async function loadSmartRecommendations() {
@@ -616,7 +619,12 @@
 
     function render() {
       const query = search.value.toLowerCase().trim();
-      const visible = drills.filter((drill) =>
+      const source = showReferenceLibrary
+        ? allDrills
+        : recommendedOnly
+          ? drills
+          : allDrills.filter((drill) => drill.active);
+      const visible = source.filter((drill) =>
         (drill.active || showReferenceLibrary) &&
         `${drill.name} ${drill.category}`.toLowerCase().includes(query)
       );
@@ -625,10 +633,18 @@
       const referenceCount = visible.filter((drill) => !drill.active).length;
       count.textContent = showReferenceLibrary
         ? `${visible.length} drill${visible.length === 1 ? "" : "s"} (${referenceCount} reference)`
-        : `${visible.length} drill${visible.length === 1 ? "" : "s"}`;
+        : recommendedOnly
+          ? `${visible.length} recommended drill${visible.length === 1 ? "" : "s"}`
+          : `${visible.length} drill${visible.length === 1 ? "" : "s"}`;
 
       if (!visible.length) {
-        grid.append(make("div", "state", "No drills found."));
+        grid.append(make(
+          "div",
+          "state",
+          recommendedOnly && !showReferenceLibrary
+            ? "No recommended drills for this player's last assessment."
+            : "No drills found."
+        ));
         return;
       }
 
@@ -699,6 +715,7 @@
             if (!response.ok) {
               throw new Error(data.detail || "Could not delete training video.");
             }
+            allDrills = allDrills.filter((item) => item.drill_id !== drill.drill_id);
             drills = drills.filter((item) => item.drill_id !== drill.drill_id);
             recommendationStatus.textContent = `${drill.name} deleted.`;
             render();
@@ -727,10 +744,10 @@
 
     analysisSelect.addEventListener("change", loadSmartRecommendations);
 
-    recommendationForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-
+    async function fetchRecommendations() {
       const analysisId = analysisSelect.value;
+      if (!analysisId) return;
+
       const equipment = document
         .querySelector("#available-equipment")
         .value
@@ -773,6 +790,9 @@
             reviewLink.href =
               `/video-analysis-details?job_id=${encodeURIComponent(analysisId.slice(3))}`;
             recommendationStatus.append(reviewLink);
+            drills = [];
+            recommendedOnly = true;
+            render();
             return;
           }
 
@@ -790,15 +810,21 @@
         }
 
         drills = Array.from(uniqueDrills.values());
+        recommendedOnly = true;
         search.value = "";
         render();
 
         recommendationStatus.textContent = drills.length
-          ? `Showing ${drills.length} recommended drill${drills.length === 1 ? "" : "s"}.`
-          : "No suitable drills found.";
+          ? `Showing ${drills.length} recommended drill${drills.length === 1 ? "" : "s"} for this player's last assessment.`
+          : "No suitable drills found for this player's last assessment.";
       } catch (error) {
         recommendationStatus.textContent = error.message;
       }
+    }
+
+    recommendationForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      fetchRecommendations();
     });
 
     saveTrainingPlan.addEventListener("click", async () => {
@@ -865,7 +891,7 @@
         return Promise.all(responses.map((response) => response.json()));
       })
       .then(([drillData, analyses, players]) => {
-        drills = drillData;
+        allDrills = drillData;
         populateAnalysisOptions(analyses, players);
         render();
       })
