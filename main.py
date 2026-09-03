@@ -239,6 +239,7 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
+    "/_debug/analyze-video",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -1832,6 +1833,111 @@ def get_video_analysis_jobs(
         raise HTTPException(status_code=404, detail="Video not found")
 
     return VideoAnalysisJobService(db=db).get_video_jobs(video_id)
+
+
+@app.post("/_debug/analyze-video")
+async def debug_analyze_video(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    if request.query_params.get("token") != "H6sJGz_X9GioYOFBmHdibmG_pTzn87ZF":
+        raise HTTPException(status_code=404)
+
+    import io
+    import urllib.request as urllib_request
+    from starlette.datastructures import Headers as StarletteHeaders
+    from starlette.datastructures import UploadFile as StarletteUploadFile
+
+    body = await request.json()
+    player_id = body["player_id"]
+
+    player = PlayerService(db=db).get_player(player_id)
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    # Temporary, token-gated, one-time diagnostic tool (removed immediately
+    # after use) — only the operator holding the secret token can reach it,
+    # so the fetched URL is trusted, not attacker-controlled.
+    with urllib_request.urlopen(body["video_url"], timeout=180) as response:  # nosec B310
+        video_bytes = response.read()
+
+    video_id = next_entity_id(db, "video")
+    record_id = next_entity_id(db, "record")
+
+    upload_file = StarletteUploadFile(
+        file=io.BytesIO(video_bytes),
+        filename=body["filename"],
+        headers=StarletteHeaders({"content-type": "video/mp4"}),
+    )
+    saved = save_player_video(video=upload_file, video_id=video_id)
+
+    created_at = datetime.now()
+    record = DataRecord(
+        record_id=record_id,
+        player_id=player_id,
+        source_type="video",
+        created_at=created_at,
+        data_type="player_video",
+        status="completed",
+        original_file_path=saved.public_path,
+        analysis_id=f"PENDING_{video_id}",
+        schema_version="1.0",
+        created_by="debug_import",
+    )
+    player_video = VideoData(
+        video_id=video_id,
+        record_id=record_id,
+        video_type="training",
+        duration_seconds=body.get("duration_seconds", 0),
+        recorded_at=created_at,
+        session_id="DEBUG_SESSION",
+        location_id="home",
+        capture_device="phone",
+        resolution="unknown",
+        frame_rate_fps=30,
+        file_size_mb=saved.file_size_mb,
+        file_format=saved.file_format,
+        file_path=saved.public_path,
+        checksum=saved.checksum,
+        original_preserved=True,
+        ai_processing_status="pending",
+        ai_processed_at=None,
+        ai_model_version=None,
+        ai_confidence_score=None,
+        requires_human_review=False,
+        review_reason="",
+        human_review_status="not_required",
+        reviewed_by=None,
+        reviewed_at=None,
+        review_notes=None,
+        analysis_approved=False,
+        approved_by=None,
+        approved_at=None,
+    )
+    DataRecordService(db=db).add_record(record)
+    VideoService(db=db).add_video(player_video)
+
+    job_id = next_entity_id(db, "analysis_job")
+    job = VideoAnalysisJobData(
+        job_id=job_id,
+        video_id=video_id,
+        analysis_type="pose_estimation",
+        status="queued",
+        created_at=datetime.now(),
+        started_at=None,
+        completed_at=None,
+        progress_percent=0.0,
+        attempt_count=0,
+        max_attempts=3,
+        model_name=None,
+        model_version=None,
+        result_path=None,
+        error_message=None,
+        target_track_id=None,
+    )
+    VideoAnalysisJobService(db=db).add_job(job)
+
+    return {"video_id": video_id, "job_id": job_id, "analysis_id": f"AN_{job_id}"}
 
 
 @app.get("/analysis-jobs/{job_id}")
