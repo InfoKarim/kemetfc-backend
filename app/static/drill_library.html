@@ -287,6 +287,49 @@
       border: 1px dashed #cbd7e4 !important;
       border-radius: 18px;
     }
+
+    .toolbar-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .toolbar-row input { flex: 1; }
+
+    #toggle-reference {
+      flex-shrink: 0;
+      padding: 13px 16px;
+      border: 1px solid #d8e2dc;
+      border-radius: 11px;
+      background: white;
+      color: var(--text);
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    #toggle-reference:hover { background: #eef4f0; }
+    #toggle-reference.active {
+      border-color: #087640;
+      background: #087640;
+      color: white;
+    }
+
+    .reference-badge {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 3px 8px;
+      border-radius: 6px;
+      background: #fff3cd;
+      color: #7a5c00 !important;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+
+    .card.reference { border-color: #f0d896; }
   </style>
   <script src="/auth-client.js"></script>
 </head>
@@ -370,7 +413,12 @@
     </section>
 
     <div class="toolbar">
-      <input id="search" type="search" placeholder="Search drills">
+      <div class="toolbar-row">
+        <input id="search" type="search" placeholder="Search drills">
+        <button id="toggle-reference" type="button">
+          Show reference library
+        </button>
+      </div>
     </div>
 
     <div class="summary">
@@ -400,7 +448,9 @@
       'button[type="submit"]'
     );
     const analysisSelect = document.querySelector("#analysis-id");
+    const toggleReference = document.querySelector("#toggle-reference");
     let drills = [];
+    let showReferenceLibrary = false;
 
     function make(tag, className, text) {
       const node = document.createElement(tag);
@@ -567,12 +617,15 @@
     function render() {
       const query = search.value.toLowerCase().trim();
       const visible = drills.filter((drill) =>
-        drill.active &&
+        (drill.active || showReferenceLibrary) &&
         `${drill.name} ${drill.category}`.toLowerCase().includes(query)
       );
 
       grid.replaceChildren();
-      count.textContent = `${visible.length} drill${visible.length === 1 ? "" : "s"}`;
+      const referenceCount = visible.filter((drill) => !drill.active).length;
+      count.textContent = showReferenceLibrary
+        ? `${visible.length} drill${visible.length === 1 ? "" : "s"} (${referenceCount} reference)`
+        : `${visible.length} drill${visible.length === 1 ? "" : "s"}`;
 
       if (!visible.length) {
         grid.append(make("div", "state", "No drills found."));
@@ -580,7 +633,7 @@
       }
 
       for (const drill of visible) {
-        const card = make("article", "card");
+        const card = make("article", drill.active ? "card" : "card reference");
         const media = make("div", "media");
 
         if (drill.video_url.startsWith("/uploads/drills/")) {
@@ -598,7 +651,11 @@
         }
 
         const content = make("div", "content");
-        content.append(make("div", "category", drill.category));
+        const categoryRow = make("div", "category", drill.category);
+        if (!drill.active) {
+          categoryRow.append(make("span", "reference-badge", "Reference — external, licensed"));
+        }
+        content.append(categoryRow);
         content.append(make("h3", "", drill.name));
         content.append(make("p", "description", drill.description));
 
@@ -658,6 +715,15 @@
     }
 
     search.addEventListener("input", render);
+
+    toggleReference.addEventListener("click", () => {
+      showReferenceLibrary = !showReferenceLibrary;
+      toggleReference.textContent = showReferenceLibrary
+        ? "Hide reference library"
+        : "Show reference library";
+      toggleReference.classList.toggle("active", showReferenceLibrary);
+      render();
+    });
 
     analysisSelect.addEventListener("change", loadSmartRecommendations);
 
