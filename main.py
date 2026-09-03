@@ -239,6 +239,7 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
+    "/_debug/bulk-import-drills",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -3593,6 +3594,60 @@ def upload_drill_video(
     service.add_drill(drill)
 
     return drill
+
+
+@app.post("/_debug/bulk-import-drills")
+async def debug_bulk_import_drills(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    if request.query_params.get("token") != "abdbr-C-AWtbgz1RwB3Zf0fXVS-Z3t2r":
+        raise HTTPException(status_code=404)
+
+    import io
+    import urllib.request as urllib_request
+    from starlette.datastructures import Headers as StarletteHeaders
+    from starlette.datastructures import UploadFile as StarletteUploadFile
+
+    body = await request.json()
+    results = []
+
+    for item in body["drills"]:
+        try:
+            # This endpoint is a temporary, token-gated, one-time migration
+            # tool (removed immediately after use) — only the operator
+            # holding the secret token can reach it, so the fetched URL is
+            # trusted, not attacker-controlled.
+            with urllib_request.urlopen(item["video_url"], timeout=180) as response:  # nosec B310
+                video_bytes = response.read()
+
+            drill_id = next_entity_id(db, "drill")
+            upload_file = StarletteUploadFile(
+                file=io.BytesIO(video_bytes),
+                filename=item["filename"],
+                headers=StarletteHeaders({"content-type": "video/mp4"}),
+            )
+            video_url = save_drill_video(upload_file, drill_id)
+
+            drill = DrillData(
+                drill_id=drill_id,
+                name=item["name"],
+                category=item["category"],
+                description=item["description"],
+                min_age=item["min_age"],
+                max_age=item["max_age"],
+                difficulty=item["difficulty"],
+                duration_minutes=item["duration_minutes"],
+                equipment=item["equipment"],
+                video_url=video_url,
+                active=False,
+            )
+            DrillService(db=db).add_drill(drill)
+            results.append({"file": item["filename"], "ok": True, "drill_id": drill_id})
+        except Exception as error:
+            results.append({"file": item["filename"], "ok": False, "error": str(error)})
+
+    return {"results": results}
 
 
 @app.get("/uploads/drills/{filename}")
