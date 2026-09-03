@@ -6,6 +6,7 @@ from app.technical_profile import TechnicalProfile
 from app.mental_profile import MentalProfile
 from app.match_performance import MatchPerformance
 from app.tactical_profile import TacticalProfile
+from app.weak_foot_profile import WeakFootProfile
 from app.db_models import PlayerDB
 from app.services.player_service import PlayerService
 from sqlalchemy import create_engine
@@ -109,6 +110,13 @@ def test_add_and_get_player():
             collective_coordination=68.0,
             set_piece_contribution=65.0,
         ),
+            weak_foot_profile=WeakFootProfile(
+                weak_foot_usage_pct=20.0,
+                weak_foot_passing=60.0,
+                weak_foot_receiving=62.0,
+                weak_foot_dribbling=58.0,
+                weak_foot_finishing=55.0,
+            ),
     )
 
     service.add_player(player)
@@ -184,6 +192,13 @@ def test_get_all_players():
             collective_coordination=68.0,
             set_piece_contribution=65.0,
         ),
+            weak_foot_profile=WeakFootProfile(
+                weak_foot_usage_pct=20.0,
+                weak_foot_passing=60.0,
+                weak_foot_receiving=62.0,
+                weak_foot_dribbling=58.0,
+                weak_foot_finishing=55.0,
+            ),
     )
 
     service.add_player(player)
@@ -253,6 +268,13 @@ def test_delete_player():
             collective_coordination=68.0,
             set_piece_contribution=65.0,
         ),
+            weak_foot_profile=WeakFootProfile(
+                weak_foot_usage_pct=20.0,
+                weak_foot_passing=60.0,
+                weak_foot_receiving=62.0,
+                weak_foot_dribbling=58.0,
+                weak_foot_finishing=55.0,
+            ),
     )
 
     service.add_player(player)
@@ -329,6 +351,13 @@ def test_update_player():
             collective_coordination=68.0,
             set_piece_contribution=65.0,
         ),
+            weak_foot_profile=WeakFootProfile(
+                weak_foot_usage_pct=20.0,
+                weak_foot_passing=60.0,
+                weak_foot_receiving=62.0,
+                weak_foot_dribbling=58.0,
+                weak_foot_finishing=55.0,
+            ),
     )
 
     service.add_player(player)
@@ -400,6 +429,13 @@ def test_update_unknown_player_returns_false():
             collective_coordination=68.0,
             set_piece_contribution=65.0,
         ),
+            weak_foot_profile=WeakFootProfile(
+                weak_foot_usage_pct=20.0,
+                weak_foot_passing=60.0,
+                weak_foot_receiving=62.0,
+                weak_foot_dribbling=58.0,
+                weak_foot_finishing=55.0,
+            ),
     )
 
     updated = service.update_player(player)

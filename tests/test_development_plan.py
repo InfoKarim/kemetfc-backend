@@ -7,6 +7,7 @@ from app.technical_profile import TechnicalProfile
 from app.mental_profile import MentalProfile
 from app.match_performance import MatchPerformance
 from app.tactical_profile import TacticalProfile
+from app.weak_foot_profile import WeakFootProfile
 
 def make_player():
     return Player(
@@ -66,6 +67,13 @@ def make_player():
             collective_coordination=68.0,
             set_piece_contribution=65.0,
         ),
+            weak_foot_profile=WeakFootProfile(
+                weak_foot_usage_pct=20.0,
+                weak_foot_passing=60.0,
+                weak_foot_receiving=62.0,
+                weak_foot_dribbling=58.0,
+                weak_foot_finishing=55.0,
+            ),
     )
 
 def test_create_development_plan_basic_info():
@@ -126,14 +134,21 @@ def test_create_development_plan_basic_info():
             collective_coordination=68.0,
             set_piece_contribution=65.0,
         ),
+            weak_foot_profile=WeakFootProfile(
+                weak_foot_usage_pct=20.0,
+                weak_foot_passing=60.0,
+                weak_foot_receiving=62.0,
+                weak_foot_dribbling=58.0,
+                weak_foot_finishing=55.0,
+            ),
     )
 
     plan = create_development_plan(player)
 
     assert plan["player_id"] == "P001"
     assert plan["player_name"] == "Mohamed Salah"
-    assert plan["overall_score"] == 86.98
-    assert plan["player_level"] == "Elite"
+    assert plan["overall_score"] == 80.86
+    assert plan["player_level"] == "Excellent"
     assert "top_strengths" in plan
     assert "top_weaknesses" in plan
     assert "training_recommendations" in plan

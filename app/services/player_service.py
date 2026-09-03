@@ -7,6 +7,7 @@ from app.physical_profile import PhysicalProfile
 from app.technical_profile import TechnicalProfile
 from app.mental_profile import MentalProfile
 from app.tactical_profile import TacticalProfile
+from app.weak_foot_profile import WeakFootProfile
 from app.match_performance import MatchPerformance
 
 
@@ -40,6 +41,16 @@ _DEFAULT_MENTAL_PROFILE = {
     "coachability": 70.0,
 }
 
+# Players created before the Weak Foot Profile field existed have no stored
+# value — default to a neutral midpoint rather than crashing until re-scored.
+_DEFAULT_WEAK_FOOT_PROFILE = {
+    "weak_foot_usage_pct": 20.0,
+    "weak_foot_passing": 60.0,
+    "weak_foot_receiving": 60.0,
+    "weak_foot_dribbling": 60.0,
+    "weak_foot_finishing": 60.0,
+}
+
 
 class PlayerService:
     def __init__(self, db: Session | None = None):
@@ -60,6 +71,7 @@ class PlayerService:
             mental_profile=player.mental_profile.__dict__,
             match_performance=player.match_performance.__dict__,
             tactical_profile=player.tactical_profile.__dict__,
+            weak_foot_profile=player.weak_foot_profile.__dict__,
             created_at=player.created_at,
             photo_filename=player.photo_filename,
         )
@@ -80,6 +92,14 @@ class PlayerService:
             # the player just needs re-scoring under the current fields.
             return TacticalProfile(**_DEFAULT_TACTICAL_PROFILE)
 
+    def _weak_foot_profile(self, db_player: PlayerDB) -> WeakFootProfile:
+        try:
+            return WeakFootProfile(
+                **(db_player.weak_foot_profile or _DEFAULT_WEAK_FOOT_PROFILE)
+            )
+        except TypeError:
+            return WeakFootProfile(**_DEFAULT_WEAK_FOOT_PROFILE)
+
     def _to_domain(self, db_player: PlayerDB) -> Player:
         return Player(
             player_id=db_player.player_id,
@@ -95,6 +115,7 @@ class PlayerService:
             mental_profile=self._mental_profile(db_player),
             match_performance=MatchPerformance(**db_player.match_performance),
             tactical_profile=self._tactical_profile(db_player),
+            weak_foot_profile=self._weak_foot_profile(db_player),
             created_at=db_player.created_at,
             photo_filename=db_player.photo_filename,
         )

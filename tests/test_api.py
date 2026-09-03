@@ -266,6 +266,13 @@ def create_test_player(player_id="P100"):
             "collective_coordination": 68.0,
             "set_piece_contribution": 65.0,
         },
+        "weak_foot_profile": {
+            "weak_foot_usage_pct": 20.0,
+            "weak_foot_passing": 60.0,
+            "weak_foot_receiving": 62.0,
+            "weak_foot_dribbling": 58.0,
+            "weak_foot_finishing": 55.0,
+        },
     }
 
     response = client.post("/players", json=player_data)
@@ -836,6 +843,13 @@ def test_create_player():
             "decision_quality": 70.0,
             "collective_coordination": 68.0,
             "set_piece_contribution": 65.0,
+        },
+        "weak_foot_profile": {
+            "weak_foot_usage_pct": 20.0,
+            "weak_foot_passing": 60.0,
+            "weak_foot_receiving": 62.0,
+            "weak_foot_dribbling": 58.0,
+            "weak_foot_finishing": 55.0,
         },
     }
 
@@ -1511,6 +1525,53 @@ def test_match_performance_assessment_not_configured_returns_404(monkeypatch):
 
 def test_match_performance_assessment_unknown_player_returns_404():
     response = client.get("/players/DOES_NOT_EXIST/match-performance-assessment")
+    assert response.status_code == 404
+
+
+def test_weak_foot_assessment_returns_ai_scores(monkeypatch):
+    import main
+
+    create_test_player("P635")
+
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+
+    fake_weak_foot_profile = {
+        "weak_foot_usage_pct": 22.0,
+        "weak_foot_passing": 58.0,
+        "weak_foot_receiving": 60.0,
+        "weak_foot_dribbling": 52.0,
+        "weak_foot_finishing": 45.0,
+    }
+
+    def fake_get_profile_scores(**kwargs):
+        return {
+            "profile": fake_weak_foot_profile,
+            "reasoning": "Based on the player's profile data.",
+        }
+
+    monkeypatch.setattr(main, "get_profile_scores", fake_get_profile_scores)
+
+    response = client.get("/players/P635/weak-foot-assessment")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["weak_foot_profile"] == fake_weak_foot_profile
+    assert body["reasoning"] == "Based on the player's profile data."
+    assert body["source"] == "profile"
+
+
+def test_weak_foot_assessment_not_configured_returns_404(monkeypatch):
+    import main
+
+    create_test_player("P636")
+    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+
+    response = client.get("/players/P636/weak-foot-assessment")
+    assert response.status_code == 404
+
+
+def test_weak_foot_assessment_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/weak-foot-assessment")
     assert response.status_code == 404
 
 

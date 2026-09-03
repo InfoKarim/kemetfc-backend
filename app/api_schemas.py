@@ -57,6 +57,14 @@ class TacticalProfileSchema(BaseModel):
     set_piece_contribution: float
 
 
+class WeakFootProfileSchema(BaseModel):
+    weak_foot_usage_pct: float
+    weak_foot_passing: float
+    weak_foot_receiving: float
+    weak_foot_dribbling: float
+    weak_foot_finishing: float
+
+
 class PlayerSchema(BaseModel):
     player_id: str | None = None
     first_name_ar: str
@@ -70,6 +78,7 @@ class PlayerSchema(BaseModel):
     mental_profile: MentalProfileSchema
     match_performance: MatchPerformanceSchema
     tactical_profile: TacticalProfileSchema
+    weak_foot_profile: WeakFootProfileSchema
     team_id: str | None = None
 
 

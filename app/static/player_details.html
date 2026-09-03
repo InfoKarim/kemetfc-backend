@@ -350,6 +350,18 @@
       return numbers.reduce((sum, value) => sum + value, 0) / numbers.length;
     };
 
+    const weakFootSkillAverage = (values) => {
+      if (!values) return 0;
+      const skills = [
+        values.weak_foot_passing,
+        values.weak_foot_receiving,
+        values.weak_foot_dribbling,
+        values.weak_foot_finishing,
+      ].filter((value) => typeof value === "number");
+      if (!skills.length) return 0;
+      return skills.reduce((sum, value) => sum + value, 0) / skills.length;
+    };
+
     const TACTICAL_WEIGHTS = {
       positioning_spatial_intelligence: 0.20,
       attacking_contribution_in_possession: 0.15,
@@ -480,6 +492,7 @@
         ["Sex", player.sex],
         ["Team", teamName || "No team assigned"],
         ["Dominant foot", player.physical_profile.dominant_foot],
+        ["Weak-foot usage", `${player.weak_foot_profile.weak_foot_usage_pct}% of actions`],
         ["Height", `${player.physical_profile.height_cm} cm`],
         ["Weight", `${player.physical_profile.weight_kg} kg`],
       ].forEach(([label, value]) => {
@@ -496,6 +509,7 @@
         ["Physical", average(player.physical_profile)],
         ["Mental", average(player.mental_profile)],
         ["Tactical", weightedTacticalScore(player.tactical_profile)],
+        ["Weak Foot", weakFootSkillAverage(player.weak_foot_profile)],
       ].forEach(([label, value]) => {
         const box = make("div", "score");
         box.append(make("span", "muted", label));

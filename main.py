@@ -96,6 +96,7 @@ from app.drill_upload import DrillUploadError, save_drill_video
 from app.match_performance import MatchPerformance, MATCH_PERFORMANCE_FIELD_HINTS
 from app.mental_profile import MentalProfile, MENTAL_FIELD_HINTS
 from app.tactical_profile import TacticalProfile
+from app.weak_foot_profile import WeakFootProfile, WEAK_FOOT_FIELD_HINTS
 from app.migration_health import (
     DatabaseSchemaNotCurrent,
     require_database_at_head,
@@ -1977,6 +1978,9 @@ def create_player(
         tactical_profile=TacticalProfile(
             **player_data.tactical_profile.model_dump()
         ),
+        weak_foot_profile=WeakFootProfile(
+            **player_data.weak_foot_profile.model_dump()
+        ),
         created_at=utcnow(),
     )
 
@@ -2150,6 +2154,9 @@ def update_player(
         ),
         tactical_profile=TacticalProfile(
             **player_data.tactical_profile.model_dump()
+        ),
+        weak_foot_profile=WeakFootProfile(
+            **player_data.weak_foot_profile.model_dump()
         ),
         created_at=existing_player.created_at,
         photo_filename=existing_player.photo_filename,
@@ -2686,6 +2693,11 @@ def _resolve_player_weaknesses_strengths(player, db: Session):
             "Set-Piece Contribution",
             player.tactical_profile.set_piece_contribution,
         ),
+        ("Weak-Foot Usage", player.weak_foot_profile.weak_foot_usage_pct),
+        ("Weak-Foot Passing", player.weak_foot_profile.weak_foot_passing),
+        ("Weak-Foot Receiving", player.weak_foot_profile.weak_foot_receiving),
+        ("Weak-Foot Dribbling", player.weak_foot_profile.weak_foot_dribbling),
+        ("Weak-Foot Finishing", player.weak_foot_profile.weak_foot_finishing),
     ]
 
     # Match performance is raw match counts, not a 0-100 rating like the profiles
@@ -3045,6 +3057,48 @@ def get_player_match_performance_assessment(
 
     return {
         "match_performance": result["profile"],
+        "reasoning": result["reasoning"],
+        "source": source,
+    }
+
+
+@app.get("/players/{player_id}/weak-foot-assessment")
+def get_player_weak_foot_assessment(
+    player_id: str,
+    db: Session = Depends(get_db),
+):
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if not is_smart_recommendations_configured():
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    weaknesses, strengths, source = _resolve_player_weaknesses_strengths(
+        player, db
+    )
+
+    try:
+        result = get_profile_scores(
+            profile_name="weak foot",
+            fields=WEAK_FOOT_FIELD_HINTS,
+            player_name=f"{player.first_name_en} {player.last_name_en}",
+            age=calculate_player_age(player.date_of_birth),
+            weaknesses=weaknesses,
+            strengths=strengths,
+            extra_guidance=(
+                f" This player's dominant foot is {player.physical_profile.dominant_foot}."
+            ),
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    return {
+        "weak_foot_profile": result["profile"],
         "reasoning": result["reasoning"],
         "source": source,
     }

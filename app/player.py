@@ -4,6 +4,7 @@ from app.physical_profile import PhysicalProfile
 from app.technical_profile import TechnicalProfile
 from app.mental_profile import MentalProfile
 from app.tactical_profile import TacticalProfile
+from app.weak_foot_profile import WeakFootProfile
 from app.match_performance import MatchPerformance
 @dataclass
 class Player:
@@ -19,6 +20,7 @@ class Player:
     mental_profile: MentalProfile
     match_performance: MatchPerformance
     tactical_profile: TacticalProfile
+    weak_foot_profile: WeakFootProfile
     team_id: str | None = None
     created_at: datetime | None = None
     photo_filename: str | None = None

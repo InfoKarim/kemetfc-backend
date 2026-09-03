@@ -185,6 +185,15 @@
             <p id="tactical-weighted-total" class="weighted-total"></p>
           </section>
 
+          <section id="weak-foot-profile" class="card">
+            <h2>Weak Foot Profile</h2>
+            <button id="suggest-weak-foot-btn" type="button" class="suggest-tactical" hidden>
+              Suggest Weak Foot Profile with Claude AI
+            </button>
+            <p id="weak-foot-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
+            <div class="fields" data-group="weakFoot"></div>
+          </section>
+
           <section id="match-performance" class="card">
             <h2>Match Performance</h2>
             <p class="muted" style="font-size: 12.5px;">
@@ -247,6 +256,13 @@
         ["decision_quality", "Decision quality / game value (10%)", 70],
         ["collective_coordination", "Collective coordination / adaptability (5%)", 70],
         ["set_piece_contribution", "Set-piece contribution (5%)", 70]
+      ],
+      weakFoot: [
+        ["weak_foot_usage_pct", "Weak-foot usage (% of actions)", 20],
+        ["weak_foot_passing", "Weak-foot passing", 60],
+        ["weak_foot_receiving", "Weak-foot receiving", 60],
+        ["weak_foot_dribbling", "Weak-foot dribbling", 60],
+        ["weak_foot_finishing", "Weak-foot finishing", 60]
       ],
       match: [
         ["minutes_played", "Minutes played", 0],
@@ -422,6 +438,7 @@
         fillGroup("technical", player.technical_profile);
         fillGroup("mental", player.mental_profile);
         fillGroup("tactical", player.tactical_profile);
+        fillGroup("weakFoot", player.weak_foot_profile);
         fillGroup("match", player.match_performance);
         updateTacticalWeightedTotal();
 
@@ -556,6 +573,14 @@
       resultKey: "match_performance",
     });
 
+    wireSuggestButton({
+      group: "weakFoot",
+      endpoint: "weak-foot-assessment",
+      buttonId: "suggest-weak-foot-btn",
+      reasoningId: "weak-foot-ai-reasoning",
+      resultKey: "weak_foot_profile",
+    });
+
     loadTeams().then(loadPlayerForEdit).then(loadProfileSuggestions).then(applyRegistrationPrefill);
 
     document.querySelector("#player-form").addEventListener(
@@ -582,6 +607,7 @@
           technical_profile: readGroup("technical"),
           mental_profile: readGroup("mental"),
           tactical_profile: readGroup("tactical"),
+          weak_foot_profile: readGroup("weakFoot"),
           match_performance: readGroup("match")
         };
 

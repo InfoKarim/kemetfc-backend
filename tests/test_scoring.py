@@ -6,6 +6,7 @@ from app.technical_profile import TechnicalProfile
 from app.mental_profile import MentalProfile
 from app.match_performance import MatchPerformance
 from app.tactical_profile import TacticalProfile
+from app.weak_foot_profile import WeakFootProfile
 from app.scoring import calculate_overall_score, get_score_label
 
 def test_get_score_label():
@@ -77,8 +78,84 @@ def test_calculate_overall_score():
             collective_coordination=68.0,
             set_piece_contribution=65.0,
         ),
+            weak_foot_profile=WeakFootProfile(
+                weak_foot_usage_pct=20.0,
+                weak_foot_passing=60.0,
+                weak_foot_receiving=62.0,
+                weak_foot_dribbling=58.0,
+                weak_foot_finishing=55.0,
+            ),
     )
 
     score = calculate_overall_score(player)
 
-    assert score == 81.0
+    assert score == 77.41
+
+
+def test_calculate_overall_score_is_affected_by_tactical_profile():
+    def build_player(tactical_profile):
+        return Player(
+            player_id="P001",
+            first_name_ar="محمد",
+            last_name_ar="صلاح",
+            first_name_en="Mohamed",
+            last_name_en="Salah",
+            date_of_birth=date(1992, 6, 15),
+            sex="male",
+            physical_profile=PhysicalProfile(
+                height_cm=175.0,
+                weight_kg=71.0,
+                dominant_foot="left",
+                speed=70.0,
+                acceleration=70.0,
+                agility=70.0,
+                stamina=70.0,
+                strength=70.0,
+            ),
+            technical_profile=TechnicalProfile(
+                ball_control=70.0,
+                dribbling=70.0,
+                passing=70.0,
+                shooting=70.0,
+                finishing=70.0,
+            ),
+            mental_profile=MentalProfile(
+                decision_making=70.0,
+                concentration=70.0,
+                composure=70.0,
+                positioning=70.0,
+                vision=70.0,
+                awareness=70.0,
+                game_reading=70.0,
+                coachability=70.0,
+            ),
+            match_performance=MatchPerformance(
+                minutes_played=90,
+                goals=1,
+                assists=0,
+                shots=4,
+                shots_on_target=2,
+                passes_attempted=40,
+                passes_completed=34,
+                tackles=1,
+                interceptions=0,
+                rating=8.5,
+            ),
+            tactical_profile=tactical_profile,
+            weak_foot_profile=WeakFootProfile(
+                weak_foot_usage_pct=20.0,
+                weak_foot_passing=60.0,
+                weak_foot_receiving=62.0,
+                weak_foot_dribbling=58.0,
+                weak_foot_finishing=55.0,
+            ),
+        )
+
+    low_tactical = build_player(
+        TacticalProfile(**{field: 30.0 for field in TacticalProfile.__dataclass_fields__})
+    )
+    high_tactical = build_player(
+        TacticalProfile(**{field: 95.0 for field in TacticalProfile.__dataclass_fields__})
+    )
+
+    assert calculate_overall_score(low_tactical) != calculate_overall_score(high_tactical)
