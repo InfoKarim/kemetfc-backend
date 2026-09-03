@@ -316,3 +316,96 @@ def test_get_profile_scores_requires_anthropic_key(monkeypatch):
             weaknesses=[],
             strengths=[],
         )
+
+
+def test_is_provider_configured_reflects_each_providers_key(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "")
+    monkeypatch.setattr(service, "get_openai_api_key", lambda: "")
+    assert service.is_provider_configured("claude") is False
+    assert service.is_provider_configured("chatgpt") is False
+    assert service.is_provider_configured("not-a-real-provider") is False
+
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+    assert service.is_provider_configured("claude") is True
+    assert service.is_provider_configured("chatgpt") is False
+
+    monkeypatch.setattr(service, "get_openai_api_key", lambda: "sk-openai-test")
+    assert service.is_provider_configured("chatgpt") is True
+
+
+def test_call_openai_parses_chat_completions_response(monkeypatch):
+    monkeypatch.setattr(service, "get_openai_api_key", lambda: "sk-openai-test")
+
+    openai_payload = {
+        "choices": [{"message": {"content": "Hello from ChatGPT"}}],
+    }
+
+    def fake_urlopen(request, timeout=None):
+        assert request.full_url == service.OPENAI_API_URL
+        assert request.get_header("Authorization") == "Bearer sk-openai-test"
+        return FakeHTTPResponse(openai_payload)
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", fake_urlopen)
+
+    assert service._call_openai("hi") == "Hello from ChatGPT"
+
+
+def test_call_model_dispatches_by_provider(monkeypatch):
+    monkeypatch.setattr(service, "_call_anthropic", lambda prompt: "claude-reply")
+    monkeypatch.setattr(service, "_call_openai", lambda prompt: "chatgpt-reply")
+
+    assert service._call_model("hi", "claude") == "claude-reply"
+    assert service._call_model("hi", "chatgpt") == "chatgpt-reply"
+
+    with pytest.raises(service.RecommendationError):
+        service._call_model("hi", "not-a-real-provider")
+
+
+def test_generate_focus_areas_can_use_chatgpt(monkeypatch):
+    monkeypatch.setattr(service, "get_openai_api_key", lambda: "sk-openai-test")
+
+    openai_payload = {
+        "choices": [{
+            "message": {
+                "content": (
+                    '[{"title": "Weak-foot passing", '
+                    '"reason": "Passing was flagged as a weakness.", '
+                    '"search_keywords": "youth soccer weak foot passing drills"}]'
+                ),
+            },
+        }],
+    }
+
+    def fake_urlopen(request, timeout=None):
+        assert request.full_url == service.OPENAI_API_URL
+        return FakeHTTPResponse(openai_payload)
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", fake_urlopen)
+
+    focus_areas = service.generate_focus_areas(
+        player_name="Test Player",
+        age=12,
+        weaknesses=[{"attribute": "Passing", "score": 60}],
+        strengths=[],
+        provider="chatgpt",
+    )
+
+    assert focus_areas == [{
+        "title": "Weak-foot passing",
+        "reason": "Passing was flagged as a weakness.",
+        "search_keywords": "youth soccer weak foot passing drills",
+    }]
+
+
+def test_get_smart_recommendations_requires_configured_provider(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+    monkeypatch.setattr(service, "get_openai_api_key", lambda: "")
+
+    with pytest.raises(service.RecommendationError):
+        service.get_smart_recommendations(
+            player_name="Test Player",
+            age=12,
+            weaknesses=[],
+            strengths=[],
+            provider="chatgpt",
+        )

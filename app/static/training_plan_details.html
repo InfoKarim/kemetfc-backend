@@ -295,6 +295,16 @@
       border-radius: 14px; background: white !important;
     }
     #ai-recommendations h2 { margin: 0 0 4px; color: #16233B !important; }
+    .ai-provider-select {
+      width: auto;
+      padding: 9px 12px;
+      border: 1px solid #17a957;
+      border-radius: 9px;
+      background: #eefbf3;
+      color: #17a957;
+      font: inherit;
+      font-weight: 750;
+    }
     .recommendation-source { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
     .focus-area { padding: 16px; border-left: 4px solid #1265ed; border-radius: 8px; background: #f5f8ff; margin-bottom: 12px; }
     .focus-area h3 { font-size: 16px; margin: 0 0 4px; color: #16233B !important; }
@@ -431,12 +441,34 @@
     const details = document.querySelector("#plan-details");
     const message = document.querySelector("#page-message");
     const planId = new URLSearchParams(location.search).get("plan_id");
+    let currentPlayerId = null;
 
     function make(tag, className, text) {
       const node = document.createElement(tag);
       if (className) node.className = className;
       if (text !== undefined) node.textContent = text;
       return node;
+    }
+
+    function makeAiSectionHeader(title, selectId, onProviderChange) {
+      const row = make("div");
+      row.style.cssText =
+        "display:flex;align-items:center;justify-content:space-between;gap:10px;";
+      row.append(make("h2", "", title));
+
+      const select = document.createElement("select");
+      select.id = selectId;
+      select.className = "ai-provider-select";
+      for (const [value, label] of [["claude", "Claude"], ["chatgpt", "ChatGPT"]]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        select.append(option);
+      }
+      select.addEventListener("change", onProviderChange);
+      row.append(select);
+
+      return row;
     }
 
     function makeStatusSelect(plan) {
@@ -727,10 +759,16 @@
 
       details.append(recommendations);
 
+      currentPlayerId = plan.player_id;
+
       const aiSection = make("section");
       aiSection.id = "ai-recommendations";
       aiSection.hidden = true;
-      aiSection.append(make("h2", "", "AI-Suggested Training"));
+      aiSection.append(makeAiSectionHeader(
+        "AI-Suggested Training",
+        "ai-recommendations-provider",
+        () => loadSmartRecommendations(currentPlayerId)
+      ));
       const aiBody = make("div");
       aiBody.id = "ai-recommendations-body";
       aiSection.append(aiBody);
@@ -739,9 +777,11 @@
       const medicineSection = make("section");
       medicineSection.id = "medicine-notes";
       medicineSection.hidden = true;
-      medicineSection.append(
-        make("h2", "", "Sports Medicine Notes (AI, General Guidance)")
-      );
+      medicineSection.append(makeAiSectionHeader(
+        "Sports Medicine Notes (AI, General Guidance)",
+        "medicine-notes-provider",
+        () => loadSportsMedicineNotes(currentPlayerId)
+      ));
       const medicineBody = make("div");
       medicineBody.id = "medicine-notes-body";
       medicineSection.append(medicineBody);
@@ -750,9 +790,11 @@
       const coachingSection = make("section");
       coachingSection.id = "coaching-insights";
       coachingSection.hidden = true;
-      coachingSection.append(
-        make("h2", "", "Elite Coaching Insights (AI)")
-      );
+      coachingSection.append(makeAiSectionHeader(
+        "Elite Coaching Insights (AI)",
+        "coaching-insights-provider",
+        () => loadCoachingInsights(currentPlayerId)
+      ));
       const coachingBody = make("div");
       coachingBody.id = "coaching-insights-body";
       coachingSection.append(coachingBody);
@@ -905,9 +947,12 @@
     }
 
     async function loadSmartRecommendations(playerId) {
+      const provider =
+        document.querySelector("#ai-recommendations-provider")?.value || "claude";
       try {
         const response = await fetch(
-          `/players/${encodeURIComponent(playerId)}/smart-recommendations`
+          `/players/${encodeURIComponent(playerId)}/smart-recommendations` +
+            `?provider=${encodeURIComponent(provider)}`
         );
 
         if (!response.ok) return;
@@ -945,9 +990,12 @@
     }
 
     async function loadSportsMedicineNotes(playerId) {
+      const provider =
+        document.querySelector("#medicine-notes-provider")?.value || "claude";
       try {
         const response = await fetch(
-          `/players/${encodeURIComponent(playerId)}/sports-medicine-notes`
+          `/players/${encodeURIComponent(playerId)}/sports-medicine-notes` +
+            `?provider=${encodeURIComponent(provider)}`
         );
 
         if (!response.ok) return;
@@ -976,9 +1024,12 @@
     }
 
     async function loadCoachingInsights(playerId) {
+      const provider =
+        document.querySelector("#coaching-insights-provider")?.value || "claude";
       try {
         const response = await fetch(
-          `/players/${encodeURIComponent(playerId)}/coaching-insights`
+          `/players/${encodeURIComponent(playerId)}/coaching-insights` +
+            `?provider=${encodeURIComponent(provider)}`
         );
 
         if (!response.ok) return;

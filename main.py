@@ -92,7 +92,7 @@ from app.services.smart_recommendation_service import (
     get_sports_medicine_notes,
     get_tactical_scores,
     get_profile_scores,
-    is_configured as is_smart_recommendations_configured,
+    is_provider_configured,
 )
 from app.drill_recommendations import build_drill_recommendations
 from app.drill_ranking import rank_drills
@@ -475,6 +475,13 @@ def is_minor(date_of_birth: date, today: date | None = None) -> bool:
         < (date_of_birth.month, date_of_birth.day)
     )
     return age < 18
+
+
+def resolve_ai_provider(request: Request) -> str:
+    provider = request.query_params.get("provider", "claude")
+    if provider not in {"claude", "chatgpt"}:
+        raise HTTPException(status_code=400, detail="Invalid AI provider")
+    return provider
 
 
 def require_admin(request: Request) -> None:
@@ -2464,14 +2471,16 @@ def get_analysis(
 @app.get("/analyses/{analysis_id}/smart-recommendations")
 def get_analysis_smart_recommendations(
     analysis_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    provider = resolve_ai_provider(request)
     analysis = AnalysisService(db=db).get_analysis(analysis_id)
 
     if analysis is None:
         raise HTTPException(status_code=404, detail="Analysis not found")
 
-    if not is_smart_recommendations_configured():
+    if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
             detail="Smart recommendations are not configured",
@@ -2488,11 +2497,12 @@ def get_analysis_smart_recommendations(
             age=calculate_player_age(player.date_of_birth),
             weaknesses=analysis.weaknesses,
             strengths=analysis.strengths,
+            provider=provider,
         )
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
 
-    return {"focus_areas": focus_areas}
+    return {"focus_areas": focus_areas, "provider": provider}
 
 
 @app.post("/analyses/{analysis_id}/development-forecast")
@@ -2959,14 +2969,16 @@ def get_player_profile_suggestions(
 @app.get("/players/{player_id}/smart-recommendations")
 def get_player_smart_recommendations(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    provider = resolve_ai_provider(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
-    if not is_smart_recommendations_configured():
+    if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
             detail="Smart recommendations are not configured",
@@ -2982,24 +2994,27 @@ def get_player_smart_recommendations(
             age=calculate_player_age(player.date_of_birth),
             weaknesses=weaknesses,
             strengths=strengths,
+            provider=provider,
         )
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
 
-    return {"focus_areas": focus_areas, "source": source}
+    return {"focus_areas": focus_areas, "source": source, "provider": provider}
 
 
 @app.get("/players/{player_id}/sports-medicine-notes")
 def get_player_sports_medicine_notes(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    provider = resolve_ai_provider(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
-    if not is_smart_recommendations_configured():
+    if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
             detail="Smart recommendations are not configured",
@@ -3015,24 +3030,27 @@ def get_player_sports_medicine_notes(
             age=calculate_player_age(player.date_of_birth),
             weaknesses=weaknesses,
             strengths=strengths,
+            provider=provider,
         )
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
 
-    return {"notes": notes, "source": source}
+    return {"notes": notes, "source": source, "provider": provider}
 
 
 @app.get("/players/{player_id}/coaching-insights")
 def get_player_coaching_insights(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    provider = resolve_ai_provider(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
-    if not is_smart_recommendations_configured():
+    if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
             detail="Smart recommendations are not configured",
@@ -3048,24 +3066,27 @@ def get_player_coaching_insights(
             age=calculate_player_age(player.date_of_birth),
             weaknesses=weaknesses,
             strengths=strengths,
+            provider=provider,
         )
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
 
-    return {"insights": insights, "source": source}
+    return {"insights": insights, "source": source, "provider": provider}
 
 
 @app.get("/players/{player_id}/tactical-assessment")
 def get_player_tactical_assessment(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    provider = resolve_ai_provider(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
-    if not is_smart_recommendations_configured():
+    if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
             detail="Smart recommendations are not configured",
@@ -3081,6 +3102,7 @@ def get_player_tactical_assessment(
             age=calculate_player_age(player.date_of_birth),
             weaknesses=weaknesses,
             strengths=strengths,
+            provider=provider,
         )
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
@@ -3089,20 +3111,23 @@ def get_player_tactical_assessment(
         "tactical_profile": result["tactical_profile"],
         "reasoning": result["reasoning"],
         "source": source,
+        "provider": provider,
     }
 
 
 @app.get("/players/{player_id}/technical-assessment")
 def get_player_technical_assessment(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    provider = resolve_ai_provider(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
-    if not is_smart_recommendations_configured():
+    if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
             detail="Smart recommendations are not configured",
@@ -3120,6 +3145,7 @@ def get_player_technical_assessment(
             age=calculate_player_age(player.date_of_birth),
             weaknesses=weaknesses,
             strengths=strengths,
+            provider=provider,
         )
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
@@ -3128,20 +3154,23 @@ def get_player_technical_assessment(
         "technical_profile": result["profile"],
         "reasoning": result["reasoning"],
         "source": source,
+        "provider": provider,
     }
 
 
 @app.get("/players/{player_id}/mental-assessment")
 def get_player_mental_assessment(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    provider = resolve_ai_provider(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
-    if not is_smart_recommendations_configured():
+    if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
             detail="Smart recommendations are not configured",
@@ -3159,6 +3188,7 @@ def get_player_mental_assessment(
             age=calculate_player_age(player.date_of_birth),
             weaknesses=weaknesses,
             strengths=strengths,
+            provider=provider,
         )
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
@@ -3167,20 +3197,23 @@ def get_player_mental_assessment(
         "mental_profile": result["profile"],
         "reasoning": result["reasoning"],
         "source": source,
+        "provider": provider,
     }
 
 
 @app.get("/players/{player_id}/match-performance-assessment")
 def get_player_match_performance_assessment(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    provider = resolve_ai_provider(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
-    if not is_smart_recommendations_configured():
+    if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
             detail="Smart recommendations are not configured",
@@ -3204,6 +3237,7 @@ def get_player_match_performance_assessment(
                 "a coach must replace it with the player's actual recorded "
                 "match stats as soon as they exist."
             ),
+            provider=provider,
         )
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
@@ -3212,20 +3246,23 @@ def get_player_match_performance_assessment(
         "match_performance": result["profile"],
         "reasoning": result["reasoning"],
         "source": source,
+        "provider": provider,
     }
 
 
 @app.get("/players/{player_id}/weak-foot-assessment")
 def get_player_weak_foot_assessment(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    provider = resolve_ai_provider(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
-    if not is_smart_recommendations_configured():
+    if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
             detail="Smart recommendations are not configured",
@@ -3246,6 +3283,7 @@ def get_player_weak_foot_assessment(
             extra_guidance=(
                 f" This player's dominant foot is {player.physical_profile.dominant_foot}."
             ),
+            provider=provider,
         )
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
@@ -3254,6 +3292,7 @@ def get_player_weak_foot_assessment(
         "weak_foot_profile": result["profile"],
         "reasoning": result["reasoning"],
         "source": source,
+        "provider": provider,
     }
 
 

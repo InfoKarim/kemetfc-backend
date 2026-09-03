@@ -1067,7 +1067,7 @@ def test_smart_recommendations_not_configured_returns_404(monkeypatch):
     create_test_player("P600")
     analysis_data = create_test_analysis("AN600", player_id="P600")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
 
     response = client.get(
         f"/analyses/{analysis_data['analysis_id']}/smart-recommendations"
@@ -1083,7 +1083,7 @@ def test_smart_recommendations_returns_ai_focus_areas(monkeypatch):
     create_test_player("P601")
     analysis_data = create_test_analysis("AN601", player_id="P601")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     def fake_get_smart_recommendations(**kwargs):
         assert kwargs["weaknesses"] == analysis_data["weaknesses"]
@@ -1124,7 +1124,7 @@ def test_smart_recommendations_upstream_failure_returns_502(monkeypatch):
     create_test_player("P602")
     analysis_data = create_test_analysis("AN602", player_id="P602")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     def fake_get_smart_recommendations(**kwargs):
         raise RecommendationError("Anthropic API error (529): overloaded")
@@ -1211,7 +1211,7 @@ def test_player_smart_recommendations_returns_focus_areas(monkeypatch):
 
     create_test_player("P628")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     fake_focus_areas = [{"title": "Improve first touch", "videos": []}]
 
@@ -1232,7 +1232,7 @@ def test_player_smart_recommendations_not_configured_returns_404(monkeypatch):
     import main
 
     create_test_player("P629")
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
 
     response = client.get("/players/P629/smart-recommendations")
     assert response.status_code == 404
@@ -1248,7 +1248,7 @@ def test_player_sports_medicine_notes_returns_notes(monkeypatch):
 
     create_test_player("P630")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     fake_notes = ["Monitor hydration during high-intensity sessions."]
 
@@ -1269,7 +1269,7 @@ def test_player_sports_medicine_notes_not_configured_returns_404(monkeypatch):
     import main
 
     create_test_player("P631")
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
 
     response = client.get("/players/P631/sports-medicine-notes")
     assert response.status_code == 404
@@ -1285,7 +1285,7 @@ def test_player_coaching_insights_returns_insights(monkeypatch):
 
     create_test_player("P632")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     fake_insights = ["Encourage scanning before receiving the ball."]
 
@@ -1306,7 +1306,7 @@ def test_player_coaching_insights_not_configured_returns_404(monkeypatch):
     import main
 
     create_test_player("P633")
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
 
     response = client.get("/players/P633/coaching-insights")
     assert response.status_code == 404
@@ -1321,7 +1321,7 @@ def test_player_smart_recommendations_raises_502_on_recommendation_error(monkeyp
     import main
 
     create_test_player("P634")
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     def fake_get_smart_recommendations(**kwargs):
         raise main.RecommendationError("Anthropic API unavailable")
@@ -1337,7 +1337,7 @@ def test_tactical_assessment_returns_ai_scores(monkeypatch):
 
     create_test_player("P620")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     fake_tactical_profile = {
         "positioning_spatial_intelligence": 75.0,
@@ -1371,7 +1371,7 @@ def test_tactical_assessment_not_configured_returns_404(monkeypatch):
     import main
 
     create_test_player("P621")
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
 
     response = client.get("/players/P621/tactical-assessment")
     assert response.status_code == 404
@@ -1382,12 +1382,55 @@ def test_tactical_assessment_unknown_player_returns_404():
     assert response.status_code == 404
 
 
+def test_tactical_assessment_can_use_chatgpt_provider(monkeypatch):
+    import main
+
+    create_test_player("P635")
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
+
+    fake_tactical_profile = {
+        "positioning_spatial_intelligence": 75.0,
+        "attacking_contribution_in_possession": 70.0,
+        "attacking_contribution_off_ball": 80.0,
+        "defensive_tactical_contribution": 60.0,
+        "transitions": 72.0,
+        "decision_quality": 68.0,
+        "collective_coordination": 74.0,
+        "set_piece_contribution": 65.0,
+    }
+    seen_providers = []
+
+    def fake_get_tactical_scores(**kwargs):
+        seen_providers.append(kwargs.get("provider"))
+        return {
+            "tactical_profile": fake_tactical_profile,
+            "reasoning": "Based on the player's profile data.",
+        }
+
+    monkeypatch.setattr(main, "get_tactical_scores", fake_get_tactical_scores)
+
+    response = client.get("/players/P635/tactical-assessment?provider=chatgpt")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider"] == "chatgpt"
+    assert seen_providers == ["chatgpt"]
+
+
+def test_tactical_assessment_rejects_invalid_provider():
+    create_test_player("P636")
+
+    response = client.get("/players/P636/tactical-assessment?provider=bard")
+
+    assert response.status_code == 400
+
+
 def test_technical_assessment_returns_ai_scores(monkeypatch):
     import main
 
     create_test_player("P622")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     fake_technical_profile = {
         "ball_control": 75.0,
@@ -1418,7 +1461,7 @@ def test_technical_assessment_not_configured_returns_404(monkeypatch):
     import main
 
     create_test_player("P623")
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
 
     response = client.get("/players/P623/technical-assessment")
     assert response.status_code == 404
@@ -1434,7 +1477,7 @@ def test_mental_assessment_returns_ai_scores(monkeypatch):
 
     create_test_player("P624")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     fake_mental_profile = {
         "decision_making": 75.0,
@@ -1465,7 +1508,7 @@ def test_mental_assessment_not_configured_returns_404(monkeypatch):
     import main
 
     create_test_player("P625")
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
 
     response = client.get("/players/P625/mental-assessment")
     assert response.status_code == 404
@@ -1481,7 +1524,7 @@ def test_match_performance_assessment_returns_ai_scores(monkeypatch):
 
     create_test_player("P626")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     fake_match_performance = {
         "minutes_played": 75,
@@ -1517,7 +1560,7 @@ def test_match_performance_assessment_not_configured_returns_404(monkeypatch):
     import main
 
     create_test_player("P627")
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
 
     response = client.get("/players/P627/match-performance-assessment")
     assert response.status_code == 404
@@ -1533,7 +1576,7 @@ def test_weak_foot_assessment_returns_ai_scores(monkeypatch):
 
     create_test_player("P635")
 
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: True)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
 
     fake_weak_foot_profile = {
         "weak_foot_usage_pct": 22.0,
@@ -1564,7 +1607,7 @@ def test_weak_foot_assessment_not_configured_returns_404(monkeypatch):
     import main
 
     create_test_player("P636")
-    monkeypatch.setattr(main, "is_smart_recommendations_configured", lambda: False)
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
 
     response = client.get("/players/P636/weak-foot-assessment")
     assert response.status_code == 404

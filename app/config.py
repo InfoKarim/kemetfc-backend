@@ -131,6 +131,10 @@ def get_anthropic_api_key() -> str:
     return os.getenv("ANTHROPIC_API_KEY", "").strip()
 
 
+def get_openai_api_key() -> str:
+    return os.getenv("OPENAI_API_KEY", "").strip()
+
+
 def get_youtube_api_key() -> str:
     return os.getenv("YOUTUBE_API_KEY", "").strip()
 

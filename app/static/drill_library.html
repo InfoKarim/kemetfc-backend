@@ -140,6 +140,17 @@
       box-shadow: 0 14px 38px #071b2d1c;
     }
 
+    .ai-provider-select {
+      width: auto;
+      padding: 9px 12px;
+      border: 1px solid #17a957;
+      border-radius: 9px;
+      background: #eefbf3;
+      color: #17a957;
+      font: inherit;
+      font-weight: 750;
+    }
+
     #smart-recommendations-section {
       margin-bottom: 18px;
       padding: 20px;
@@ -405,7 +416,13 @@
     </form>
 
     <section id="smart-recommendations-section" hidden>
-      <h2>AI Training Recommendations</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <h2>AI Training Recommendations</h2>
+        <select id="smart-recommendations-provider" class="ai-provider-select">
+          <option value="claude">Claude</option>
+          <option value="chatgpt">ChatGPT</option>
+        </select>
+      </div>
       <p class="muted" style="margin:0 0 12px;color:#69768a;">
         Generated from this player's own analysis, with real training videos found on YouTube.
       </p>
@@ -541,6 +558,7 @@
       const section = document.querySelector("#smart-recommendations-section");
       const target = document.querySelector("#smart-recommendations");
       const analysisId = analysisSelect.value;
+      const provider = document.querySelector("#smart-recommendations-provider").value;
 
       if (!analysisId) {
         section.hidden = true;
@@ -549,7 +567,8 @@
 
       try {
         const response = await fetch(
-          `/analyses/${encodeURIComponent(analysisId)}/smart-recommendations`
+          `/analyses/${encodeURIComponent(analysisId)}/smart-recommendations` +
+            `?provider=${encodeURIComponent(provider)}`
         );
 
         if (response.status === 404) {
@@ -743,6 +762,8 @@
     });
 
     analysisSelect.addEventListener("change", loadSmartRecommendations);
+    document.querySelector("#smart-recommendations-provider")
+      .addEventListener("change", loadSmartRecommendations);
 
     async function fetchRecommendations() {
       const analysisId = analysisSelect.value;

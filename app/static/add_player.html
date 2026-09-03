@@ -68,6 +68,22 @@
     }
     .suggest-tactical:hover { background: #dcf6e8; }
     .suggest-tactical:disabled { opacity: .6; cursor: default; }
+    .suggest-row {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 14px;
+    }
+    .suggest-row .suggest-tactical { margin: 0; flex: 1; }
+    .ai-provider-select {
+      width: auto;
+      padding: 11px 12px;
+      border: 1px solid #17a957;
+      border-radius: 9px;
+      background: #eefbf3;
+      color: #17a957;
+      font: inherit;
+      font-weight: 750;
+    }
     .tactical-ai-reasoning {
       margin: 0 0 14px;
       padding: 10px 12px;
@@ -159,27 +175,45 @@
 
           <section id="technical-profile" class="card">
             <h2>Technical Profile</h2>
-            <button id="suggest-technical-btn" type="button" class="suggest-tactical" hidden>
-              Suggest Technical Profile with Claude AI
-            </button>
+            <div class="suggest-row">
+              <select id="suggest-technical-btn-provider" class="ai-provider-select" hidden>
+                <option value="claude">Claude</option>
+                <option value="chatgpt">ChatGPT</option>
+              </select>
+              <button id="suggest-technical-btn" type="button" class="suggest-tactical" hidden>
+                Suggest Technical Profile
+              </button>
+            </div>
             <p id="technical-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
             <div class="fields" data-group="technical"></div>
           </section>
 
           <section id="mental-profile" class="card">
             <h2>Mental Profile</h2>
-            <button id="suggest-mental-btn" type="button" class="suggest-tactical" hidden>
-              Suggest Mental Profile with Claude AI
-            </button>
+            <div class="suggest-row">
+              <select id="suggest-mental-btn-provider" class="ai-provider-select" hidden>
+                <option value="claude">Claude</option>
+                <option value="chatgpt">ChatGPT</option>
+              </select>
+              <button id="suggest-mental-btn" type="button" class="suggest-tactical" hidden>
+                Suggest Mental Profile
+              </button>
+            </div>
             <p id="mental-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
             <div class="fields" data-group="mental"></div>
           </section>
 
           <section id="tactical-profile" class="card">
             <h2>Tactical Profile</h2>
-            <button id="suggest-tactical-btn" type="button" class="suggest-tactical" hidden>
-              Suggest Tactical Profile with Claude AI
-            </button>
+            <div class="suggest-row">
+              <select id="suggest-tactical-btn-provider" class="ai-provider-select" hidden>
+                <option value="claude">Claude</option>
+                <option value="chatgpt">ChatGPT</option>
+              </select>
+              <button id="suggest-tactical-btn" type="button" class="suggest-tactical" hidden>
+                Suggest Tactical Profile
+              </button>
+            </div>
             <p id="tactical-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
             <div class="fields" data-group="tactical"></div>
             <p id="tactical-weighted-total" class="weighted-total"></p>
@@ -187,9 +221,15 @@
 
           <section id="weak-foot-profile" class="card">
             <h2>Weak Foot Profile</h2>
-            <button id="suggest-weak-foot-btn" type="button" class="suggest-tactical" hidden>
-              Suggest Weak Foot Profile with Claude AI
-            </button>
+            <div class="suggest-row">
+              <select id="suggest-weak-foot-btn-provider" class="ai-provider-select" hidden>
+                <option value="claude">Claude</option>
+                <option value="chatgpt">ChatGPT</option>
+              </select>
+              <button id="suggest-weak-foot-btn" type="button" class="suggest-tactical" hidden>
+                Suggest Weak Foot Profile
+              </button>
+            </div>
             <p id="weak-foot-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
             <div class="fields" data-group="weakFoot"></div>
           </section>
@@ -200,9 +240,15 @@
               Real recorded match stats belong here. Use the AI suggestion only as a
               placeholder starting point when no real stats exist yet.
             </p>
-            <button id="suggest-match-btn" type="button" class="suggest-tactical" hidden>
-              Suggest Match Performance with Claude AI
-            </button>
+            <div class="suggest-row">
+              <select id="suggest-match-btn-provider" class="ai-provider-select" hidden>
+                <option value="claude">Claude</option>
+                <option value="chatgpt">ChatGPT</option>
+              </select>
+              <button id="suggest-match-btn" type="button" class="suggest-tactical" hidden>
+                Suggest Match Performance
+              </button>
+            </div>
             <p id="match-ai-reasoning" class="tactical-ai-reasoning" hidden></p>
             <div class="fields" data-group="match"></div>
           </section>
@@ -500,20 +546,28 @@
     function wireSuggestButton({ group, endpoint, buttonId, reasoningId, resultKey, onFilled }) {
       const button = document.querySelector(`#${buttonId}`);
       const reasoningEl = document.querySelector(`#${reasoningId}`);
+      const providerSelect = document.querySelector(`#${buttonId}-provider`);
       const defaultLabel = button.textContent.trim();
 
-      if (editingPlayerId) button.hidden = false;
+      if (editingPlayerId) {
+        button.hidden = false;
+        if (providerSelect) providerSelect.hidden = false;
+      }
 
       button.addEventListener("click", async () => {
         if (!editingPlayerId) return;
 
+        const provider = providerSelect ? providerSelect.value : "claude";
+        const providerLabel = provider === "chatgpt" ? "ChatGPT" : "Claude AI";
+
         button.disabled = true;
-        button.textContent = "Asking Claude AI...";
+        button.textContent = `Asking ${providerLabel}...`;
         reasoningEl.hidden = true;
 
         try {
           const response = await fetch(
-            `/players/${encodeURIComponent(editingPlayerId)}/${endpoint}`
+            `/players/${encodeURIComponent(editingPlayerId)}/${endpoint}` +
+              `?provider=${encodeURIComponent(provider)}`
           );
           const result = await response.json().catch(() => ({}));
 
@@ -527,11 +581,11 @@
           if (onFilled) onFilled();
 
           if (result.reasoning) {
-            reasoningEl.textContent = result.reasoning;
+            reasoningEl.textContent = `${providerLabel}: ${result.reasoning}`;
             reasoningEl.hidden = false;
           }
 
-          button.textContent = "Suggested — review the values below before saving";
+          button.textContent = `Suggested by ${providerLabel} — review before saving`;
         } catch (error) {
           button.disabled = false;
           button.textContent = defaultLabel;

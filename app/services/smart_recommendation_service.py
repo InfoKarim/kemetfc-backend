@@ -5,14 +5,20 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from app.config import get_anthropic_api_key, get_youtube_api_key
+from app.config import (
+    get_anthropic_api_key,
+    get_openai_api_key,
+    get_youtube_api_key,
+)
 from app.tactical_profile import TACTICAL_CATEGORY_WEIGHTS
 
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
+OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 REQUEST_TIMEOUT_SECONDS = 15
+PROVIDERS = {"claude", "chatgpt"}
 
 
 class RecommendationError(Exception):
@@ -85,12 +91,83 @@ def _call_anthropic(prompt: str) -> str:
     return text_blocks[0]
 
 
+def get_openai_model() -> str:
+    return os.getenv("OPENAI_MODEL", "gpt-4o").strip()
+
+
+def _call_openai(prompt: str) -> str:
+    api_key = get_openai_api_key()
+    body = json.dumps({
+        "model": get_openai_model(),
+        "max_tokens": 700,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode("utf-8")
+
+    request = urllib.request.Request(
+        OPENAI_API_URL,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "content-type": "application/json",
+        },
+    )
+
+    try:
+        # OPENAI_API_URL is a hardcoded https constant, not user input — no SSRF risk.
+        with urllib.request.urlopen(  # nosec B310
+            request, timeout=REQUEST_TIMEOUT_SECONDS
+        ) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="ignore")
+        raise RecommendationError(
+            f"OpenAI API error ({error.code}): {detail[:200]}"
+        ) from error
+    except urllib.error.URLError as error:
+        raise RecommendationError(str(error.reason)) from error
+
+    try:
+        return payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as error:
+        raise RecommendationError(
+            "Unexpected response from OpenAI API"
+        ) from error
+
+
+def _call_model(prompt: str, provider: str = "claude") -> str:
+    if provider == "chatgpt":
+        return _call_openai(prompt)
+    if provider == "claude":
+        return _call_anthropic(prompt)
+    raise RecommendationError(f"Unknown AI provider: {provider}")
+
+
+def is_provider_configured(provider: str) -> bool:
+    if provider == "chatgpt":
+        return bool(get_openai_api_key())
+    if provider == "claude":
+        return bool(get_anthropic_api_key())
+    return False
+
+
+def _require_provider(provider: str) -> None:
+    if provider not in PROVIDERS:
+        raise RecommendationError(f"Unknown AI provider: {provider}")
+    if not is_provider_configured(provider):
+        env_var = "OPENAI_API_KEY" if provider == "chatgpt" else "ANTHROPIC_API_KEY"
+        raise RecommendationError(
+            f"Smart recommendations are not configured ({env_var} is missing)"
+        )
+
+
 def generate_focus_areas(
     player_name: str,
     age: int,
     weaknesses: list,
     strengths: list,
     max_items: int = 3,
+    provider: str = "claude",
 ) -> list[dict]:
     prompt = (
         "You are an assistant to a youth football (soccer) coach. "
@@ -108,7 +185,7 @@ def generate_focus_areas(
         'query for this focus area"}'
     )
 
-    raw_text = _call_anthropic(prompt)
+    raw_text = _call_model(prompt, provider)
     match = re.search(r"\[.*\]", raw_text, re.DOTALL)
 
     if match is None:
@@ -131,6 +208,7 @@ def generate_sports_medicine_notes(
     weaknesses: list,
     strengths: list,
     max_items: int = 3,
+    provider: str = "claude",
 ) -> list[dict]:
     prompt = (
         "You are a youth sports medicine physician giving a coach general, "
@@ -153,7 +231,7 @@ def generate_sports_medicine_notes(
         'referencing the player\'s own measurements"}'
     )
 
-    raw_text = _call_anthropic(prompt)
+    raw_text = _call_model(prompt, provider)
     match = re.search(r"\[.*\]", raw_text, re.DOTALL)
 
     if match is None:
@@ -176,6 +254,7 @@ def generate_coaching_insights(
     weaknesses: list,
     strengths: list,
     max_items: int = 3,
+    provider: str = "claude",
 ) -> list[dict]:
     prompt = (
         "You are one of Europe's top youth football development coaches, "
@@ -198,7 +277,7 @@ def generate_coaching_insights(
         'measurements"}'
     )
 
-    raw_text = _call_anthropic(prompt)
+    raw_text = _call_model(prompt, provider)
     match = re.search(r"\[.*\]", raw_text, re.DOTALL)
 
     if match is None:
@@ -277,14 +356,13 @@ def get_smart_recommendations(
     age: int,
     weaknesses: list,
     strengths: list,
+    provider: str = "claude",
 ) -> list[dict]:
-    if not is_configured():
-        raise RecommendationError(
-            "Smart recommendations are not configured "
-            "(ANTHROPIC_API_KEY is missing)"
-        )
+    _require_provider(provider)
 
-    focus_areas = generate_focus_areas(player_name, age, weaknesses, strengths)
+    focus_areas = generate_focus_areas(
+        player_name, age, weaknesses, strengths, provider=provider
+    )
 
     for area in focus_areas:
         keywords = area.get("search_keywords") or area.get("title", "")
@@ -301,15 +379,12 @@ def get_sports_medicine_notes(
     age: int,
     weaknesses: list,
     strengths: list,
+    provider: str = "claude",
 ) -> list[dict]:
-    if not is_configured():
-        raise RecommendationError(
-            "Smart recommendations are not configured "
-            "(ANTHROPIC_API_KEY is missing)"
-        )
+    _require_provider(provider)
 
     return generate_sports_medicine_notes(
-        player_name, age, weaknesses, strengths
+        player_name, age, weaknesses, strengths, provider=provider
     )
 
 
@@ -318,15 +393,12 @@ def get_coaching_insights(
     age: int,
     weaknesses: list,
     strengths: list,
+    provider: str = "claude",
 ) -> list[dict]:
-    if not is_configured():
-        raise RecommendationError(
-            "Smart recommendations are not configured "
-            "(ANTHROPIC_API_KEY is missing)"
-        )
+    _require_provider(provider)
 
     return generate_coaching_insights(
-        player_name, age, weaknesses, strengths
+        player_name, age, weaknesses, strengths, provider=provider
     )
 
 
@@ -335,6 +407,7 @@ def generate_tactical_scores(
     age: int,
     weaknesses: list,
     strengths: list,
+    provider: str = "claude",
 ) -> dict:
     category_lines = "\n".join(
         f'  "{category}": <0-100 integer>  # weight {weight * 100:.0f}%'
@@ -359,7 +432,7 @@ def generate_tactical_scores(
         "}"
     )
 
-    raw_text = _call_anthropic(prompt)
+    raw_text = _call_model(prompt, provider)
     match = re.search(r"\{.*\}", raw_text, re.DOTALL)
 
     if match is None:
@@ -392,14 +465,13 @@ def get_tactical_scores(
     age: int,
     weaknesses: list,
     strengths: list,
+    provider: str = "claude",
 ) -> dict:
-    if not is_configured():
-        raise RecommendationError(
-            "Smart recommendations are not configured "
-            "(ANTHROPIC_API_KEY is missing)"
-        )
+    _require_provider(provider)
 
-    return generate_tactical_scores(player_name, age, weaknesses, strengths)
+    return generate_tactical_scores(
+        player_name, age, weaknesses, strengths, provider=provider
+    )
 
 
 def generate_profile_scores(
@@ -410,6 +482,7 @@ def generate_profile_scores(
     weaknesses: list,
     strengths: list,
     extra_guidance: str = "",
+    provider: str = "claude",
 ) -> dict:
     field_lines = "\n".join(f'  "{key}": {hint}' for key, hint in fields.items())
     prompt = (
@@ -429,7 +502,7 @@ def generate_profile_scores(
         "}"
     )
 
-    raw_text = _call_anthropic(prompt)
+    raw_text = _call_model(prompt, provider)
     match = re.search(r"\{.*\}", raw_text, re.DOTALL)
 
     if match is None:
@@ -462,13 +535,17 @@ def get_profile_scores(
     weaknesses: list,
     strengths: list,
     extra_guidance: str = "",
+    provider: str = "claude",
 ) -> dict:
-    if not is_configured():
-        raise RecommendationError(
-            "Smart recommendations are not configured "
-            "(ANTHROPIC_API_KEY is missing)"
-        )
+    _require_provider(provider)
 
     return generate_profile_scores(
-        profile_name, fields, player_name, age, weaknesses, strengths, extra_guidance
+        profile_name,
+        fields,
+        player_name,
+        age,
+        weaknesses,
+        strengths,
+        extra_guidance,
+        provider=provider,
     )
