@@ -386,6 +386,13 @@ class PublicRegistrationSchema(BaseModel):
     consents: RegistrationConsentSchema
 
 
+class PublicContactMessageSchema(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    email: str = Field(min_length=3, max_length=320)
+    topic: str = Field(min_length=1, max_length=100)
+    message: str = Field(min_length=1, max_length=5000)
+
+
 class ChildDeletionRequestSchema(BaseModel):
     request_id: str | None = Field(default=None, min_length=1, max_length=128)
     reason: str | None = Field(default=None, max_length=1000)

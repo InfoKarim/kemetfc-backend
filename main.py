@@ -35,6 +35,7 @@ from app.api_schemas import (
     GuardianPlayerLinkSchema,
     LoginSchema,
     PlayerSchema,
+    PublicContactMessageSchema,
     PublicRegistrationSchema,
     RequestPasswordResetSchema,
     ReviewPrivacyRequestSchema,
@@ -55,6 +56,7 @@ from app.config import (
 from app.database import SessionLocal, get_db
 from app.dependencies import (
     consent_payload,
+    contact_message_payload,
     is_minor,
     notify_coaching_staff,
     registration_payload,
@@ -107,6 +109,7 @@ from app.services.drill_service import DrillService
 from app.services.id_service import next_entity_id
 from app.services.player_service import PlayerService
 from app.services.privacy_service import PrivacyService
+from app.services.contact_message_service import ContactMessageService
 from app.services.registration_service import RegistrationService
 from app.services.training_plan_service import TrainingPlanService
 from app.services.team_service import TeamService
@@ -227,6 +230,7 @@ PUBLIC_PATHS = {
     "/logo.png",
     "/favicon.png",
     "/public/registrations",
+    "/public/contact-messages",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -1282,6 +1286,40 @@ def delete_registration(
         )
 
     return {"message": "Registration deleted"}
+
+
+@app.post("/public/contact-messages", status_code=201)
+def submit_public_contact_message(
+    payload: PublicContactMessageSchema,
+    db: Session = Depends(get_db),
+):
+    message = ContactMessageService(db=db).create_message(payload)
+
+    return {"message_id": message.message_id}
+
+
+@app.get("/contact-messages")
+def list_contact_messages(db: Session = Depends(get_db)):
+    return [
+        contact_message_payload(message)
+        for message in ContactMessageService(db=db).list_messages()
+    ]
+
+
+@app.delete("/contact-messages/{message_id}")
+def delete_contact_message(
+    message_id: str,
+    db: Session = Depends(get_db),
+):
+    deleted = ContactMessageService(db=db).delete_message(message_id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Contact message not found",
+        )
+
+    return {"message": "Contact message deleted"}
 
 
 @app.get("/players/{player_id}")

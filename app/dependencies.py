@@ -97,6 +97,17 @@ def registration_payload(registration) -> dict:
     }
 
 
+def contact_message_payload(message) -> dict:
+    return {
+        "message_id": message.message_id,
+        "name": message.name,
+        "email": message.email,
+        "topic": message.topic,
+        "message": message.message,
+        "submitted_at": message.submitted_at,
+    }
+
+
 def notification_payload(notification) -> dict:
     return {
         "notification_id": notification.notification_id,

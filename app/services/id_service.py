@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.db_models import (
     AnalysisDB,
     AssessmentRegistrationDB,
+    ContactMessageDB,
     DataRecordDB,
     DrillDB,
     GuardianConsentDB,
@@ -34,6 +35,7 @@ ENTITY_CONFIG = {
     "season": ("SEASON", SeasonDB),
     "registration": ("REG", AssessmentRegistrationDB),
     "ml_dataset_entry": ("MLDS", MLDatasetEntryDB),
+    "contact_message": ("MSG", ContactMessageDB),
 }
 
 

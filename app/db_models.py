@@ -616,3 +616,14 @@ class AssessmentRegistrationDB(Base):
     current_team: Mapped[str | None] = mapped_column(String, nullable=True)
     consents: Mapped[dict] = mapped_column(JSON)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class ContactMessageDB(Base):
+    __tablename__ = "contact_messages"
+
+    message_id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    email: Mapped[str] = mapped_column(String, index=True)
+    topic: Mapped[str] = mapped_column(String)
+    message: Mapped[str] = mapped_column(String)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, index=True)
