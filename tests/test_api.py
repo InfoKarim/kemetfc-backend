@@ -3762,7 +3762,7 @@ def test_upload_player_video_accepts_missing_content_type(
 
 
 def test_remote_player_video_uses_short_lived_redirect(monkeypatch):
-    import main
+    from app.routers import videos as videos_router
 
     db = TestingSessionLocal()
     db.add(VideoDB(
@@ -3808,7 +3808,7 @@ def test_remote_player_video_uses_short_lived_redirect(monkeypatch):
             return "https://storage.example/private/video?signature=test"
 
     monkeypatch.setattr(
-        main,
+        videos_router,
         "get_video_storage",
         lambda: RemoteStorage(),
     )
