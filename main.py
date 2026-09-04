@@ -30,7 +30,6 @@ from app.api_schemas import (
     ChildDeletionRequestSchema,
     ConfirmPasswordResetSchema,
     CreateMessageSchema,
-    CreateSeasonSchema,
     CreateUserSchema,
     CreateVideoAnalysisJobSchema,
     CreateTrainingPlanSchema,
@@ -42,7 +41,6 @@ from app.api_schemas import (
     MLDatasetEntryReviewSchema,
     GuardianPlayerLinkSchema,
     LoginSchema,
-    MatchSchema,
     PlayerSchema,
     PublicRegistrationSchema,
     RequestPasswordResetSchema,
@@ -90,7 +88,6 @@ from app.data_models import (
     AIAnalysisRecord,
     DataRecord,
     DrillData,
-    MatchData,
     TrainingPlanData,
     VideoData,
     VideoAnalysisJobData,
@@ -137,14 +134,12 @@ from app.services.auth_service import (
 from app.services.drill_service import DrillService
 from app.services.id_service import next_entity_id
 from app.services.data_record_service import DataRecordService
-from app.services.match_service import MatchService
 from app.services.message_service import MessageService
 from app.services.notification_service import NotificationService
 from app.services.player_service import PlayerService
 from app.services.ml_dataset_service import MLDatasetEntryError, MLDatasetService
 from app.services.privacy_service import PrivacyService
 from app.services.registration_service import RegistrationService
-from app.services.season_service import SeasonService
 from app.services.training_plan_service import TrainingPlanService
 from app.services.team_service import TeamService
 from app.services.video_service import VideoDeletionError, VideoService
@@ -172,8 +167,12 @@ app.add_middleware(
 # Domain routers extracted from this file — see app/routers/. Registration
 # order doesn't affect auth/CSRF enforcement below, which matches on
 # request.url.path regardless of which router owns a route.
+from app.routers import matches as matches_router
+from app.routers import seasons as seasons_router
 from app.routers import teams as teams_router
 
+app.include_router(matches_router.router)
+app.include_router(seasons_router.router)
 app.include_router(teams_router.router)
 
 SESSION_COOKIE_NAME = "trainingbuddy_pilot2_session"
@@ -762,42 +761,6 @@ def get_uploaded_avatar(filename: str):
         raise HTTPException(status_code=404, detail="Avatar not found")
 
     return RedirectResponse(download_url, status_code=307)
-
-
-@app.get("/seasons")
-def get_seasons(db: Session = Depends(get_db)):
-    return [season_payload(season) for season in SeasonService(db=db).list_seasons()]
-
-
-@app.post("/seasons", status_code=201)
-def create_season(
-    season_data: CreateSeasonSchema,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    require_admin(request)
-    season = SeasonService(db=db).create_season(
-        name=season_data.name,
-        start_date=season_data.start_date,
-        end_date=season_data.end_date,
-        make_active=season_data.make_active,
-    )
-    return season_payload(season)
-
-
-@app.post("/seasons/{season_id}/activate")
-def activate_season(
-    season_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    require_admin(request)
-    season = SeasonService(db=db).set_active(season_id)
-
-    if season is None:
-        raise HTTPException(status_code=404, detail="Season not found")
-
-    return season_payload(season)
 
 
 @app.get("/notifications")
@@ -2166,109 +2129,6 @@ def delete_player(
         )
 
     return {"message": "Player deleted"}
-@app.post("/matches", status_code=201)
-def create_match(
-    match_data: MatchSchema,
-    db: Session = Depends(get_db),
-):
-    team_service = TeamService(db=db)
-
-    for team_id in (
-        match_data.home_team_id,
-        match_data.away_team_id,
-    ):
-        if team_service.get_team(team_id) is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Team not found",
-            )
-
-    service = MatchService(db=db)
-    data = match_data.model_dump()
-    data["match_id"] = data["match_id"] or next_entity_id(db, "match")
-    match = MatchData(**data)
-    service.add_match(match)
-    return match
-
-
-@app.get("/matches")
-def get_all_matches(
-    db: Session = Depends(get_db),
-):
-    service = MatchService(db=db)
-    return service.get_all_matches()
-
-
-@app.get("/matches/{match_id}")
-def get_match(
-    match_id: str,
-    db: Session = Depends(get_db),
-):
-    service = MatchService(db=db)
-    match = service.get_match(match_id)
-
-    if match is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Match not found",
-        )
-
-    return match
-
-
-@app.put("/matches/{match_id}")
-def update_match(
-    match_id: str,
-    match_data: MatchSchema,
-    db: Session = Depends(get_db),
-):
-    service = MatchService(db=db)
-    existing_match = service.get_match(match_id)
-
-    if existing_match is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Match not found",
-        )
-
-    team_service = TeamService(db=db)
-
-    for team_id in (
-        match_data.home_team_id,
-        match_data.away_team_id,
-    ):
-        if team_service.get_team(team_id) is None:
-            raise HTTPException(
-                status_code=404,
-                detail="Team not found",
-            )
-
-    updated_data = match_data.model_dump()
-    updated_data["match_id"] = match_id
-
-    updated_match = MatchData(**updated_data)
-    service.update_match(updated_match)
-
-    return updated_match
-
-
-@app.delete("/matches/{match_id}")
-def delete_match(
-    match_id: str,
-    db: Session = Depends(get_db),
-):
-    service = MatchService(db=db)
-    deleted = service.delete_match(match_id)
-
-    if not deleted:
-        raise HTTPException(
-            status_code=404,
-            detail="Match not found",
-        )
-
-    return {"message": "Match deleted"}
-
-
 @app.get("/analyses")
 def get_all_analyses(
     db: Session = Depends(get_db),
@@ -3523,28 +3383,6 @@ def reports_dashboard():
         / "app"
         / "static"
         / "reports.html"
-    )
-    return FileResponse(page)
-
-
-@app.get("/add-match")
-def add_match_page():
-    page = (
-        Path(__file__).parent
-        / "app"
-        / "static"
-        / "add_match.html"
-    )
-    return FileResponse(page)
-
-
-@app.get("/matches-dashboard")
-def matches_dashboard():
-    page = (
-        Path(__file__).parent
-        / "app"
-        / "static"
-        / "matches.html"
     )
     return FileResponse(page)
 
