@@ -48,7 +48,6 @@ from app.api_schemas import (
     RequestPasswordResetSchema,
     ReviewPrivacyRequestSchema,
     ReviewVideoAnalysisJobSchema,
-    TeamSchema,
     PlayerVideoUploadMetadataSchema,
     UpdateTrainingPlanDetailsSchema,
     UpdateTrainingPlanStatusSchema,
@@ -93,7 +92,6 @@ from app.data_models import (
     DrillData,
     MatchData,
     TrainingPlanData,
-    TeamData,
     VideoData,
     VideoAnalysisJobData,
 )
@@ -170,6 +168,13 @@ app.add_middleware(
     allow_methods=["POST"],
     allow_headers=["Content-Type"],
 )
+
+# Domain routers extracted from this file — see app/routers/. Registration
+# order doesn't affect auth/CSRF enforcement below, which matches on
+# request.url.path regardless of which router owns a route.
+from app.routers import teams as teams_router
+
+app.include_router(teams_router.router)
 
 SESSION_COOKIE_NAME = "trainingbuddy_pilot2_session"
 CSRF_COOKIE_NAME = "trainingbuddy_pilot2_csrf"
@@ -3727,137 +3732,3 @@ def get_drill_library_page():
         media_type="text/html",
     )
 
-
-
-@app.post("/teams", status_code=201)
-def create_team(
-    team_data: TeamSchema,
-    db: Session = Depends(get_db),
-):
-    data = team_data.model_dump()
-    data["team_id"] = data["team_id"] or next_entity_id(db, "team")
-    data["created_at"] = utcnow()
-    team = TeamData(**data)
-    service = TeamService(db=db)
-    service.add_team(team)
-    return team
-
-
-
-@app.get("/teams/{team_id}")
-def get_team(
-    team_id: str,
-    db: Session = Depends(get_db),
-):
-    service = TeamService(db=db)
-    team = service.get_team(team_id)
-
-    if team is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Team not found",
-        )
-
-    return team
-
-
-@app.get("/teams")
-def get_all_teams(
-    db: Session = Depends(get_db),
-):
-    service = TeamService(db=db)
-    return service.get_all_teams()
-
-
-@app.put("/teams/{team_id}")
-def update_team(
-    team_id: str,
-    team_data: TeamSchema,
-    db: Session = Depends(get_db),
-):
-    if team_data.team_id is not None and team_id != team_data.team_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Team ID mismatch",
-        )
-
-    service = TeamService(db=db)
-    existing_team = service.get_team(team_id)
-
-    if existing_team is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Team not found",
-        )
-
-    data = team_data.model_dump()
-    data["team_id"] = team_id
-    data["created_at"] = existing_team.created_at
-    team = TeamData(**data)
-
-    if not service.update_team(team):
-        raise HTTPException(
-            status_code=404,
-            detail="Team not found",
-        )
-
-    return team
-
-
-@app.delete("/teams/{team_id}")
-def delete_team(
-    team_id: str,
-    db: Session = Depends(get_db),
-):
-    service = TeamService(db=db)
-    player_service = PlayerService(db=db)
-
-    if player_service.get_players_by_team(team_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Team still has assigned players",
-        )
-
-    if not service.delete_team(team_id):
-        raise HTTPException(
-            status_code=404,
-            detail="Team not found",
-        )
-
-    return {"message": "Team deleted"}
-
-
-
-@app.get("/teams-dashboard")
-def teams_dashboard_page():
-    page = (
-        Path(__file__).parent
-        / "app"
-        / "static"
-        / "teams.html"
-    )
-    return FileResponse(page)
-
-
-
-@app.get("/add-team")
-def add_team_page():
-    page = (
-        Path(__file__).parent
-        / "app"
-        / "static"
-        / "add_team.html"
-    )
-    return FileResponse(page)
-
-
-
-@app.get("/team-details")
-def team_details_page():
-    page = (
-        Path(__file__).parent
-        / "app"
-        / "static"
-        / "team_details.html"
-    )
-    return FileResponse(page)
