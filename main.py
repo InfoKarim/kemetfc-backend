@@ -34,8 +34,6 @@ from app.api_schemas import (
     CreateVideoAnalysisJobSchema,
     CreateTrainingPlanSchema,
     DevelopmentForecastSchema,
-    DrillRecommendationSchema,
-    DrillSchema,
     GuardianConsentSchema,
     MLDatasetEntryCreateSchema,
     MLDatasetEntryReviewSchema,
@@ -87,7 +85,6 @@ from app.email_service import EmailSendError, send_password_reset_email
 from app.data_models import (
     AIAnalysisRecord,
     DataRecord,
-    DrillData,
     TrainingPlanData,
     VideoData,
     VideoAnalysisJobData,
@@ -106,8 +103,6 @@ from app.services.smart_recommendation_service import (
     is_provider_configured,
 )
 from app.drill_recommendations import build_drill_recommendations
-from app.drill_ranking import rank_drills
-from app.drill_upload import DrillUploadError, save_drill_video
 from app.match_performance import MatchPerformance, MATCH_PERFORMANCE_FIELD_HINTS
 from app.mental_profile import MentalProfile, MENTAL_FIELD_HINTS
 from app.tactical_profile import TacticalProfile
@@ -147,7 +142,6 @@ from app.services.video_analysis_job_service import VideoAnalysisJobService
 from app.technical_profile import TechnicalProfile, TECHNICAL_FIELD_HINTS
 from app.video_storage import (
     VideoStorageError,
-    get_drill_video_storage,
     get_video_storage,
 )
 from app.video_analysis_publication import VideoAnalysisPublisher
@@ -167,10 +161,12 @@ app.add_middleware(
 # Domain routers extracted from this file — see app/routers/. Registration
 # order doesn't affect auth/CSRF enforcement below, which matches on
 # request.url.path regardless of which router owns a route.
+from app.routers import drills as drills_router
 from app.routers import matches as matches_router
 from app.routers import seasons as seasons_router
 from app.routers import teams as teams_router
 
+app.include_router(drills_router.router)
 app.include_router(matches_router.router)
 app.include_router(seasons_router.router)
 app.include_router(teams_router.router)
@@ -3135,236 +3131,6 @@ def add_video_to_training_plan(
     return plan
 
 
-@app.post("/drills", status_code=201)
-def create_drill(
-    drill_data: DrillSchema,
-    db: Session = Depends(get_db),
-):
-    service = DrillService(db=db)
-    data = drill_data.model_dump()
-    data["drill_id"] = data["drill_id"] or next_entity_id(db, "drill")
-    drill = DrillData(**data)
-    service.add_drill(drill)
-    return drill
-
-
-@app.get("/drills/{drill_id}")
-def get_drill(
-    drill_id: str,
-    db: Session = Depends(get_db),
-):
-    service = DrillService(db=db)
-    drill = service.get_drill(drill_id)
-
-    if drill is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Drill not found",
-        )
-
-    return drill
-
-
-@app.get("/drills")
-def get_all_drills(
-    db: Session = Depends(get_db),
-):
-    service = DrillService(db=db)
-    return service.get_all_drills()
-
-
-@app.put("/drills/{drill_id}")
-def update_drill(
-    drill_id: str,
-    drill_data: DrillSchema,
-    db: Session = Depends(get_db),
-):
-    service = DrillService(db=db)
-
-    existing_drill = service.get_drill(drill_id)
-
-    if existing_drill is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Drill not found",
-        )
-
-    updated_data = drill_data.model_dump()
-    updated_data["drill_id"] = drill_id
-
-    drill = DrillData(**updated_data)
-    service.update_drill(drill)
-
-    if (
-        existing_drill.video_url.startswith("/uploads/drills/")
-        and existing_drill.video_url != drill.video_url
-    ):
-        try:
-            get_drill_video_storage().delete(
-                Path(existing_drill.video_url).name
-            )
-        except VideoStorageError:
-            logger.warning(
-                "Could not remove replaced drill video %s",
-                existing_drill.video_url,
-            )
-
-    return drill
-
-
-@app.delete("/drills/{drill_id}")
-def delete_drill(
-    drill_id: str,
-    db: Session = Depends(get_db),
-):
-    service = DrillService(db=db)
-    drill = service.get_drill(drill_id)
-
-    if drill is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Drill not found",
-        )
-
-    if drill.video_url.startswith("/uploads/drills/"):
-        filename = Path(drill.video_url).name
-        try:
-            get_drill_video_storage().delete(filename)
-        except VideoStorageError as error:
-            raise HTTPException(
-                status_code=error.status_code,
-                detail=str(error),
-            ) from error
-
-    deleted = service.delete_drill(drill_id)
-
-    if not deleted:
-        raise HTTPException(
-            status_code=404,
-            detail="Drill not found",
-        )
-
-    return {"message": "Drill deleted"}
-
-
-@app.post("/drills/recommendations")
-def recommend_drills(
-    criteria: DrillRecommendationSchema,
-    db: Session = Depends(get_db),
-):
-    service = DrillService(db=db)
-
-    eligible_drills = [
-        asdict(drill)
-        for drill in service.get_drills_for_age(criteria.age)
-        if drill.active
-    ]
-
-    return rank_drills(
-        drills=eligible_drills,
-        weakness=criteria.weakness,
-        weakness_score=criteria.weakness_score,
-        player_difficulty=criteria.player_difficulty,
-        target_duration=criteria.target_duration,
-        available_equipment=criteria.available_equipment,
-    )
-
-
-@app.post("/drills/upload", status_code=201)
-def upload_drill_video(
-    metadata: str = Form(...),
-    video: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    try:
-        payload = json.loads(metadata)
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid drill metadata JSON",
-        )
-
-    if not isinstance(payload, dict):
-        raise HTTPException(
-            status_code=400,
-            detail="Drill metadata must be an object",
-        )
-
-    validation_payload = dict(payload)
-    validation_payload["drill_id"] = (
-        validation_payload.get("drill_id")
-        or next_entity_id(db, "drill")
-    )
-    validation_payload["video_url"] = "/pending.mp4"
-
-    try:
-        drill = DrillData(**validation_payload)
-        video_url = save_drill_video(video, drill.drill_id)
-    except DrillUploadError as exc:
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail=str(exc),
-        )
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=str(exc),
-        )
-
-    drill.video_url = video_url
-
-    service = DrillService(db=db)
-    service.add_drill(drill)
-
-    return drill
-
-
-@app.get("/uploads/drills/{filename}")
-def get_uploaded_drill_video(filename: str):
-    try:
-        storage = get_drill_video_storage()
-        video_path = storage.local_path(filename)
-
-        if video_path is not None:
-            return FileResponse(video_path, filename=video_path.name)
-
-        download_url = storage.create_download_url(filename)
-
-        if download_url is None:
-            raise VideoStorageError("Video not found", status_code=404)
-
-        return RedirectResponse(download_url, status_code=307)
-    except (DrillUploadError, VideoStorageError) as exc:
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail=str(exc),
-        )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 @app.get("/calendar-dashboard")
 def calendar_dashboard():
     page = (
@@ -3561,12 +3327,4 @@ def training_plans_dashboard():
         / "training_plans.html"
     )
     return FileResponse(page)
-
-
-@app.get("/drill-library")
-def get_drill_library_page():
-    return FileResponse(
-        Path(__file__).parent / "app/static/drill_library.html",
-        media_type="text/html",
-    )
 
