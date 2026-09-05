@@ -130,6 +130,7 @@ app.add_middleware(
 # Domain routers extracted from this file — see app/routers/. Registration
 # order doesn't affect auth/CSRF enforcement below, which matches on
 # request.url.path regardless of which router owns a route.
+from app.routers import billing as billing_router
 from app.routers import drills as drills_router
 from app.routers import matches as matches_router
 from app.routers import messaging as messaging_router
@@ -138,6 +139,7 @@ from app.routers import teams as teams_router
 from app.routers import training_plans as training_plans_router
 from app.routers import videos as videos_router
 
+app.include_router(billing_router.router)
 app.include_router(drills_router.router)
 app.include_router(matches_router.router)
 app.include_router(messaging_router.router)
@@ -231,6 +233,7 @@ PUBLIC_PATHS = {
     "/favicon.png",
     "/public/registrations",
     "/public/contact-messages",
+    "/billing/webhook",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -261,6 +264,7 @@ HTML_PAGE_PATHS = {
     "/ml-dataset-registry",
     "/messages-page",
     "/registrations-dashboard",
+    "/billing",
 }
 
 FEATURE_PAGE_PATHS = {
@@ -393,6 +397,12 @@ async def enforce_authentication(request: Request, call_next):
             or path == "/messages-page"
             or path.startswith("/messages")
             or path.startswith("/notifications")
+            or path == "/billing"
+            or path.startswith("/billing/status/")
+            or (
+                request.method == "POST"
+                and path in {"/billing/checkout-session", "/billing/cancel"}
+            )
             or (request.method == "GET" and path == "/upload-player-video")
             or (request.method == "POST" and path == "/videos/upload")
             or (

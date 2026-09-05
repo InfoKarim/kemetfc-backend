@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Billing | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; color: #142039; background: #f5f7fb; }
+    .layout { display: grid; grid-template-columns: 230px 1fr; min-height: 100vh; }
+    aside { padding: 26px 16px; color: white; background: #071b35; }
+    .brand { margin: 0 10px 30px; color: #ffd36b; font-size: 22px; font-weight: 800; }
+    nav { display: grid; gap: 8px; }
+    nav a { padding: 12px 14px; border-radius: 9px; color: #dbe7f7; text-decoration: none; }
+    nav a:hover, nav a.active { color: white; background: #1265ed; }
+    main { padding: 30px; max-width: 720px; }
+    h1, h2, p { margin-top: 0; }
+    .muted { color: #69768a; }
+    .notice {
+      margin: 0 0 20px;
+      padding: 14px 16px;
+      border-radius: 10px;
+      background: #fff8e9;
+      border-left: 4px solid #f39320;
+      color: #16233B !important;
+    }
+    .notice.success { background: #eefbf3; border-left-color: #17a957; }
+    .notice.error { background: #fff0f0; border-left-color: #c83b45; }
+    .child-card {
+      padding: 20px;
+      margin-bottom: 16px;
+      border: 1px solid #e1e7ef;
+      border-radius: 15px;
+      background: white;
+    }
+    .child-card h2 { font-size: 18px; margin-bottom: 4px; color: #16233B !important; }
+    .child-card .muted { margin-bottom: 14px; }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 750;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+    .status-badge.active { background: #eefbf3; color: #17a957 !important; }
+    .status-badge.past_due, .status-badge.unpaid { background: #fff0f0; color: #c83b45 !important; }
+    .status-badge.canceled, .status-badge.none { background: #eef1f5; color: #4a5968 !important; }
+    button {
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 9px;
+      color: white;
+      background: #1265ed;
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .6; cursor: default; }
+    button.cancel { background: white; border: 1px solid #c83b45; color: #a21f2b !important; }
+    .state { padding: 40px; text-align: center; color: #69768a; }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC</div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a class="active" href="/billing">Billing</a>
+        <a href="/messages-page">Messaging</a>
+      </nav>
+    </aside>
+
+    <main>
+      <h1>Billing</h1>
+      <p class="muted">Manage your recurring KEMET FC subscription.</p>
+
+      <div id="not-configured-notice" class="notice" hidden>
+        Subscriptions are not yet configured for this academy. Contact the
+        academy administrator.
+      </div>
+
+      <div id="checkout-notice" hidden></div>
+
+      <div id="children-list">
+        <div class="state">Loading...</div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    const params = new URLSearchParams(location.search);
+    const checkoutResult = params.get("checkout");
+    if (checkoutResult) {
+      const notice = document.querySelector("#checkout-notice");
+      notice.hidden = false;
+      notice.className = checkoutResult === "success" ? "notice success" : "notice error";
+      notice.textContent = checkoutResult === "success"
+        ? "Subscription started successfully."
+        : "Checkout was cancelled — no charge was made.";
+    }
+
+    function statusLabel(subscription) {
+      if (!subscription) return "No active subscription";
+      if (subscription.cancel_at_period_end) return "Cancelling at period end";
+      return subscription.status.replace(/_/g, " ");
+    }
+
+    function statusClass(subscription) {
+      if (!subscription) return "none";
+      return subscription.status;
+    }
+
+    async function renderChild(child) {
+      const card = make("article", "child-card");
+      card.append(make("h2", "", child.name));
+      card.append(make("p", "muted", child.player_id));
+
+      let statusData = { configured: true, subscription: null };
+      try {
+        const response = await fetch(
+          `/billing/status/${encodeURIComponent(child.player_id)}`
+        );
+        if (response.ok) statusData = await response.json();
+      } catch (error) {
+        // fall through with no subscription info
+      }
+
+      const subscription = statusData.subscription;
+      const badge = make("span", `status-badge ${statusClass(subscription)}`, statusLabel(subscription));
+      card.append(badge);
+      card.append(document.createElement("br"));
+
+      const actionButton = make(
+        "button",
+        subscription && !subscription.cancel_at_period_end ? "cancel" : "",
+        subscription && !subscription.cancel_at_period_end
+          ? "Cancel subscription"
+          : "Subscribe"
+      );
+
+      if (!statusData.configured) {
+        actionButton.disabled = true;
+        document.querySelector("#not-configured-notice").hidden = false;
+      }
+
+      actionButton.addEventListener("click", async () => {
+        actionButton.disabled = true;
+        const originalText = actionButton.textContent;
+        actionButton.textContent = "Please wait...";
+
+        try {
+          const isCancel = subscription && !subscription.cancel_at_period_end;
+          const response = await fetch(
+            isCancel ? "/billing/cancel" : "/billing/checkout-session",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ player_id: child.player_id }),
+            }
+          );
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(data.detail || "Something went wrong.");
+          }
+
+          if (isCancel) {
+            location.reload();
+          } else {
+            location.href = data.checkout_url;
+          }
+        } catch (error) {
+          actionButton.disabled = false;
+          actionButton.textContent = originalText;
+          alert(error.message);
+        }
+      });
+
+      card.append(actionButton);
+      return card;
+    }
+
+    async function init() {
+      const list = document.querySelector("#children-list");
+
+      try {
+        const meResponse = await fetch("/auth/me");
+        const me = await meResponse.json();
+        const role = me.user.role;
+
+        const childrenResponse = await fetch(
+          role === "guardian" ? "/guardian/children" : "/players"
+        );
+
+        if (!childrenResponse.ok) {
+          throw new Error("Could not load players.");
+        }
+
+        const children = await childrenResponse.json();
+        const normalized = role === "guardian"
+          ? children
+          : children.map((player) => ({
+              player_id: player.player_id,
+              name: `${player.first_name_en} ${player.last_name_en}`,
+            }));
+
+        list.replaceChildren();
+
+        if (!normalized.length) {
+          list.append(make("div", "state", "No players found."));
+          return;
+        }
+
+        for (const child of normalized) {
+          const card = await renderChild(child);
+          list.append(card);
+        }
+      } catch (error) {
+        list.replaceChildren(make("div", "state", error.message));
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

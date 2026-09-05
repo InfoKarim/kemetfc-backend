@@ -135,6 +135,26 @@ def get_openai_api_key() -> str:
     return os.getenv("OPENAI_API_KEY", "").strip()
 
 
+def get_stripe_secret_key() -> str:
+    return os.getenv("STRIPE_SECRET_KEY", "").strip()
+
+
+def get_stripe_publishable_key() -> str:
+    return os.getenv("STRIPE_PUBLISHABLE_KEY", "").strip()
+
+
+def get_stripe_webhook_secret() -> str:
+    return os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+
+
+def get_stripe_price_id() -> str:
+    return os.getenv("STRIPE_PRICE_ID", "").strip()
+
+
+def get_billing_return_base_url() -> str:
+    return os.getenv("BILLING_RETURN_BASE_URL", "https://app.kemetfc.com").strip()
+
+
 def get_youtube_api_key() -> str:
     return os.getenv("YOUTUBE_API_KEY", "").strip()
 

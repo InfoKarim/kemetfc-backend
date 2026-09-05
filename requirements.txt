@@ -29,3 +29,5 @@ alembic==1.19.1
 python-multipart==0.0.32
 psycopg[binary]==3.3.4
 boto3==1.40.61
+stripe==15.6.1
+requests==2.34.2

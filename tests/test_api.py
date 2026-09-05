@@ -3440,6 +3440,195 @@ def test_guardian_can_only_access_linked_child_snapshot():
     assert mutation.status_code == 403
 
 
+def test_billing_status_returns_not_configured_when_stripe_keys_missing():
+    create_test_player("P_BILLING_STATUS")
+
+    response = client.get("/billing/status/P_BILLING_STATUS")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["configured"] is False
+    assert body["subscription"] is None
+
+
+def test_billing_status_unknown_player_returns_404():
+    response = client.get("/billing/status/DOES_NOT_EXIST")
+    assert response.status_code == 404
+
+
+def test_checkout_session_unknown_player_returns_404():
+    response = client.post(
+        "/billing/checkout-session",
+        json={"player_id": "DOES_NOT_EXIST"},
+    )
+    assert response.status_code == 404
+
+
+def test_checkout_session_returns_url_from_billing_service(monkeypatch):
+    from app.routers import billing as billing_router_module
+
+    create_test_player("P_BILLING_CHECKOUT")
+
+    db = TestingSessionLocal()
+    db.query(UserDB).filter(UserDB.user_id == "TEST_ADMIN").update(
+        {"email": "admin@example.com"}
+    )
+    db.commit()
+    db.close()
+
+    monkeypatch.setattr(
+        billing_router_module.BillingService,
+        "create_checkout_session",
+        lambda self, player_id, paying_user_id, guardian_email: "https://checkout.stripe.com/x",
+    )
+
+    response = client.post(
+        "/billing/checkout-session",
+        json={"player_id": "P_BILLING_CHECKOUT"},
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {"checkout_url": "https://checkout.stripe.com/x"}
+
+
+def test_checkout_session_requires_account_email(monkeypatch):
+    create_test_player("P_BILLING_NO_EMAIL")
+
+    user_response = client.post(
+        "/auth/users",
+        json={
+            "username": "coach.noemail",
+            "password": "CoachNoEmailPassword123!",
+            "role": "coach",
+        },
+    )
+    assert user_response.status_code == 201
+
+    coach_client = TestClient(app)
+    login = coach_client.post(
+        "/auth/login",
+        json={"username": "coach.noemail", "password": "CoachNoEmailPassword123!"},
+    )
+    assert login.status_code == 200
+    coach_client.headers.update({
+        "X-CSRF-Token": coach_client.cookies.get(CSRF_COOKIE_NAME),
+    })
+
+    response = coach_client.post(
+        "/billing/checkout-session",
+        json={"player_id": "P_BILLING_NO_EMAIL"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_billing_guardian_can_only_checkout_for_linked_child():
+    create_test_player("P_BILLING_LINKED")
+    create_test_player("P_BILLING_UNRELATED")
+
+    user_response = client.post(
+        "/auth/users",
+        json={
+            "username": "parent.billing",
+            "password": "GuardianBillingPassword123!",
+            "role": "guardian",
+        },
+    )
+    assert user_response.status_code == 201
+    guardian_user_id = user_response.json()["user_id"]
+
+    link_response = client.post(
+        "/guardian-player-links",
+        json={
+            "guardian_user_id": guardian_user_id,
+            "player_id": "P_BILLING_LINKED",
+        },
+    )
+    assert link_response.status_code == 201
+
+    guardian_client = TestClient(app)
+    login = guardian_client.post(
+        "/auth/login",
+        json={"username": "parent.billing", "password": "GuardianBillingPassword123!"},
+    )
+    assert login.status_code == 200
+    guardian_client.headers.update({
+        "X-CSRF-Token": guardian_client.cookies.get(CSRF_COOKIE_NAME),
+    })
+
+    unrelated = guardian_client.post(
+        "/billing/checkout-session",
+        json={"player_id": "P_BILLING_UNRELATED"},
+    )
+    assert unrelated.status_code == 404
+
+    unrelated_status = guardian_client.get("/billing/status/P_BILLING_UNRELATED")
+    assert unrelated_status.status_code == 404
+
+
+def test_cancel_subscription_returns_404_when_none_exists():
+    create_test_player("P_BILLING_CANCEL")
+
+    response = client.post(
+        "/billing/cancel",
+        json={"player_id": "P_BILLING_CANCEL"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_stripe_webhook_rejects_missing_secret():
+    response = client.post(
+        "/billing/webhook",
+        content=b"{}",
+        headers={"stripe-signature": "t=1,v1=bad"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_stripe_webhook_processes_subscription_event(monkeypatch):
+    from app.routers import billing as billing_router_module
+
+    fake_event = {
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_webhook_test",
+                "customer": "cus_webhook_test",
+                "status": "active",
+                "current_period_end": 1893456000,
+                "cancel_at_period_end": False,
+                "items": {"data": [{"price": {"id": "price_webhook_test"}}]},
+                "metadata": {
+                    "player_id": "P_BILLING_WEBHOOK",
+                    "paying_user_id": "TEST_ADMIN",
+                },
+            }
+        },
+    }
+
+    monkeypatch.setattr(
+        billing_router_module.BillingService,
+        "construct_webhook_event",
+        lambda self, payload, signature_header: fake_event,
+    )
+
+    create_test_player("P_BILLING_WEBHOOK")
+
+    response = client.post(
+        "/billing/webhook",
+        content=b"{}",
+        headers={"stripe-signature": "t=1,v1=whatever"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"received": True}
+
+    status_response = client.get("/billing/status/P_BILLING_WEBHOOK")
+    assert status_response.json()["subscription"]["status"] == "active"
+
+
 def test_guardian_with_video_access_uploads_only_for_linked_child(
     monkeypatch,
     tmp_path,

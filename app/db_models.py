@@ -411,6 +411,42 @@ class MLDatasetEntryDB(Base):
     )
 
 
+class SubscriptionDB(Base):
+    """A recurring Stripe subscription paying for one enrolled player.
+
+    Card details never touch this app — Stripe Checkout (a Stripe-hosted
+    page) collects them directly, and this row is created/updated only
+    from signature-verified Stripe webhook events.
+    """
+
+    __tablename__ = "subscriptions"
+
+    # Stripe's own subscription id (e.g. "sub_...") — reused directly as our
+    # primary key rather than minting a separate id, since every row here
+    # is created/updated from a Stripe webhook event, not a user action.
+    stripe_subscription_id: Mapped[str] = mapped_column(String, primary_key=True)
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    paying_user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        index=True,
+    )
+    stripe_customer_id: Mapped[str] = mapped_column(String, index=True)
+    stripe_price_id: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    current_period_end: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class AuditEventDB(Base):
     __tablename__ = "audit_events"
 

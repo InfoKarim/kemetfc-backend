@@ -33,6 +33,7 @@ EXPECTED_TABLES = {
     "players",
     "privacy_requests",
     "seasons",
+    "subscriptions",
     "teams",
     "training_plans",
     "users",
@@ -72,7 +73,7 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert revision == "d3f8a71c9e26"
+    assert revision == "c1a5e9d3f708"
     job_columns = {
         column["name"]
         for column in inspect(engine).get_columns("video_analysis_jobs")
@@ -91,7 +92,7 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
     assert "weak_foot_profile" in player_columns
 
     with engine.connect() as connection:
-        assert require_database_at_head(connection) == ("d3f8a71c9e26",)
+        assert require_database_at_head(connection) == ("c1a5e9d3f708",)
 
 
 def test_migration_health_rejects_database_without_migrations(tmp_path):

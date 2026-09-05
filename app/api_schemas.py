@@ -362,6 +362,10 @@ class GuardianPlayerLinkSchema(BaseModel):
     player_id: str = Field(min_length=1)
 
 
+class CreateCheckoutSessionSchema(BaseModel):
+    player_id: str = Field(min_length=1)
+
+
 class RegistrationConsentSchema(BaseModel):
     parent_consent: bool
     liability_waiver: bool
