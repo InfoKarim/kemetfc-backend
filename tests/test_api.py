@@ -3629,6 +3629,72 @@ def test_stripe_webhook_processes_subscription_event(monkeypatch):
     assert status_response.json()["subscription"]["status"] == "active"
 
 
+class _FakeStripeObject:
+    """Mimics real stripe-python StripeObject: supports [] and attribute
+    access but deliberately has no .get()/dict methods, only .to_dict().
+    Reproduces the shape that crashed production (KeyError -> AttributeError
+    on .get()) when tests used plain dicts instead."""
+
+    def __init__(self, data):
+        self._data = {
+            key: _FakeStripeObject(value) if isinstance(value, dict) else value
+            for key, value in data.items()
+        }
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def to_dict(self):
+        return {
+            key: value.to_dict() if isinstance(value, _FakeStripeObject) else value
+            for key, value in self._data.items()
+        }
+
+
+def test_stripe_webhook_handles_real_stripe_object_without_get_method(monkeypatch):
+    from app.routers import billing as billing_router_module
+
+    fake_event = {
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": _FakeStripeObject(
+                {
+                    "id": "sub_no_get_test",
+                    "customer": "cus_no_get_test",
+                    "status": "active",
+                    "current_period_end": 1893456000,
+                    "cancel_at_period_end": False,
+                    "items": {"data": [{"price": {"id": "price_no_get_test"}}]},
+                    "metadata": {
+                        "player_id": "P_BILLING_NO_GET",
+                        "paying_user_id": "TEST_ADMIN",
+                    },
+                }
+            )
+        },
+    }
+
+    monkeypatch.setattr(
+        billing_router_module.BillingService,
+        "construct_webhook_event",
+        lambda self, payload, signature_header: fake_event,
+    )
+
+    create_test_player("P_BILLING_NO_GET")
+
+    response = client.post(
+        "/billing/webhook",
+        content=b"{}",
+        headers={"stripe-signature": "t=1,v1=whatever"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"received": True}
+
+    status_response = client.get("/billing/status/P_BILLING_NO_GET")
+    assert status_response.json()["subscription"]["status"] == "active"
+
+
 def test_guardian_with_video_access_uploads_only_for_linked_child(
     monkeypatch,
     tmp_path,

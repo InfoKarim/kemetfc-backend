@@ -16,6 +16,13 @@ router = APIRouter()
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 
+def _as_plain_dict(value):
+    """Stripe SDK objects deliberately aren't dict-like (no .get()) — convert
+    to a real dict so downstream code can use plain dict access uniformly."""
+    to_dict = getattr(value, "to_dict", None)
+    return to_dict() if callable(to_dict) else value
+
+
 def _subscription_payload(subscription) -> dict:
     return {
         "stripe_subscription_id": subscription.stripe_subscription_id,
@@ -119,7 +126,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(error))
 
     event_type = event["type"]
-    data_object = event["data"]["object"]
+    data_object = _as_plain_dict(event["data"]["object"])
 
     if event_type in {
         "customer.subscription.created",
@@ -131,6 +138,6 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         import stripe
 
         subscription = stripe.Subscription.retrieve(data_object["subscription"])
-        service.upsert_subscription_from_stripe_object(subscription)
+        service.upsert_subscription_from_stripe_object(_as_plain_dict(subscription))
 
     return {"received": True}
