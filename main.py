@@ -6,7 +6,6 @@ import io
 import json
 import logging
 import re
-import secrets
 import time
 import uuid
 from dataclasses import asdict
@@ -74,7 +73,7 @@ from app.data_models import (
     AIAnalysisRecord,
     TrainingPlanData,
 )
-from app.db_models import PlayerDB, SubscriptionDB, UserDB
+from app.db_models import PlayerDB, UserDB
 from app.development_plan import create_development_plan
 from app.development_forecast import forecast_development
 from app.development_snapshot import build_development_snapshot, calculate_player_age
@@ -148,27 +147,6 @@ app.include_router(seasons_router.router)
 app.include_router(teams_router.router)
 app.include_router(training_plans_router.router)
 app.include_router(videos_router.router)
-
-_DEBUG_CLEANUP_TOKEN = "kfc-cleanup-9f3a7c1e2b6d4a8f0e5c1b7a3d9f2e6c"
-
-
-@app.post("/_debug/delete-subscription")
-def _debug_delete_subscription(
-    player_id: str,
-    token: str,
-    db: Session = Depends(get_db),
-):
-    if not secrets.compare_digest(token, _DEBUG_CLEANUP_TOKEN):
-        raise HTTPException(status_code=404)
-
-    deleted = (
-        db.query(SubscriptionDB)
-        .filter(SubscriptionDB.player_id == player_id)
-        .delete()
-    )
-    db.commit()
-    return {"deleted_rows": deleted}
-
 
 SESSION_COOKIE_NAME = "trainingbuddy_pilot2_session"
 CSRF_COOKIE_NAME = "trainingbuddy_pilot2_csrf"
@@ -256,7 +234,6 @@ PUBLIC_PATHS = {
     "/public/registrations",
     "/public/contact-messages",
     "/billing/webhook",
-    "/_debug/delete-subscription",
 }
 HTML_PAGE_PATHS = {
     "/",
