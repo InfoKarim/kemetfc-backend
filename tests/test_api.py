@@ -5330,6 +5330,63 @@ def test_admin_can_replace_account_feature_access():
     assert response.json()["feature_permissions"] == ["training", "videos"]
 
 
+def test_admin_can_create_account_with_profile_fields():
+    created = client.post(
+        "/auth/users",
+        json={
+            "username": "profile.account",
+            "password": "ProfileAccountPassword123!",
+            "role": "coach",
+            "feature_permissions": ["players"],
+            "first_name": "Karim",
+            "last_name": "Elsayed",
+            "phone": "0100000000",
+            "address": "12 Nile St.",
+            "national_id": "12345678901234",
+        },
+    )
+
+    assert created.status_code == 201
+    body = created.json()
+    assert body["first_name"] == "Karim"
+    assert body["last_name"] == "Elsayed"
+    assert body["phone"] == "0100000000"
+    assert body["address"] == "12 Nile St."
+    assert body["national_id"] == "12345678901234"
+
+
+def test_admin_can_update_account_profile_fields():
+    created = client.post(
+        "/auth/users",
+        json={
+            "username": "profile.edit",
+            "password": "ProfileEditPassword123!",
+            "role": "coach",
+            "feature_permissions": ["players"],
+        },
+    )
+    assert created.status_code == 201
+
+    response = client.patch(
+        f"/auth/users/{created.json()['user_id']}",
+        json={
+            "first_name": "Updated",
+            "last_name": "Person",
+            "phone": "0122222222",
+            "address": "A different address",
+            "national_id": "88888888888888",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["first_name"] == "Updated"
+    assert body["last_name"] == "Person"
+    assert body["phone"] == "0122222222"
+    assert body["address"] == "A different address"
+    assert body["national_id"] == "88888888888888"
+
+
 def test_admin_can_rename_account_username():
     created = client.post(
         "/auth/users",

@@ -106,6 +106,51 @@ def test_last_active_administrator_cannot_be_removed():
         raise AssertionError("Expected the last-admin safeguard")
 
 
+def test_create_user_stores_profile_fields():
+    service = make_service()
+    user = service.create_user(
+        username="profile.coach",
+        password="StrongPassword123!",
+        role="coach",
+        first_name=" Karim ",
+        last_name=" Elsayed ",
+        phone=" 0100000000 ",
+        address=" 12 Nile St. ",
+        national_id=" 12345678901234 ",
+    )
+
+    assert user.first_name == "Karim"
+    assert user.last_name == "Elsayed"
+    assert user.phone == "0100000000"
+    assert user.address == "12 Nile St."
+    assert user.national_id == "12345678901234"
+
+
+def test_update_user_can_change_profile_fields():
+    service = make_service()
+    user = service.create_user(
+        username="profile.update",
+        password="StrongPassword123!",
+        role="coach",
+    )
+
+    updated = service.update_user(
+        user_id=user.user_id,
+        first_name="New",
+        last_name="Name",
+        phone="0111111111",
+        address="A new address",
+        national_id="99999999999999",
+    )
+
+    assert updated is not None
+    assert updated.first_name == "New"
+    assert updated.last_name == "Name"
+    assert updated.phone == "0111111111"
+    assert updated.address == "A new address"
+    assert updated.national_id == "99999999999999"
+
+
 def test_update_user_can_change_username():
     service = make_service()
     user = service.create_user(

@@ -762,6 +762,11 @@ def create_user(
             role=user_data.role,
             feature_permissions=user_data.feature_permissions,
             email=user_data.email,
+            first_name=user_data.first_name,
+            last_name=user_data.last_name,
+            phone=user_data.phone,
+            address=user_data.address,
+            national_id=user_data.national_id,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
@@ -784,6 +789,11 @@ def update_user(
             password=user_data.password,
             feature_permissions=user_data.feature_permissions,
             email=user_data.email,
+            first_name=user_data.first_name,
+            last_name=user_data.last_name,
+            phone=user_data.phone,
+            address=user_data.address,
+            national_id=user_data.national_id,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))

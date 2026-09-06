@@ -172,6 +172,11 @@ class AuthService:
         role: str,
         feature_permissions: list[str] | None = None,
         email: str | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        phone: str | None = None,
+        address: str | None = None,
+        national_id: str | None = None,
     ) -> UserDB:
         normalized = normalize_username(username)
 
@@ -186,6 +191,11 @@ class AuthService:
             username=normalized,
             password_hash=hash_password(password),
             email=email.strip() if email else None,
+            first_name=first_name.strip() if first_name else None,
+            last_name=last_name.strip() if last_name else None,
+            phone=phone.strip() if phone else None,
+            address=address.strip() if address else None,
+            national_id=national_id.strip() if national_id else None,
             role=role,
             active=True,
             feature_permissions=permissions,
@@ -382,6 +392,11 @@ class AuthService:
         password: str | None = None,
         feature_permissions: list[str] | None = None,
         email: str | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        phone: str | None = None,
+        address: str | None = None,
+        national_id: str | None = None,
     ) -> UserDB | None:
         user = self.db.get(UserDB, user_id)
 
@@ -425,6 +440,21 @@ class AuthService:
 
         if email is not None:
             user.email = email.strip() or None
+
+        if first_name is not None:
+            user.first_name = first_name.strip() or None
+
+        if last_name is not None:
+            user.last_name = last_name.strip() or None
+
+        if phone is not None:
+            user.phone = phone.strip() or None
+
+        if address is not None:
+            user.address = address.strip() or None
+
+        if national_id is not None:
+            user.national_id = national_id.strip() or None
 
         if feature_permissions is not None:
             user.feature_permissions = normalize_feature_permissions(

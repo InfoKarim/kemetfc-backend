@@ -293,6 +293,11 @@ class CreateUserSchema(BaseModel):
     password: str = Field(min_length=12, max_length=256)
     role: Literal["admin", "coach", "reviewer", "guardian"]
     email: str | None = Field(default=None, min_length=3, max_length=320)
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    address: str | None = Field(default=None, max_length=320)
+    national_id: str | None = Field(default=None, max_length=64)
     feature_permissions: list[Literal[
         "dashboard",
         "players",
@@ -313,6 +318,11 @@ class UpdateUserSchema(BaseModel):
     active: bool | None = None
     password: str | None = Field(default=None, min_length=12, max_length=256)
     email: str | None = Field(default=None, min_length=3, max_length=320)
+    first_name: str | None = Field(default=None, max_length=120)
+    last_name: str | None = Field(default=None, max_length=120)
+    phone: str | None = Field(default=None, max_length=40)
+    address: str | None = Field(default=None, max_length=320)
+    national_id: str | None = Field(default=None, max_length=64)
     feature_permissions: list[Literal[
         "dashboard",
         "players",

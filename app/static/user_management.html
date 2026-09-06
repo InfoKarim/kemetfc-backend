@@ -183,9 +183,16 @@
               <option value="admin">Administrator</option>
             </select>
           </label>
-          <label style="grid-column: 1 / -1">Email (for password reset codes)
+          <label>Email (for password reset codes)
             <input id="new-email" type="email" autocomplete="off" maxlength="320">
           </label>
+          <label>First name<input id="new-first-name" autocomplete="off" maxlength="120"></label>
+          <label>Last name<input id="new-last-name" autocomplete="off" maxlength="120"></label>
+          <label>Phone<input id="new-phone" type="tel" autocomplete="off" maxlength="40"></label>
+          <label style="grid-column: 1 / -1">Address
+            <input id="new-address" autocomplete="off" maxlength="320">
+          </label>
+          <label>National ID / card number<input id="new-national-id" autocomplete="off" maxlength="64"></label>
         </div>
         <fieldset>
           <legend>Enabled features</legend>
@@ -335,13 +342,43 @@
         password.placeholder = "12+ characters for reset";
         passwordLabel.append(password);
         const emailLabel = document.createElement("label");
-        emailLabel.style.gridColumn = "1 / -1";
         emailLabel.textContent = "Email (for password reset codes)";
         const email = document.createElement("input");
         email.type = "email";
         email.value = user.email || "";
         email.placeholder = "name@example.com";
         emailLabel.append(email);
+        const firstNameLabel = document.createElement("label");
+        firstNameLabel.textContent = "First name";
+        const firstName = document.createElement("input");
+        firstName.type = "text";
+        firstName.value = user.first_name || "";
+        firstNameLabel.append(firstName);
+        const lastNameLabel = document.createElement("label");
+        lastNameLabel.textContent = "Last name";
+        const lastName = document.createElement("input");
+        lastName.type = "text";
+        lastName.value = user.last_name || "";
+        lastNameLabel.append(lastName);
+        const phoneLabel = document.createElement("label");
+        phoneLabel.textContent = "Phone";
+        const phone = document.createElement("input");
+        phone.type = "tel";
+        phone.value = user.phone || "";
+        phoneLabel.append(phone);
+        const addressLabel = document.createElement("label");
+        addressLabel.style.gridColumn = "1 / -1";
+        addressLabel.textContent = "Address";
+        const address = document.createElement("input");
+        address.type = "text";
+        address.value = user.address || "";
+        addressLabel.append(address);
+        const nationalIdLabel = document.createElement("label");
+        nationalIdLabel.textContent = "National ID / card number";
+        const nationalId = document.createElement("input");
+        nationalId.type = "text";
+        nationalId.value = user.national_id || "";
+        nationalIdLabel.append(nationalId);
         const permissions = document.createElement("div");
         permissions.className = "permissions";
         permissionInputs(
@@ -352,7 +389,18 @@
         role.addEventListener("change", () => {
           syncRolePermissions(role, permissions);
         });
-        controls.append(usernameLabel, roleLabel, passwordLabel, emailLabel, permissions);
+        controls.append(
+          usernameLabel,
+          roleLabel,
+          passwordLabel,
+          emailLabel,
+          firstNameLabel,
+          lastNameLabel,
+          phoneLabel,
+          addressLabel,
+          nationalIdLabel,
+          permissions
+        );
 
         const save = document.createElement("button");
         save.type = "button";
@@ -365,6 +413,11 @@
             role: role.value,
             active: active.checked,
             email: email.value.trim() || null,
+            first_name: firstName.value.trim() || null,
+            last_name: lastName.value.trim() || null,
+            phone: phone.value.trim() || null,
+            address: address.value.trim() || null,
+            national_id: nationalId.value.trim() || null,
             feature_permissions: selectedPermissions(permissions),
           };
           const response = await fetch(`/auth/users/${encodeURIComponent(user.user_id)}`, {
@@ -462,6 +515,11 @@
           password: document.querySelector("#new-password").value,
           role: createRole.value,
           email: document.querySelector("#new-email").value.trim() || null,
+          first_name: document.querySelector("#new-first-name").value.trim() || null,
+          last_name: document.querySelector("#new-last-name").value.trim() || null,
+          phone: document.querySelector("#new-phone").value.trim() || null,
+          address: document.querySelector("#new-address").value.trim() || null,
+          national_id: document.querySelector("#new-national-id").value.trim() || null,
           feature_permissions: selectedPermissions(newPermissions),
         }),
       });

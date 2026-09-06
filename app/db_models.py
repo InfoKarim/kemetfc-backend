@@ -280,6 +280,11 @@ class UserDB(Base):
     )
     password_hash: Mapped[str] = mapped_column(String)
     email: Mapped[str | None] = mapped_column(String, nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String, nullable=True)
+    address: Mapped[str | None] = mapped_column(String, nullable=True)
+    national_id: Mapped[str | None] = mapped_column(String, nullable=True)
     role: Mapped[str] = mapped_column(String, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     feature_permissions: Mapped[list | None] = mapped_column(
