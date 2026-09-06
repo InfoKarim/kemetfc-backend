@@ -308,6 +308,7 @@ class CreateUserSchema(BaseModel):
 
 
 class UpdateUserSchema(BaseModel):
+    username: str | None = Field(default=None, min_length=3, max_length=64)
     role: Literal["admin", "coach", "reviewer", "guardian"] | None = None
     active: bool | None = None
     password: str | None = Field(default=None, min_length=12, max_length=256)

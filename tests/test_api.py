@@ -5330,6 +5330,56 @@ def test_admin_can_replace_account_feature_access():
     assert response.json()["feature_permissions"] == ["training", "videos"]
 
 
+def test_admin_can_rename_account_username():
+    created = client.post(
+        "/auth/users",
+        json={
+            "username": "rename.before",
+            "password": "RenameAccountPassword123!",
+            "role": "coach",
+            "feature_permissions": ["players"],
+        },
+    )
+    assert created.status_code == 201
+
+    response = client.patch(
+        f"/auth/users/{created.json()['user_id']}",
+        json={"username": "Rename.After"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["username"] == "rename.after"
+
+
+def test_admin_cannot_rename_account_to_taken_username():
+    client.post(
+        "/auth/users",
+        json={
+            "username": "username.taken",
+            "password": "UsernameTakenPassword123!",
+            "role": "coach",
+            "feature_permissions": ["players"],
+        },
+    )
+    created = client.post(
+        "/auth/users",
+        json={
+            "username": "username.free",
+            "password": "UsernameFreePassword123!",
+            "role": "coach",
+            "feature_permissions": ["players"],
+        },
+    )
+    assert created.status_code == 201
+
+    response = client.patch(
+        f"/auth/users/{created.json()['user_id']}",
+        json={"username": "username.taken"},
+    )
+
+    assert response.status_code == 400
+
+
 def test_admin_can_delete_unused_account():
     created = client.post(
         "/auth/users",

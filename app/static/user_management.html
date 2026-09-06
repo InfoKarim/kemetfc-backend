@@ -304,6 +304,14 @@
 
         const controls = document.createElement("div");
         controls.className = "user-controls";
+        const usernameLabel = document.createElement("label");
+        usernameLabel.textContent = "Username";
+        const username = document.createElement("input");
+        username.type = "text";
+        username.value = user.username;
+        username.minLength = 3;
+        username.maxLength = 64;
+        usernameLabel.append(username);
         const roleLabel = document.createElement("label");
         roleLabel.textContent = "Role";
         const role = document.createElement("select");
@@ -344,7 +352,7 @@
         role.addEventListener("change", () => {
           syncRolePermissions(role, permissions);
         });
-        controls.append(roleLabel, passwordLabel, emailLabel, permissions);
+        controls.append(usernameLabel, roleLabel, passwordLabel, emailLabel, permissions);
 
         const save = document.createElement("button");
         save.type = "button";
@@ -353,6 +361,7 @@
         save.addEventListener("click", async () => {
           save.disabled = true;
           const payload = {
+            username: username.value.trim(),
             role: role.value,
             active: active.checked,
             email: email.value.trim() || null,

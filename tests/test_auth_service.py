@@ -106,6 +106,42 @@ def test_last_active_administrator_cannot_be_removed():
         raise AssertionError("Expected the last-admin safeguard")
 
 
+def test_update_user_can_change_username():
+    service = make_service()
+    user = service.create_user(
+        username="old.name",
+        password="StrongPassword123!",
+        role="coach",
+    )
+
+    updated = service.update_user(user_id=user.user_id, username="New.Name")
+
+    assert updated is not None
+    assert updated.username == "new.name"
+    assert service.authenticate("new.name", "StrongPassword123!") is not None
+
+
+def test_update_user_rejects_duplicate_username():
+    service = make_service()
+    service.create_user(
+        username="taken",
+        password="StrongPassword123!",
+        role="coach",
+    )
+    other = service.create_user(
+        username="available",
+        password="StrongPassword123!",
+        role="coach",
+    )
+
+    try:
+        service.update_user(user_id=other.user_id, username="taken")
+    except ValueError as error:
+        assert str(error) == "Username already exists"
+    else:
+        raise AssertionError("Expected a duplicate-username error")
+
+
 def test_user_feature_permissions_can_be_customized():
     service = make_service()
     user = service.create_user(

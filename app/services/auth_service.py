@@ -376,6 +376,7 @@ class AuthService:
     def update_user(
         self,
         user_id: str,
+        username: str | None = None,
         role: str | None = None,
         active: bool | None = None,
         password: str | None = None,
@@ -406,6 +407,9 @@ class AuthService:
             if active_admins <= 1:
                 raise ValueError("Cannot remove the last active administrator")
 
+        if username is not None:
+            user.username = normalize_username(username)
+
         if role is not None:
             if role not in VALID_ROLES:
                 raise ValueError("Invalid user role")
@@ -434,7 +438,12 @@ class AuthService:
                 AuthSessionDB.user_id == user.user_id
             ).delete(synchronize_session=False)
 
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError as error:
+            self.db.rollback()
+            raise ValueError("Username already exists") from error
+
         self.db.refresh(user)
         return user
 

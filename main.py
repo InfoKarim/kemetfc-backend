@@ -778,6 +778,7 @@ def update_user(
     try:
         user = AuthService(db=db).update_user(
             user_id=user_id,
+            username=user_data.username,
             role=user_data.role,
             active=user_data.active,
             password=user_data.password,
