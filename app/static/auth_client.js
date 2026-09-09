@@ -115,6 +115,23 @@
       #account-password-status { font-size: 12px !important; min-height: 16px !important; color: #8ca1bb !important; }
       #account-password-status.error { color: #ff9b9b !important; }
       #account-password-status.success { color: #7cdb20 !important; }
+      .account-apps-label {
+        margin: 10px 0 4px 10px !important; padding: 0 !important;
+        color: #8ca1bb !important; font-size: 11px !important; font-weight: 700 !important;
+        letter-spacing: .06em !important; text-transform: uppercase !important;
+      }
+      #account-panel a.account-app-link {
+        display: flex !important; align-items: center; justify-content: space-between; gap: 8px;
+        width: 100% !important; margin-top: 8px !important; padding: 10px 14px !important; box-sizing: border-box;
+        border: 1px solid rgba(255, 255, 255, .14) !important; border-radius: 9px !important;
+        background: rgba(255, 255, 255, .06) !important;
+        color: #dce7f5 !important; text-decoration: none !important;
+        font: inherit !important; font-size: 13px !important; font-weight: 700 !important; text-align: left !important;
+      }
+      #account-panel a.account-app-link:hover { background: rgba(255, 255, 255, .12) !important; }
+      #account-panel a.account-app-link .account-app-current {
+        color: #7cdb20 !important; font-size: 11px !important; font-weight: 800 !important;
+      }
     `;
     document.head.appendChild(style);
 
@@ -143,6 +160,9 @@
           <button type="submit">Save</button>
         </div>
       </form>
+      <div id="account-apps" hidden>
+        <p class="account-apps-label">My apps</p>
+      </div>
       <button type="button" id="account-sign-out">Sign out</button>
     `;
     aside.appendChild(panel);
@@ -150,6 +170,31 @@
     renderAccountAvatar(user);
     document.querySelector("#account-name").textContent = user.username || "";
     document.querySelector("#account-role").textContent = roleLabels[user.role] || user.role || "";
+
+    if (Array.isArray(user.my_apps) && user.my_apps.length) {
+      const appsContainer = document.querySelector("#account-apps");
+      for (const app of user.my_apps) {
+        const link = document.createElement("a");
+        link.className = "account-app-link";
+        link.href = app.url;
+        if (app.external) {
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+        }
+        const label = document.createElement("span");
+        label.textContent = app.name;
+        link.append(label);
+        if (!app.external) {
+          const current = document.createElement("span");
+          current.className = "account-app-current";
+          current.textContent = "Current";
+          link.append(current);
+        }
+        link.title = app.description || "";
+        appsContainer.append(link);
+      }
+      appsContainer.hidden = false;
+    }
 
     const avatarInput = document.querySelector("#account-avatar-input");
     const avatarStatus = document.querySelector("#account-avatar-status");

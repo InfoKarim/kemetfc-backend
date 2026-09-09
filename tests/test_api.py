@@ -699,6 +699,103 @@ def test_authenticated_user_can_read_identity():
     assert "csrf_token" not in response.json()["user"]
 
 
+def _create_and_login_as(username, password="MyAppsPassword123!", role="admin"):
+    created = client.post(
+        "/auth/users",
+        json={"username": username, "password": password, "role": role},
+    )
+    assert created.status_code in (201, 400)  # 400 = already created by an earlier test
+
+    own_client = TestClient(app)
+    login = own_client.post(
+        "/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert login.status_code == 200
+    return own_client
+
+
+def test_my_apps_visible_to_owner_account_when_url_configured(monkeypatch):
+    import main
+    monkeypatch.setattr(main, "get_quantforecast_url", lambda: "https://quant.example.com")
+    karim_client = _create_and_login_as("karim")
+
+    response = karim_client.get("/auth/me")
+
+    assert response.status_code == 200
+    my_apps = response.json()["user"]["my_apps"]
+    assert [app["name"] for app in my_apps] == ["TrainingBuddy", "QuantForecast"]
+    quantforecast = my_apps[1]
+    assert quantforecast["url"] == "https://quant.example.com"
+    assert quantforecast["external"] is True
+
+
+def test_my_apps_hidden_for_other_admin_even_when_url_configured(monkeypatch):
+    import main
+    monkeypatch.setattr(main, "get_quantforecast_url", lambda: "https://quant.example.com")
+
+    response = client.get("/auth/me")
+
+    assert response.status_code == 200
+    assert "my_apps" not in response.json()["user"]
+
+
+def test_my_apps_hidden_for_non_admin_owner_username_collision(monkeypatch):
+    import main
+    monkeypatch.setattr(main, "get_quantforecast_url", lambda: "https://quant.example.com")
+    guardian_client = _create_and_login_as(
+        "karim.guardian", role="guardian"
+    )
+
+    response = guardian_client.get("/auth/me")
+
+    assert response.status_code == 200
+    assert "my_apps" not in response.json()["user"]
+
+
+def test_my_apps_hidden_when_url_not_configured(monkeypatch):
+    import main
+    monkeypatch.setattr(main, "get_quantforecast_url", lambda: "")
+    karim_client = _create_and_login_as("karim")
+
+    response = karim_client.get("/auth/me")
+
+    assert response.status_code == 200
+    assert "my_apps" not in response.json()["user"]
+
+
+def test_my_apps_url_carries_no_query_string_or_credentials(monkeypatch):
+    import main
+    monkeypatch.setattr(main, "get_quantforecast_url", lambda: "https://quant.example.com/app")
+    karim_client = _create_and_login_as("karim")
+
+    response = karim_client.get("/auth/me")
+
+    quantforecast_url = response.json()["user"]["my_apps"][1]["url"]
+    assert quantforecast_url == "https://quant.example.com/app"
+    assert "?" not in quantforecast_url
+    assert "token" not in quantforecast_url.lower()
+    assert "session" not in quantforecast_url.lower()
+
+
+def test_login_and_logout_unaffected_by_my_apps_feature(monkeypatch):
+    import main
+    monkeypatch.setattr(main, "get_quantforecast_url", lambda: "https://quant.example.com")
+    karim_client = _create_and_login_as("karim")
+
+    me = karim_client.get("/auth/me")
+    assert me.status_code == 200
+
+    logout = karim_client.post(
+        "/auth/logout",
+        headers={"X-CSRF-Token": karim_client.cookies.get(CSRF_COOKIE_NAME)},
+    )
+    assert logout.status_code == 200
+
+    after_logout = karim_client.get("/auth/me")
+    assert after_logout.status_code == 401
+
+
 def test_mutation_requires_csrf_token():
     authenticated = TestClient(app)
     response = authenticated.post(

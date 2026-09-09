@@ -193,6 +193,15 @@ def get_s3_presigned_url_expiry_seconds() -> int:
     return get_positive_int("S3_PRESIGNED_URL_EXPIRY_SECONDS", 300)
 
 
+def get_quantforecast_url() -> str:
+    """The "My apps" link to QuantForecast — hidden entirely unless this is
+    set to a trusted https:// URL. Never assume a bare localhost value here
+    means production is ready; leave it unset until a real deployed URL
+    exists."""
+    url = os.getenv("QUANTFORECAST_URL", "").strip()
+    return url if url.startswith("https://") else ""
+
+
 def get_public_site_origins() -> list[str]:
     default = "http://localhost:3100,https://kemetfc.com,https://www.kemetfc.com"
     raw = os.getenv("PUBLIC_SITE_ORIGINS", default)

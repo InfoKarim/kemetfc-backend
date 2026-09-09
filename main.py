@@ -52,6 +52,7 @@ from app.config import (
     get_app_environment,
     get_auth_cookie_secure,
     get_public_site_origins,
+    get_quantforecast_url,
 )
 from app.database import SessionLocal, get_db
 from app.dependencies import (
@@ -151,6 +152,11 @@ app.include_router(videos_router.router)
 SESSION_COOKIE_NAME = "trainingbuddy_pilot2_session"
 CSRF_COOKIE_NAME = "trainingbuddy_pilot2_csrf"
 
+# "My apps" cross-project switcher in the account menu — deliberately a
+# fixed, code-level identity check (not a role or permission) since this is
+# about one specific person's own account, not an admin-wide capability.
+MY_APPS_OWNER_USERNAME = "karim"
+
 # --- Login gate ---------------------------------------------------------
 # Real accounts (login screen, sessions, CSRF, per-user roles/permissions)
 # are enforced below. Set AUTH_DISABLED = True only for a throwaway local
@@ -231,6 +237,8 @@ PUBLIC_PATHS = {
     "/design-system.css",
     "/logo.png",
     "/favicon.png",
+    "/drill-diagram.js",
+    "/drill-diagrams-data.js",
     "/public/registrations",
     "/public/contact-messages",
     "/billing/webhook",
@@ -645,16 +653,34 @@ def logout(request: Request, db: Session = Depends(get_db)):
 @app.get("/auth/me")
 def get_current_user(request: Request):
     user = request.state.current_user
-    return {
-        "user": {
-            "user_id": user["user_id"],
-            "username": user["username"],
-            "role": user["role"],
-            "active": user["active"],
-            "feature_permissions": user["feature_permissions"],
-            "avatar_url": user.get("avatar_url"),
-        }
+    payload = {
+        "user_id": user["user_id"],
+        "username": user["username"],
+        "role": user["role"],
+        "active": user["active"],
+        "feature_permissions": user["feature_permissions"],
+        "avatar_url": user.get("avatar_url"),
     }
+
+    if user["username"] == MY_APPS_OWNER_USERNAME:
+        quantforecast_url = get_quantforecast_url()
+        if quantforecast_url:
+            payload["my_apps"] = [
+                {
+                    "name": "TrainingBuddy",
+                    "description": "Current app",
+                    "url": "/dashboard",
+                    "external": False,
+                },
+                {
+                    "name": "QuantForecast",
+                    "description": "Stock research",
+                    "url": quantforecast_url,
+                    "external": True,
+                },
+            ]
+
+    return {"user": payload}
 
 
 @app.post("/auth/me/password")
@@ -1171,6 +1197,22 @@ def app_favicon():
     return FileResponse(
         Path(__file__).parent / "app" / "static" / "favicon.png",
         media_type="image/png",
+    )
+
+
+@app.get("/drill-diagram.js")
+def drill_diagram_script():
+    return FileResponse(
+        Path(__file__).parent / "app" / "static" / "drill_diagram.js",
+        media_type="application/javascript",
+    )
+
+
+@app.get("/drill-diagrams-data.js")
+def drill_diagrams_data_script():
+    return FileResponse(
+        Path(__file__).parent / "app" / "static" / "drill_diagrams_data.js",
+        media_type="application/javascript",
     )
 
 

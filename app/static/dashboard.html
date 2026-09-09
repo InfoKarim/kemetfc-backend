@@ -130,6 +130,23 @@
       background: rgba(255, 155, 155, .08) !important;
     }
     #account-sign-out:hover { background: rgba(255, 155, 155, .16) !important; }
+    .account-apps-label {
+      margin: 10px 0 4px 10px; padding: 0;
+      color: #8ca1bb; font-size: 11px; font-weight: 700;
+      letter-spacing: .06em; text-transform: uppercase;
+    }
+    #account-panel a.account-app-link {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      width: 100%; margin-top: 8px; padding: 10px 14px; box-sizing: border-box;
+      border: 1px solid rgba(255, 255, 255, .14) !important; border-radius: 9px;
+      background: rgba(255, 255, 255, .06) !important;
+      color: #dce7f5 !important; text-decoration: none;
+      font: inherit; font-size: 13px; font-weight: 700; text-align: left;
+    }
+    #account-panel a.account-app-link:hover { background: rgba(255, 255, 255, .12) !important; }
+    #account-panel a.account-app-link .account-app-current {
+      color: #7cdb20 !important; font-size: 11px; font-weight: 800;
+    }
     #account-password-form { display: grid; gap: 8px; padding: 6px 10px 4px; }
     /* Elements here get an explicit `display` value (block/grid) for their
        visible state, which otherwise outranks the browser's default
@@ -572,6 +589,8 @@
     @media (max-width: 520px) { .getting-started { padding: 18px; border-radius: 18px; } .journey { grid-template-columns: 1fr; } .journey a { min-height: 0; } }
   </style>
   <script src="/auth-client.js"></script>
+  <script src="/drill-diagram.js"></script>
+  <script src="/drill-diagrams-data.js"></script>
   <style>
     /* Premium Kemet FC home — current navy, lime, and white palette */
     body.dashboard-home {
@@ -976,6 +995,195 @@
       .drill-cards { grid-template-columns: 1fr; }
     }
   </style>
+
+  <!--
+    Dashboard-only theme: deep dark blue + a gold accent touch, replacing
+    the navy/gold palette from design-system.css on this page ONLY. Every
+    other page keeps the shared navy/gold theme untouched — design-system.css
+    itself is not modified. These rules are declared last in the document,
+    so they win the cascade over the earlier stylesheet and this page's own
+    <style> block above for matching selectors/importance.
+
+    Note: this page's own body.dashboard-home rule (above) redefines
+    --page/--navy directly ON body, at higher specificity than a plain
+    :root rule — a :root-only override loses to it even with !important,
+    because a directly-specified value on an element always wins over one
+    the element would otherwise inherit. So the variables are redefined
+    here on body.dashboard-home itself, not just on :root.
+  -->
+  <style>
+    :root, body.dashboard-home {
+      --navy: #241b06 !important;      /* dark text on gold buttons/badges */
+      --gold-accent: #e3b34f !important; /* the "touch of gold" */
+      --lime: #e3b34f !important;      /* primary accent, was gold #F5C45D, now a richer gold */
+      --page: #0d1f3a !important;      /* app background — dark blue, was navy/charcoal */
+    }
+
+    body, body.dashboard-home {
+      background:
+        radial-gradient(circle at 8% -5%, rgba(227, 179, 79, .06), transparent 30%),
+        radial-gradient(circle at 96% 12%, rgba(37, 99, 235, .06), transparent 28%),
+        var(--page) !important;
+    }
+
+    body, .card, .panel, .stat, .toolbar, .journey a, .journey strong,
+    .app-topbar h1, .app-topbar .titles p, h1, h2, h3, h4, h5, h6 {
+      color: var(--ink) !important;
+    }
+
+    header {
+      border-bottom-color: rgba(227, 179, 79, .3) !important;
+      background:
+        radial-gradient(circle at 85% 0%, rgba(227, 179, 79, .14), transparent 32%),
+        linear-gradient(125deg, #0d1f3a 0%, #14264a 58%, #1a2f52 100%) !important;
+    }
+
+    button, .button, .quick-link, .watch, .home-link {
+      background: linear-gradient(135deg, #f6dfa6, var(--lime)) !important;
+      color: var(--navy) !important;
+    }
+    button:not(:disabled):hover, .button:hover, .quick-link:hover,
+    .watch:hover, .home-link:hover {
+      box-shadow: 0 12px 24px rgba(227, 179, 79, .22) !important;
+    }
+
+    .card, .panel, .stat, .toolbar {
+      background: rgba(20, 42, 74, .92) !important;
+    }
+    .card:hover, .stat:hover {
+      border-color: rgba(227, 179, 79, .35) !important;
+    }
+
+    .badge, .pill, .meta span {
+      border-color: rgba(227, 179, 79, .22) !important;
+      background: rgba(227, 179, 79, .1) !important;
+    }
+
+    table { background: #14264a !important; }
+    th { background: #1a2f52 !important; }
+
+    .state, .empty, .empty-state {
+      background: rgba(20, 42, 74, .6) !important;
+    }
+
+    .layout aside {
+      background:
+        radial-gradient(circle at 20% 0%, rgba(227, 179, 79, .08), transparent 28%),
+        linear-gradient(180deg, #14264a, #081226 88%) !important;
+    }
+
+    .layout nav a:hover {
+      border-color: rgba(227, 179, 79, .28) !important;
+    }
+    .layout nav a.active {
+      background: var(--lime) !important;
+      color: var(--navy) !important;
+      box-shadow: 0 8px 18px rgba(227, 179, 79, .35) !important;
+    }
+
+    .quick-link, .stat-icon, .avatar, .action-icon {
+      background: linear-gradient(160deg, #f6dfa6, var(--lime)) !important;
+      color: var(--navy) !important;
+    }
+
+    .journey a {
+      background: rgba(20, 42, 74, .92) !important;
+    }
+    .journey a:hover { border-color: rgba(227, 179, 79, .35) !important; }
+    .journey-number {
+      color: var(--navy) !important;
+      border-color: rgba(227, 179, 79, .4) !important;
+      background: var(--lime) !important;
+    }
+    .journey small { color: var(--muted) !important; }
+
+    .mobile-nav { background: #14264a !important; }
+    .app-topbar { background: rgba(20, 42, 74, .7) !important; }
+
+    /* Your training workspace */
+    .workspace-eyebrow { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+    .workspace-drill-row {
+      display: grid;
+      grid-template-columns: 96px 1fr auto;
+      gap: 16px;
+      align-items: center;
+      padding: 14px 0;
+      border-top: 1px solid var(--line);
+    }
+    .workspace-drill-row:first-of-type { border-top: 0; padding-top: 0; }
+    .workspace-drill-thumb {
+      overflow: hidden;
+      width: 96px;
+      height: 68px;
+      border-radius: 10px;
+      background: #1c5238;
+      cursor: pointer;
+      border: 0;
+      padding: 0;
+    }
+    .workspace-drill-thumb.placeholder {
+      display: grid;
+      place-items: center;
+      color: rgba(244, 247, 250, .55);
+      font-size: 10.5px;
+      font-weight: 700;
+      text-align: center;
+      padding: 4px;
+      cursor: default;
+    }
+    .workspace-drill-info h3 { margin: 0 0 4px; font-size: 15px; color: var(--ink); }
+    .workspace-drill-info p { margin: 0; color: var(--muted); font-size: 13px; }
+    .workspace-view-drill-btn {
+      padding: 9px 13px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-size: 13px;
+      font-weight: 750;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .workspace-view-drill-btn:hover { background: rgba(244, 247, 250, .06); }
+    .workspace-view-drill-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    .workspace-diagram-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; }
+    .workspace-diagram-legend-item { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+
+    .workspace-modal-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 500;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(0, 0, 0, .6);
+    }
+    .workspace-modal-overlay[hidden] { display: none; }
+    .workspace-modal-card {
+      width: min(680px, 100%);
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: #1b1b1b;
+      color: var(--ink);
+    }
+    .workspace-modal-head { display: flex; justify-content: space-between; align-items: start; gap: 14px; margin-bottom: 12px; }
+    .workspace-modal-head h3 { margin: 0 0 4px; font-size: 19px; color: var(--ink); }
+    .workspace-modal-head p { margin: 0; color: var(--muted); font-size: 13px; }
+    .workspace-modal-close { border: 0; background: none; color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; padding: 4px; }
+    .workspace-modal-steps { margin: 16px 0 0; padding-left: 20px; color: var(--ink); font-size: 13.5px; }
+    .workspace-modal-steps li { margin-bottom: 6px; }
+
+    @media (max-width: 600px) {
+      .workspace-drill-row { grid-template-columns: 72px 1fr; }
+      .workspace-drill-row .workspace-view-drill-btn { grid-column: 1 / -1; width: 100%; }
+      .workspace-drill-thumb { width: 72px; height: 52px; }
+    }
+  </style>
 </head>
 <body class="dashboard-home">
   <div class="layout">
@@ -1024,6 +1232,9 @@
             <button type="submit">Save</button>
           </div>
         </form>
+        <div id="account-apps" hidden>
+          <p class="account-apps-label">My apps</p>
+        </div>
         <button type="button" id="account-sign-out">Sign out</button>
       </div>
     </aside>
@@ -1112,6 +1323,17 @@
           <a class="home-action" href="/development-snapshot"><span class="action-icon">PS</span><span>Player Snapshot</span></a>
           <a class="home-action" href="/drill-library"><span class="action-icon">DL</span><span>Drill Library</span></a>
           <a class="home-action" href="/training-plans-dashboard"><span class="action-icon">TP</span><span>Training Plans</span></a>
+        </div>
+      </section>
+
+      <section class="panel" id="training-workspace-panel">
+        <div class="panel-header">
+          <h2>Your training workspace</h2>
+          <a id="workspace-open-plan" href="/training-plans-dashboard">Open training plan →</a>
+        </div>
+        <div class="panel-body">
+          <p class="workspace-eyebrow">Sample session · First touch &amp; passing</p>
+          <div id="workspace-drill-rows"></div>
         </div>
       </section>
 
@@ -1281,6 +1503,31 @@
       document.querySelector("#account-name").textContent = user.username;
       document.querySelector("#account-role").textContent =
         roleLabels[user.role] || user.role;
+
+      if (Array.isArray(user.my_apps) && user.my_apps.length) {
+        const appsContainer = document.querySelector("#account-apps");
+        for (const app of user.my_apps) {
+          const link = document.createElement("a");
+          link.className = "account-app-link";
+          link.href = app.url;
+          if (app.external) {
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+          }
+          const label = document.createElement("span");
+          label.textContent = app.name;
+          link.append(label);
+          if (!app.external) {
+            const current = document.createElement("span");
+            current.className = "account-app-current";
+            current.textContent = "Current";
+            link.append(current);
+          }
+          link.title = app.description || "";
+          appsContainer.append(link);
+        }
+        appsContainer.hidden = false;
+      }
 
       const avatarInput = document.querySelector("#account-avatar-input");
       const avatarStatus = document.querySelector("#account-avatar-status");
@@ -2177,6 +2424,110 @@ function renderPlayer(players, analyses) {
     initTopbar();
     refreshBadges();
     loadDashboard();
+  </script>
+
+  <div class="workspace-modal-overlay" id="workspace-drill-modal" hidden>
+    <div class="workspace-modal-card">
+      <div class="workspace-modal-head">
+        <div>
+          <h3 id="workspace-modal-title"></h3>
+          <p id="workspace-modal-description"></p>
+        </div>
+        <button type="button" class="workspace-modal-close" id="workspace-modal-close" aria-label="Close">×</button>
+      </div>
+      <div id="workspace-modal-diagram"></div>
+      <ol class="workspace-modal-steps" id="workspace-modal-steps"></ol>
+    </div>
+  </div>
+  <script>
+    (function () {
+      const modal = document.querySelector("#workspace-drill-modal");
+      document.querySelector("#workspace-modal-close").addEventListener("click", () => { modal.hidden = true; });
+      modal.addEventListener("click", (event) => { if (event.target === modal) modal.hidden = true; });
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && !modal.hidden) modal.hidden = true;
+      });
+
+      function openWorkspaceDrillModal(entry) {
+        const diagram = entry.diagram;
+        document.querySelector("#workspace-modal-title").textContent = diagram.name;
+        document.querySelector("#workspace-modal-description").textContent = diagram.description;
+        const diagramHost = document.querySelector("#workspace-modal-diagram");
+        window.DrillDiagram.render(diagramHost, diagram, { withLegend: true });
+        diagramHost.querySelector(".drill-diagram-legend")?.classList.add("workspace-diagram-legend");
+        for (const item of diagramHost.querySelectorAll(".drill-diagram-legend-item")) {
+          item.classList.add("workspace-diagram-legend-item");
+        }
+        const stepsList = document.querySelector("#workspace-modal-steps");
+        stepsList.replaceChildren(...diagram.steps.map((step) => {
+          const li = document.createElement("li");
+          li.textContent = step;
+          return li;
+        }));
+        modal.hidden = false;
+      }
+
+      window.renderWorkspaceDrillRows = function renderWorkspaceDrillRows() {
+        const root = document.querySelector("#workspace-drill-rows");
+        if (!root || !window.DRILL_LIBRARY_DIAGRAMS) return;
+        root.replaceChildren();
+        const entries = Object.values(window.DRILL_LIBRARY_DIAGRAMS);
+
+        for (const entry of entries) {
+          const row = document.createElement("div");
+          row.className = "workspace-drill-row";
+
+          let thumb;
+          if (entry.diagram) {
+            thumb = document.createElement("button");
+            thumb.type = "button";
+            thumb.className = "workspace-drill-thumb";
+            thumb.setAttribute("aria-label", `View diagram for ${entry.name}`);
+            window.DrillDiagram.render(thumb, entry.diagram);
+            thumb.addEventListener("click", () => openWorkspaceDrillModal(entry));
+          } else {
+            thumb = document.createElement("div");
+            thumb.className = "workspace-drill-thumb placeholder";
+            thumb.textContent = "Diagram coming soon";
+          }
+
+          const info = document.createElement("div");
+          info.className = "workspace-drill-info";
+          const h3 = document.createElement("h3");
+          h3.textContent = entry.name;
+          const p = document.createElement("p");
+          p.textContent = entry.summary;
+          info.append(h3, p);
+
+          const viewBtn = document.createElement("button");
+          viewBtn.type = "button";
+          viewBtn.className = "workspace-view-drill-btn";
+          viewBtn.textContent = "View drill";
+          if (entry.diagram) {
+            viewBtn.addEventListener("click", () => openWorkspaceDrillModal(entry));
+          } else {
+            viewBtn.disabled = true;
+          }
+
+          row.append(thumb, info, viewBtn);
+          root.append(row);
+        }
+      };
+
+      window.renderWorkspaceDrillRows();
+
+      fetch("/training-plans")
+        .then((response) => (response.ok ? response.json() : []))
+        .then((plans) => {
+          if (!plans.length) return;
+          const latestPlan = [...plans].sort(
+            (a, b) => new Date(b.created_at) - new Date(a.created_at)
+          )[0];
+          document.querySelector("#workspace-open-plan").href =
+            `/training-plan-details?plan_id=${encodeURIComponent(latestPlan.plan_id)}`;
+        })
+        .catch(() => {});
+    })();
   </script>
 </body>
 </html>

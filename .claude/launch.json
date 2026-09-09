@@ -4,7 +4,7 @@
     {
       "name": "tb-preview",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", ".venv/bin/uvicorn main:app --reload --port ${PORT:-8010}"],
+      "runtimeArgs": ["-c", "cd \"/Users/karim/Downloads/cloud_platform 4\" && .venv/bin/uvicorn main:app --reload --port ${PORT:-8010}"],
       "port": 8010,
       "autoPort": true
     }
