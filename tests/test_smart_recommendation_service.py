@@ -64,6 +64,84 @@ def test_generate_focus_areas_parses_json_from_model_reply(monkeypatch):
     }]
 
 
+DRILL_CATALOG = [
+    {"key": "first-touch-gates", "name": "First-touch gates", "summary": "First touch."},
+    {"key": "passing-pairs", "name": "Passing pairs", "summary": "Passing."},
+    {"key": "control-turn", "name": "Control & turn", "summary": "Turning."},
+]
+
+
+def test_get_drill_diagram_recommendation_parses_model_reply(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    anthropic_payload = {
+        "content": [{
+            "type": "text",
+            "text": (
+                '{"drill_key": "passing-pairs", "reasoning": '
+                '"Passing was the lowest measured attribute."}'
+            ),
+        }]
+    }
+
+    def fake_urlopen(request, timeout=None):
+        return FakeHTTPResponse(anthropic_payload)
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", fake_urlopen)
+
+    result = service.get_drill_diagram_recommendation(
+        player_name="Test Player",
+        age=12,
+        weaknesses=[{"attribute": "Passing", "score": 60}],
+        strengths=[{"attribute": "Speed", "score": 90}],
+        available_drills=DRILL_CATALOG,
+    )
+
+    assert result == {
+        "drill_key": "passing-pairs",
+        "reasoning": "Passing was the lowest measured attribute.",
+    }
+
+
+def test_get_drill_diagram_recommendation_rejects_unknown_drill_key(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    anthropic_payload = {
+        "content": [{
+            "type": "text",
+            "text": '{"drill_key": "not-a-real-drill", "reasoning": "..."}',
+        }]
+    }
+
+    monkeypatch.setattr(
+        service.urllib.request,
+        "urlopen",
+        lambda request, timeout=None: FakeHTTPResponse(anthropic_payload),
+    )
+
+    with pytest.raises(service.RecommendationError):
+        service.get_drill_diagram_recommendation(
+            player_name="Test Player",
+            age=12,
+            weaknesses=[],
+            strengths=[],
+            available_drills=DRILL_CATALOG,
+        )
+
+
+def test_get_drill_diagram_recommendation_requires_configured_provider(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "")
+
+    with pytest.raises(service.RecommendationError):
+        service.get_drill_diagram_recommendation(
+            player_name="Test Player",
+            age=12,
+            weaknesses=[],
+            strengths=[],
+            available_drills=DRILL_CATALOG,
+        )
+
+
 def test_generate_focus_areas_skips_leading_thinking_block(monkeypatch):
     # Extended-thinking models return a "thinking" content block before the
     # actual "text" block — content[0] is not reliably the answer.

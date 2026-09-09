@@ -1,5 +1,5 @@
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import csv
 import hmac
 import io
@@ -82,6 +82,7 @@ from app.services.smart_recommendation_service import (
     RecommendationError,
     get_smart_recommendations,
     get_coaching_insights,
+    get_drill_diagram_recommendation,
     get_sports_medicine_notes,
     get_tactical_scores,
     get_profile_scores,
@@ -2155,6 +2156,85 @@ def get_player_coaching_insights(
         raise HTTPException(status_code=502, detail=str(error))
 
     return {"insights": insights, "source": source, "provider": provider}
+
+
+# Mirrors the drill keys/summaries in app/static/drill_diagrams_data.js —
+# duplicated here because the AI prompt is built server-side (to keep API
+# keys off the client), while the actual diagram geometry stays client-only.
+WORKSPACE_DRILL_CATALOG = [
+    {
+        "key": "first-touch-gates",
+        "name": "First-touch gates",
+        "summary": "Players receive and take a positive first touch through the gates.",
+    },
+    {
+        "key": "passing-pairs",
+        "name": "Passing pairs",
+        "summary": "Build passing quality and movement in pairs.",
+    },
+    {
+        "key": "control-turn",
+        "name": "Control & turn",
+        "summary": "Receive, control and turn into space with a positive next action.",
+    },
+]
+
+# Unlike the other AI recommendation endpoints (button-triggered, on demand),
+# this one is fetched automatically every time a coach opens the dashboard —
+# so it's cached per player+provider to avoid billing a real API call on
+# every page load/refresh. Process-local is fine here: it's a soft cost
+# control, not a correctness guarantee, and this app runs a single worker.
+_RECOMMENDED_DRILL_CACHE: dict[str, tuple[datetime, dict]] = {}
+RECOMMENDED_DRILL_CACHE_TTL = timedelta(hours=6)
+
+
+@app.get("/players/{player_id}/recommended-drill")
+def get_player_recommended_drill(
+    player_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    provider = resolve_ai_provider(request)
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if not is_provider_configured(provider):
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    cache_key = f"{player_id}:{provider}"
+    cached = _RECOMMENDED_DRILL_CACHE.get(cache_key)
+    if cached and datetime.now() - cached[0] < RECOMMENDED_DRILL_CACHE_TTL:
+        return cached[1]
+
+    weaknesses, strengths, source = _resolve_player_weaknesses_strengths(
+        player, db
+    )
+
+    try:
+        recommendation = get_drill_diagram_recommendation(
+            player_name=f"{player.first_name_en} {player.last_name_en}",
+            age=calculate_player_age(player.date_of_birth),
+            weaknesses=weaknesses,
+            strengths=strengths,
+            available_drills=WORKSPACE_DRILL_CATALOG,
+            provider=provider,
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    result = {
+        "drill_key": recommendation["drill_key"],
+        "reasoning": recommendation.get("reasoning", ""),
+        "source": source,
+        "provider": provider,
+    }
+    _RECOMMENDED_DRILL_CACHE[cache_key] = (datetime.now(), result)
+    return result
 
 
 @app.get("/players/{player_id}/tactical-assessment")

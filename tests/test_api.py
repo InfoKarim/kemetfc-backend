@@ -1414,6 +1414,68 @@ def test_player_coaching_insights_unknown_player_returns_404():
     assert response.status_code == 404
 
 
+def test_player_recommended_drill_returns_recommendation(monkeypatch):
+    import main
+
+    create_test_player("P634")
+
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
+
+    fake_recommendation = {
+        "drill_key": "passing-pairs",
+        "reasoning": "Passing accuracy was the lowest measured attribute.",
+    }
+
+    def fake_get_drill_diagram_recommendation(**kwargs):
+        assert kwargs["available_drills"] == main.WORKSPACE_DRILL_CATALOG
+        return fake_recommendation
+
+    monkeypatch.setattr(
+        main,
+        "get_drill_diagram_recommendation",
+        fake_get_drill_diagram_recommendation,
+    )
+
+    response = client.get("/players/P634/recommended-drill")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["drill_key"] == "passing-pairs"
+    assert body["reasoning"] == fake_recommendation["reasoning"]
+    assert body["provider"] == "claude"
+
+
+def test_player_recommended_drill_not_configured_returns_404(monkeypatch):
+    import main
+
+    create_test_player("P635")
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
+
+    response = client.get("/players/P635/recommended-drill")
+    assert response.status_code == 404
+
+
+def test_player_recommended_drill_unknown_player_returns_404():
+    response = client.get("/players/DOES_NOT_EXIST/recommended-drill")
+    assert response.status_code == 404
+
+
+def test_player_recommended_drill_propagates_recommendation_errors(monkeypatch):
+    import main
+    from app.services.smart_recommendation_service import RecommendationError
+
+    create_test_player("P636")
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
+
+    def fake_raise(**kwargs):
+        raise RecommendationError("AI recommended an unknown drill")
+
+    monkeypatch.setattr(main, "get_drill_diagram_recommendation", fake_raise)
+
+    response = client.get("/players/P636/recommended-drill")
+    assert response.status_code == 502
+
+
 def test_player_smart_recommendations_raises_502_on_recommendation_error(monkeypatch):
     import main
 

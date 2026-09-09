@@ -388,6 +388,61 @@ def get_sports_medicine_notes(
     )
 
 
+def get_drill_diagram_recommendation(
+    player_name: str,
+    age: int,
+    weaknesses: list,
+    strengths: list,
+    available_drills: list[dict],
+    provider: str = "claude",
+) -> dict:
+    _require_provider(provider)
+
+    catalog = "\n".join(
+        f'- key: "{drill["key"]}", name: "{drill["name"]}", '
+        f'summary: "{drill["summary"]}"'
+        for drill in available_drills
+    )
+
+    prompt = (
+        "You are a youth football coach choosing which single drill from a "
+        "small library best fits a specific player's development needs "
+        "right now.\n"
+        f"Player: {player_name}, age {age}.\n"
+        f"Measured weaknesses: {_describe(weaknesses)}\n"
+        f"Measured strengths: {_describe(strengths)}\n\n"
+        f"Available drills:\n{catalog}\n\n"
+        "Pick exactly one drill key from the list above that best addresses "
+        "this player's weaknesses. Reply with ONLY a JSON object (no prose, "
+        "no markdown fences) with this shape: "
+        '{"drill_key": "<one of the keys above, exactly as written>", '
+        '"reasoning": "one or two sentences explaining why this drill fits '
+        'this player, referencing their own weaknesses"}'
+    )
+
+    raw_text = _call_model(prompt, provider)
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+
+    if match is None:
+        raise RecommendationError("Could not parse AI drill recommendation")
+
+    try:
+        result = json.loads(match.group(0))
+    except json.JSONDecodeError as error:
+        raise RecommendationError(
+            "Could not parse AI drill recommendation"
+        ) from error
+
+    if not isinstance(result, dict) or "drill_key" not in result:
+        raise RecommendationError("Could not parse AI drill recommendation")
+
+    valid_keys = {drill["key"] for drill in available_drills}
+    if result["drill_key"] not in valid_keys:
+        raise RecommendationError("AI recommended an unknown drill")
+
+    return result
+
+
 def get_coaching_insights(
     player_name: str,
     age: int,
