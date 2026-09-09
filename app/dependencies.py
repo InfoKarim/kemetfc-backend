@@ -84,6 +84,14 @@ def season_payload(season) -> dict:
     }
 
 
+def _isoformat_utc(value):
+    # submitted_at is stored as a naive UTC datetime (see utcnow() in
+    # auth_service.py). Without an explicit "Z"/offset, browsers parse
+    # the serialized string as local time instead of UTC, so callers
+    # displaying it (e.g. registrations.html) show the wrong clock time.
+    return None if value is None else value.isoformat() + "Z"
+
+
 def registration_payload(registration) -> dict:
     return {
         "registration_id": registration.registration_id,
@@ -98,7 +106,7 @@ def registration_payload(registration) -> dict:
         "experience_level": registration.experience_level,
         "current_team": registration.current_team,
         "consents": registration.consents,
-        "submitted_at": registration.submitted_at,
+        "submitted_at": _isoformat_utc(registration.submitted_at),
     }
 
 
@@ -109,7 +117,7 @@ def contact_message_payload(message) -> dict:
         "email": message.email,
         "topic": message.topic,
         "message": message.message,
-        "submitted_at": message.submitted_at,
+        "submitted_at": _isoformat_utc(message.submitted_at),
     }
 
 
