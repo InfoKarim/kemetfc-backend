@@ -242,7 +242,6 @@ PUBLIC_PATHS = {
     "/public/registrations",
     "/public/contact-messages",
     "/billing/webhook",
-    "/_debug/my-apps-check",
 }
 HTML_PAGE_PATHS = {
     "/",
@@ -649,33 +648,6 @@ def logout(request: Request, db: Session = Depends(get_db)):
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
     response.delete_cookie(CSRF_COOKIE_NAME, path="/")
     return response
-
-
-@app.get("/_debug/my-apps-check")
-def debug_my_apps_check(token: str, db: Session = Depends(get_db)):
-    if token != "1Ta0zFVVssTNtR9ewi97wK-26mvGHSrF":
-        raise HTTPException(status_code=404)
-
-    import os
-
-    karim = db.query(UserDB).filter(UserDB.username == "karim").first()
-    quantforecast_url = get_quantforecast_url()
-    raw_env = os.environ.get("QUANTFORECAST_URL")
-
-    return {
-        "owner_constant": MY_APPS_OWNER_USERNAME,
-        "karim_row_found": karim is not None,
-        "karim_username_repr": repr(karim.username) if karim else None,
-        "karim_active": karim.active if karim else None,
-        "username_matches_constant": (
-            karim.username == MY_APPS_OWNER_USERNAME if karim else None
-        ),
-        "raw_env_repr": repr(raw_env),
-        "get_quantforecast_url_result": repr(quantforecast_url),
-        "would_show_my_apps": bool(
-            karim and karim.username == MY_APPS_OWNER_USERNAME and quantforecast_url
-        ),
-    }
 
 
 @app.get("/auth/me")
