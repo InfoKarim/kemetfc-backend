@@ -319,5 +319,5 @@
     return legend;
   }
 
-  window.DrillDiagram = { render, describe };
+  window.DrillDiagram = { render, describe, buildLegend };
 })();
