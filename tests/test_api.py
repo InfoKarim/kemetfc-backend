@@ -1476,10 +1476,38 @@ def test_player_recommended_drill_propagates_recommendation_errors(monkeypatch):
     assert response.status_code == 502
 
 
+FAKE_GENERATED_DIAGRAM = {
+    "name": "Weak-foot passing gate",
+    "description": "Players pass through a gate using only their weak foot.",
+    "viewBox": {"width": 600, "height": 380},
+    "cones": [{"x": 300, "y": 150}, {"x": 300, "y": 250}],
+    "players": [
+        {"label": "P1", "x": 100, "y": 200},
+        {"label": "P2", "x": 400, "y": 200},
+    ],
+    "balls": [{"x": 100, "y": 222}],
+    "paths": [
+        {
+            "type": "ball_pass",
+            "points": [{"x": 114, "y": 200}, {"x": 386, "y": 200}],
+            "step": 2,
+            "label": "Weak-foot pass",
+        },
+    ],
+    "steps": [
+        "Player 1 and Player 2 face each other with a gate between them.",
+        "Player 1 passes through the gate using only the weak foot.",
+    ],
+}
+
+
 def test_workspace_drill_search_returns_ranked_results(monkeypatch):
     import main
 
     monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
+    monkeypatch.setattr(
+        main, "generate_drill_diagram", lambda **kwargs: FAKE_GENERATED_DIAGRAM
+    )
 
     fake_results = [
         {"drill_key": "passing-pairs", "reasoning": "Directly about passing."},
@@ -1488,7 +1516,7 @@ def test_workspace_drill_search_returns_ranked_results(monkeypatch):
     ]
 
     def fake_search(**kwargs):
-        assert kwargs["query"] == "passing drills for young players"
+        assert kwargs["query"] == "passing drills for young players unique 1"
         assert kwargs["available_drills"] == main.WORKSPACE_DRILL_CATALOG
         return fake_results
 
@@ -1496,13 +1524,16 @@ def test_workspace_drill_search_returns_ranked_results(monkeypatch):
 
     response = client.get(
         "/workspace-drills/search",
-        params={"q": "passing drills for young players"},
+        params={"q": "passing drills for young players unique 1"},
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["results"] == fake_results
     assert body["provider"] == "claude"
+    assert body["generated"]["name"] == FAKE_GENERATED_DIAGRAM["name"]
+    assert body["generated"]["summary"] == FAKE_GENERATED_DIAGRAM["description"]
+    assert body["generated"]["key"].startswith("GEN")
 
 
 def test_workspace_drill_search_requires_query():
@@ -1524,14 +1555,67 @@ def test_workspace_drill_search_propagates_recommendation_errors(monkeypatch):
     from app.services.smart_recommendation_service import RecommendationError
 
     monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
+    monkeypatch.setattr(
+        main, "generate_drill_diagram", lambda **kwargs: FAKE_GENERATED_DIAGRAM
+    )
 
     def fake_raise(**kwargs):
         raise RecommendationError("Could not parse AI search results")
 
     monkeypatch.setattr(main, "search_workspace_drills", fake_raise)
 
-    response = client.get("/workspace-drills/search", params={"q": "passing"})
+    response = client.get(
+        "/workspace-drills/search",
+        params={"q": "passing drills unique for 502 test"},
+    )
     assert response.status_code == 502
+
+
+def test_workspace_drill_search_generation_failure_still_returns_ranked_results(
+    monkeypatch,
+):
+    import main
+    from app.services.smart_recommendation_service import RecommendationError
+
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
+    monkeypatch.setattr(main, "search_workspace_drills", lambda **kwargs: [])
+
+    def fake_generate(**kwargs):
+        raise RecommendationError("AI-generated diagram has invalid players")
+
+    monkeypatch.setattr(main, "generate_drill_diagram", fake_generate)
+
+    response = client.get(
+        "/workspace-drills/search",
+        params={"q": "a query that generates nothing usable"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["generated"] is None
+
+
+def test_workspace_drill_search_reuses_previously_generated_diagram(monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
+    monkeypatch.setattr(main, "search_workspace_drills", lambda **kwargs: [])
+
+    call_count = {"n": 0}
+
+    def fake_generate(**kwargs):
+        call_count["n"] += 1
+        return FAKE_GENERATED_DIAGRAM
+
+    monkeypatch.setattr(main, "generate_drill_diagram", fake_generate)
+
+    query = "  Weak Foot Passing Gate Reuse Test  "
+    first = client.get("/workspace-drills/search", params={"q": query})
+    second = client.get("/workspace-drills/search", params={"q": query.strip().lower()})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert call_count["n"] == 1
+    assert first.json()["generated"]["key"] == second.json()["generated"]["key"]
 
 
 def test_player_smart_recommendations_raises_502_on_recommendation_error(monkeypatch):

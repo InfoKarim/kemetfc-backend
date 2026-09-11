@@ -234,6 +234,96 @@ def test_search_workspace_drills_requires_configured_provider(monkeypatch):
         )
 
 
+VALID_GENERATED_DIAGRAM_TEXT = json.dumps({
+    "name": "Weak-foot passing gate",
+    "description": "Players pass through a gate using only their weak foot.",
+    "cones": [{"x": 300, "y": 150}, {"x": 300, "y": 250}],
+    "players": [
+        {"label": "P1", "x": 100, "y": 200},
+        {"label": "P2", "x": 400, "y": 200},
+    ],
+    "balls": [{"x": 100, "y": 222}],
+    "paths": [
+        {
+            "type": "ball_pass",
+            "points": [{"x": 114, "y": 200}, {"x": 386, "y": 200}],
+            "step": 2,
+            "label": "Weak-foot pass",
+        },
+    ],
+    "steps": [
+        "Player 1 and Player 2 face each other with a gate between them.",
+        "Player 1 passes through the gate using only the weak foot.",
+    ],
+})
+
+
+def _fake_anthropic_reply(monkeypatch, text):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+    payload = {"content": [{"type": "text", "text": text}]}
+    monkeypatch.setattr(
+        service.urllib.request,
+        "urlopen",
+        lambda request, timeout=None: FakeHTTPResponse(payload),
+    )
+
+
+def test_generate_drill_diagram_parses_and_validates_a_good_reply(monkeypatch):
+    _fake_anthropic_reply(monkeypatch, VALID_GENERATED_DIAGRAM_TEXT)
+
+    diagram = service.generate_drill_diagram(query="weak foot passing")
+
+    assert diagram["name"] == "Weak-foot passing gate"
+    assert diagram["viewBox"] == {"width": 600, "height": 380}
+    assert len(diagram["players"]) == 2
+    assert diagram["players"][0]["label"] == "P1"
+    assert diagram["paths"][0]["type"] == "ball_pass"
+    assert len(diagram["steps"]) == 2
+
+
+def test_generate_drill_diagram_rejects_out_of_bounds_coordinates(monkeypatch):
+    bad = json.loads(VALID_GENERATED_DIAGRAM_TEXT)
+    bad["players"][0]["x"] = 9999
+    _fake_anthropic_reply(monkeypatch, json.dumps(bad))
+
+    with pytest.raises(service.RecommendationError):
+        service.generate_drill_diagram(query="weak foot passing")
+
+
+def test_generate_drill_diagram_rejects_invalid_path_type(monkeypatch):
+    bad = json.loads(VALID_GENERATED_DIAGRAM_TEXT)
+    bad["paths"][0]["type"] = "teleport"
+    _fake_anthropic_reply(monkeypatch, json.dumps(bad))
+
+    with pytest.raises(service.RecommendationError):
+        service.generate_drill_diagram(query="weak foot passing")
+
+
+def test_generate_drill_diagram_rejects_too_many_players(monkeypatch):
+    bad = json.loads(VALID_GENERATED_DIAGRAM_TEXT)
+    bad["players"] = [{"label": "P", "x": 100, "y": 100}] * 10
+    _fake_anthropic_reply(monkeypatch, json.dumps(bad))
+
+    with pytest.raises(service.RecommendationError):
+        service.generate_drill_diagram(query="weak foot passing")
+
+
+def test_generate_drill_diagram_rejects_missing_name(monkeypatch):
+    bad = json.loads(VALID_GENERATED_DIAGRAM_TEXT)
+    del bad["name"]
+    _fake_anthropic_reply(monkeypatch, json.dumps(bad))
+
+    with pytest.raises(service.RecommendationError):
+        service.generate_drill_diagram(query="weak foot passing")
+
+
+def test_generate_drill_diagram_requires_configured_provider(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "")
+
+    with pytest.raises(service.RecommendationError):
+        service.generate_drill_diagram(query="weak foot passing")
+
+
 def test_generate_focus_areas_skips_leading_thinking_block(monkeypatch):
     # Extended-thinking models return a "thinking" content block before the
     # actual "text" block — content[0] is not reliably the answer.
@@ -521,8 +611,12 @@ def test_call_openai_parses_chat_completions_response(monkeypatch):
 
 
 def test_call_model_dispatches_by_provider(monkeypatch):
-    monkeypatch.setattr(service, "_call_anthropic", lambda prompt: "claude-reply")
-    monkeypatch.setattr(service, "_call_openai", lambda prompt: "chatgpt-reply")
+    monkeypatch.setattr(
+        service, "_call_anthropic", lambda prompt, **kwargs: "claude-reply"
+    )
+    monkeypatch.setattr(
+        service, "_call_openai", lambda prompt, **kwargs: "chatgpt-reply"
+    )
 
     assert service._call_model("hi", "claude") == "claude-reply"
     assert service._call_model("hi", "chatgpt") == "chatgpt-reply"

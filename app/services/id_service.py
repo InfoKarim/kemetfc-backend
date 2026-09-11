@@ -6,6 +6,7 @@ from app.db_models import (
     ContactMessageDB,
     DataRecordDB,
     DrillDB,
+    GeneratedDrillDiagramDB,
     GuardianConsentDB,
     IdCounterDB,
     MatchDB,
@@ -36,6 +37,7 @@ ENTITY_CONFIG = {
     "registration": ("REG", AssessmentRegistrationDB),
     "ml_dataset_entry": ("MLDS", MLDatasetEntryDB),
     "contact_message": ("MSG", ContactMessageDB),
+    "generated_drill_diagram": ("GEN", GeneratedDrillDiagramDB),
 }
 
 

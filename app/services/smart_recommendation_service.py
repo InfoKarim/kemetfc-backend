@@ -41,11 +41,15 @@ def _describe(items: list) -> str:
     return "; ".join(labels) if labels else "None recorded"
 
 
-def _call_anthropic(prompt: str) -> str:
+def _call_anthropic(
+    prompt: str,
+    max_tokens: int = 700,
+    timeout: int = REQUEST_TIMEOUT_SECONDS,
+) -> str:
     api_key = get_anthropic_api_key()
     body = json.dumps({
         "model": get_anthropic_model(),
-        "max_tokens": 700,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
 
@@ -62,9 +66,7 @@ def _call_anthropic(prompt: str) -> str:
 
     try:
         # ANTHROPIC_API_URL is a hardcoded https constant, not user input — no SSRF risk.
-        with urllib.request.urlopen(  # nosec B310
-            request, timeout=REQUEST_TIMEOUT_SECONDS
-        ) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
             payload = json.loads(response.read())
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="ignore")
@@ -86,6 +88,12 @@ def _call_anthropic(prompt: str) -> str:
         ) from error
 
     if not text_blocks:
+        if payload.get("stop_reason") == "max_tokens":
+            raise RecommendationError(
+                "Anthropic response was cut off before any answer text "
+                "(the model spent the whole token budget on extended "
+                "thinking) — retry with a higher max_tokens"
+            )
         raise RecommendationError("Unexpected response from Anthropic API")
 
     return text_blocks[0]
@@ -95,11 +103,15 @@ def get_openai_model() -> str:
     return os.getenv("OPENAI_MODEL", "gpt-4o").strip()
 
 
-def _call_openai(prompt: str) -> str:
+def _call_openai(
+    prompt: str,
+    max_tokens: int = 700,
+    timeout: int = REQUEST_TIMEOUT_SECONDS,
+) -> str:
     api_key = get_openai_api_key()
     body = json.dumps({
         "model": get_openai_model(),
-        "max_tokens": 700,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
 
@@ -115,9 +127,7 @@ def _call_openai(prompt: str) -> str:
 
     try:
         # OPENAI_API_URL is a hardcoded https constant, not user input — no SSRF risk.
-        with urllib.request.urlopen(  # nosec B310
-            request, timeout=REQUEST_TIMEOUT_SECONDS
-        ) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # nosec B310
             payload = json.loads(response.read())
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="ignore")
@@ -135,11 +145,16 @@ def _call_openai(prompt: str) -> str:
         ) from error
 
 
-def _call_model(prompt: str, provider: str = "claude") -> str:
+def _call_model(
+    prompt: str,
+    provider: str = "claude",
+    max_tokens: int = 700,
+    timeout: int = REQUEST_TIMEOUT_SECONDS,
+) -> str:
     if provider == "chatgpt":
-        return _call_openai(prompt)
+        return _call_openai(prompt, max_tokens=max_tokens, timeout=timeout)
     if provider == "claude":
-        return _call_anthropic(prompt)
+        return _call_anthropic(prompt, max_tokens=max_tokens, timeout=timeout)
     raise RecommendationError(f"Unknown AI provider: {provider}")
 
 
@@ -494,6 +509,187 @@ def search_workspace_drills(
         raise RecommendationError("AI search results did not match the drill library")
 
     return filtered
+
+
+# Fixed canvas the diagram renderer (drill_diagram.js) always uses. Generated
+# diagrams must fit inside it — points near the padded pitch edge are
+# rejected rather than clamped, since a coach should never see a diagram
+# that was silently distorted from what the AI actually described.
+GENERATED_DIAGRAM_VIEWBOX = {"width": 600, "height": 380}
+GENERATED_DIAGRAM_X_RANGE = (20, 580)
+GENERATED_DIAGRAM_Y_RANGE = (20, 360)
+VALID_DIAGRAM_PATH_TYPES = {"player_move", "ball_pass", "dribble"}
+
+
+def _validate_diagram_point(point, field_name: str) -> dict:
+    if not isinstance(point, dict):
+        raise RecommendationError(f"AI-generated diagram has an invalid {field_name}")
+
+    x, y = point.get("x"), point.get("y")
+    x_min, x_max = GENERATED_DIAGRAM_X_RANGE
+    y_min, y_max = GENERATED_DIAGRAM_Y_RANGE
+
+    if not isinstance(x, (int, float)) or isinstance(x, bool) or not (x_min <= x <= x_max):
+        raise RecommendationError(
+            f"AI-generated diagram has a {field_name} outside the pitch bounds"
+        )
+    if not isinstance(y, (int, float)) or isinstance(y, bool) or not (y_min <= y <= y_max):
+        raise RecommendationError(
+            f"AI-generated diagram has a {field_name} outside the pitch bounds"
+        )
+
+    return {"x": float(x), "y": float(y)}
+
+
+def generate_drill_diagram(query: str, provider: str = "claude") -> dict:
+    _require_provider(provider)
+
+    x_min, x_max = GENERATED_DIAGRAM_X_RANGE
+    y_min, y_max = GENERATED_DIAGRAM_Y_RANGE
+
+    prompt = (
+        "You are a youth football coach designing a brand-new training "
+        "diagram for a specific drill request — this is not from a fixed "
+        "library, you are inventing the drill layout yourself.\n"
+        f'Coach request: "{query}"\n\n'
+        f"Design one drill that matches this request, on a fixed "
+        f"{GENERATED_DIAGRAM_VIEWBOX['width']}x{GENERATED_DIAGRAM_VIEWBOX['height']} "
+        "pixel pitch diagram. Reply with ONLY a JSON object (no prose, no "
+        "markdown fences) with exactly this shape:\n"
+        "{\n"
+        '  "name": "short drill name (2-5 words)",\n'
+        '  "description": "one sentence describing the drill",\n'
+        f'  "cones": [{{"x": <{x_min}-{x_max}>, "y": <{y_min}-{y_max}>}}, ...] '
+        "(0 to 6 cones),\n"
+        '  "players": [{"label": "short label, max 3 characters, e.g. P1, A, D", '
+        f'"x": <{x_min}-{x_max}>, "y": <{y_min}-{y_max}>}}, ...] (1 to 6 players),\n'
+        f'  "balls": [{{"x": <{x_min}-{x_max}>, "y": <{y_min}-{y_max}>}}, ...] '
+        "(0 to 2 balls),\n"
+        '  "paths": [{"type": "player_move" | "ball_pass" | "dribble", '
+        f'"points": [{{"x":<{x_min}-{x_max}>,"y":<{y_min}-{y_max}>}}, '
+        f'{{"x":<{x_min}-{x_max}>,"y":<{y_min}-{y_max}>}}], '
+        '"step": <integer, starting at 2 and increasing by 1 per path>, '
+        '"label": "short 1-3 word label"}, ...] (1 to 6 paths, each with '
+        "exactly 2 points),\n"
+        '  "steps": ["one plain-English coaching instruction per numbered '
+        'step — start with a step 1 that has no arrow (just positioning), '
+        'then one step per path above, in the same order"]\n'
+        "}\n"
+        "Every x and y MUST be strictly inside the given ranges — these are "
+        "fixed pixel coordinates on the diagram canvas, not real-world "
+        "distances, and values outside the ranges will be rejected."
+    )
+
+    # A larger budget than the other prompts in this file: this response is
+    # a full structured object (multiple players/cones/paths/steps), and
+    # extended-thinking models can spend a large, unpredictable chunk of
+    # the budget on thinking before ever emitting the answer text.
+    raw_text = _call_model(prompt, provider, max_tokens=4096, timeout=45)
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+
+    if match is None:
+        raise RecommendationError("Could not parse AI-generated diagram")
+
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError as error:
+        raise RecommendationError("Could not parse AI-generated diagram") from error
+
+    if not isinstance(data, dict):
+        raise RecommendationError("Could not parse AI-generated diagram")
+
+    name = data.get("name")
+    description = data.get("description")
+    if not isinstance(name, str) or not name.strip():
+        raise RecommendationError("AI-generated diagram is missing a name")
+    if not isinstance(description, str) or not description.strip():
+        raise RecommendationError("AI-generated diagram is missing a description")
+
+    cones_raw = data.get("cones", [])
+    players_raw = data.get("players", [])
+    balls_raw = data.get("balls", [])
+    paths_raw = data.get("paths", [])
+    steps_raw = data.get("steps", [])
+
+    if not isinstance(cones_raw, list) or len(cones_raw) > 8:
+        raise RecommendationError("AI-generated diagram has invalid cones")
+    if not isinstance(players_raw, list) or not (1 <= len(players_raw) <= 6):
+        raise RecommendationError("AI-generated diagram has invalid players")
+    if not isinstance(balls_raw, list) or len(balls_raw) > 3:
+        raise RecommendationError("AI-generated diagram has invalid balls")
+    if not isinstance(paths_raw, list) or not (1 <= len(paths_raw) <= 8):
+        raise RecommendationError("AI-generated diagram has invalid paths")
+    if not isinstance(steps_raw, list) or not (1 <= len(steps_raw) <= 12):
+        raise RecommendationError("AI-generated diagram has invalid steps")
+
+    cones = [
+        {"id": f"cone-{i}", **_validate_diagram_point(cone, "cone")}
+        for i, cone in enumerate(cones_raw)
+    ]
+
+    players = []
+    for i, player in enumerate(players_raw):
+        if not isinstance(player, dict):
+            raise RecommendationError("AI-generated diagram has an invalid player")
+        label = player.get("label")
+        if not isinstance(label, str) or not label.strip() or len(label.strip()) > 4:
+            raise RecommendationError("AI-generated diagram has an invalid player label")
+        point = _validate_diagram_point(player, "player")
+        players.append({"id": f"player-{i}", "label": label.strip(), **point})
+
+    balls = [
+        {"id": f"ball-{i}", **_validate_diagram_point(ball, "ball")}
+        for i, ball in enumerate(balls_raw)
+    ]
+
+    paths = []
+    for i, path in enumerate(paths_raw):
+        if not isinstance(path, dict):
+            raise RecommendationError("AI-generated diagram has an invalid path")
+
+        path_type = path.get("type")
+        if path_type not in VALID_DIAGRAM_PATH_TYPES:
+            raise RecommendationError("AI-generated diagram has an invalid path type")
+
+        points_raw = path.get("points")
+        if not isinstance(points_raw, list) or not (2 <= len(points_raw) <= 4):
+            raise RecommendationError("AI-generated diagram has invalid path points")
+        points = [
+            _validate_diagram_point(point, "path point") for point in points_raw
+        ]
+
+        step = path.get("step")
+        if step is not None and (isinstance(step, bool) or not isinstance(step, int)):
+            raise RecommendationError("AI-generated diagram has an invalid path step")
+
+        label = path.get("label")
+        if label is not None and not isinstance(label, str):
+            raise RecommendationError("AI-generated diagram has an invalid path label")
+
+        paths.append({
+            "id": f"path-{i}",
+            "type": path_type,
+            "points": points,
+            "step": step,
+            "label": label.strip() if isinstance(label, str) else None,
+        })
+
+    steps = []
+    for step_text in steps_raw:
+        if not isinstance(step_text, str) or not step_text.strip():
+            raise RecommendationError("AI-generated diagram has invalid step text")
+        steps.append(step_text.strip())
+
+    return {
+        "name": name.strip(),
+        "description": description.strip(),
+        "viewBox": dict(GENERATED_DIAGRAM_VIEWBOX),
+        "cones": cones,
+        "players": players,
+        "balls": balls,
+        "paths": paths,
+        "steps": steps,
+    }
 
 
 def get_coaching_insights(

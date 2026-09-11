@@ -452,6 +452,24 @@ class SubscriptionDB(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class GeneratedDrillDiagramDB(Base):
+    """An AI-generated coaching diagram, created on demand by a workspace
+    search that didn't already have a strong match in the hand-authored
+    drill library. Kept so an identical future search reuses it instead of
+    re-billing the AI provider for the same query."""
+
+    __tablename__ = "generated_drill_diagrams"
+
+    diagram_id: Mapped[str] = mapped_column(String, primary_key=True)
+    query: Mapped[str] = mapped_column(String)
+    query_normalized: Mapped[str] = mapped_column(String, index=True, unique=True)
+    name: Mapped[str] = mapped_column(String)
+    description: Mapped[str] = mapped_column(String)
+    diagram_json: Mapped[dict] = mapped_column(JSON)
+    provider: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class AuditEventDB(Base):
     __tablename__ = "audit_events"
 

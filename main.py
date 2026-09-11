@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.responses import Response
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api_schemas import (
@@ -74,7 +75,7 @@ from app.data_models import (
     AIAnalysisRecord,
     TrainingPlanData,
 )
-from app.db_models import PlayerDB, UserDB
+from app.db_models import GeneratedDrillDiagramDB, PlayerDB, UserDB
 from app.development_plan import create_development_plan
 from app.development_forecast import forecast_development
 from app.development_snapshot import build_development_snapshot, calculate_player_age
@@ -82,6 +83,7 @@ from app.services.smart_recommendation_service import (
     RecommendationError,
     get_smart_recommendations,
     get_coaching_insights,
+    generate_drill_diagram,
     get_drill_diagram_recommendation,
     get_sports_medicine_notes,
     get_tactical_scores,
@@ -2259,7 +2261,10 @@ def get_player_recommended_drill(
 
 
 @app.get("/workspace-drills/search")
-def search_workspace_drills_endpoint(request: Request):
+def search_workspace_drills_endpoint(
+    request: Request,
+    db: Session = Depends(get_db),
+):
     provider = resolve_ai_provider(request)
     query = request.query_params.get("q", "").strip()
 
@@ -2281,7 +2286,80 @@ def search_workspace_drills_endpoint(request: Request):
     except RecommendationError as error:
         raise HTTPException(status_code=502, detail=str(error))
 
-    return {"results": results, "provider": provider}
+    # Beyond just ranking the fixed catalog, generate a brand-new diagram
+    # tailored to this exact search — and grow a real, persistent library
+    # over time instead of regenerating (and re-billing) on every repeat of
+    # the same query. A generation failure here is non-fatal: the ranked
+    # catalog results above are still a useful response on their own.
+    generated_payload = None
+    query_normalized = query.lower()
+
+    existing = (
+        db.query(GeneratedDrillDiagramDB)
+        .filter(GeneratedDrillDiagramDB.query_normalized == query_normalized)
+        .one_or_none()
+    )
+
+    if existing is not None:
+        generated_payload = {
+            "key": existing.diagram_id,
+            "name": existing.name,
+            "summary": existing.description,
+            "diagram": existing.diagram_json,
+        }
+    else:
+        try:
+            diagram = generate_drill_diagram(query=query, provider=provider)
+        except RecommendationError:
+            diagram = None
+
+        if diagram is not None:
+            diagram_id = next_entity_id(db, "generated_drill_diagram")
+            diagram_with_id = {**diagram, "id": diagram_id}
+            row = GeneratedDrillDiagramDB(
+                diagram_id=diagram_id,
+                query=query,
+                query_normalized=query_normalized,
+                name=diagram["name"],
+                description=diagram["description"],
+                diagram_json=diagram_with_id,
+                provider=provider,
+                created_at=datetime.now(),
+            )
+            db.add(row)
+            try:
+                db.commit()
+                generated_payload = {
+                    "key": diagram_id,
+                    "name": diagram["name"],
+                    "summary": diagram["description"],
+                    "diagram": diagram_with_id,
+                }
+            except IntegrityError:
+                # Another concurrent request generated one for the same
+                # query first — fall back to that instead of erroring out.
+                db.rollback()
+                existing = (
+                    db.query(GeneratedDrillDiagramDB)
+                    .filter(
+                        GeneratedDrillDiagramDB.query_normalized
+                        == query_normalized
+                    )
+                    .one_or_none()
+                )
+                if existing is not None:
+                    generated_payload = {
+                        "key": existing.diagram_id,
+                        "name": existing.name,
+                        "summary": existing.description,
+                        "diagram": existing.diagram_json,
+                    }
+
+    return {
+        "results": results,
+        "generated": generated_payload,
+        "provider": provider,
+    }
 
 
 @app.get("/players/{player_id}/tactical-assessment")

@@ -1124,6 +1124,11 @@
       font-weight: 800;
       letter-spacing: .03em;
     }
+    .workspace-ai-badge-generated {
+      margin-left: 6px;
+      background: rgba(124, 156, 219, .18);
+      color: #a9c0f5;
+    }
     .workspace-search { display: flex; gap: 8px; margin-bottom: 12px; }
     .workspace-search input {
       flex: 1;
@@ -2564,6 +2569,7 @@ function renderPlayer(players, analyses) {
         options = options || {};
         const recommendedKey = typeof options === "string" ? options : options.recommendedKey;
         const rankedResults = options.rankedResults;
+        const generatedKey = options.generatedKey;
 
         const root = document.querySelector("#workspace-drill-rows");
         if (!root || !window.DRILL_LIBRARY_DIAGRAMS) return;
@@ -2614,6 +2620,12 @@ function renderPlayer(players, analyses) {
             const badge = document.createElement("span");
             badge.className = "workspace-ai-badge";
             badge.textContent = "🤖 AI recommended";
+            info.append(badge);
+          }
+          if (entry.key === generatedKey) {
+            const badge = document.createElement("span");
+            badge.className = "workspace-ai-badge workspace-ai-badge-generated";
+            badge.textContent = "✨ AI-generated";
             info.append(badge);
           }
           const h3 = document.createElement("h3");
@@ -2685,7 +2697,24 @@ function renderPlayer(players, analyses) {
               return;
             }
 
-            lastWorkspaceRenderOptions = { rankedResults: data.results };
+            let rankedResults = data.results || [];
+            let generatedKey = null;
+
+            if (data.generated) {
+              generatedKey = data.generated.key;
+              window.DRILL_LIBRARY_DIAGRAMS[generatedKey] = {
+                key: generatedKey,
+                name: data.generated.name,
+                summary: data.generated.summary,
+                diagram: data.generated.diagram,
+              };
+              rankedResults = [
+                { drill_key: generatedKey, reasoning: "Freshly generated for this exact search." },
+                ...rankedResults,
+              ];
+            }
+
+            lastWorkspaceRenderOptions = { rankedResults, generatedKey };
             window.renderWorkspaceDrillRows(lastWorkspaceRenderOptions);
             const eyebrow = document.querySelector("#workspace-eyebrow");
             if (eyebrow) eyebrow.textContent = `Search results for "${query}"`;
