@@ -1476,6 +1476,64 @@ def test_player_recommended_drill_propagates_recommendation_errors(monkeypatch):
     assert response.status_code == 502
 
 
+def test_workspace_drill_search_returns_ranked_results(monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
+
+    fake_results = [
+        {"drill_key": "passing-pairs", "reasoning": "Directly about passing."},
+        {"drill_key": "control-turn", "reasoning": "Involves a touch, weaker match."},
+        {"drill_key": "first-touch-gates", "reasoning": "Not about passing."},
+    ]
+
+    def fake_search(**kwargs):
+        assert kwargs["query"] == "passing drills for young players"
+        assert kwargs["available_drills"] == main.WORKSPACE_DRILL_CATALOG
+        return fake_results
+
+    monkeypatch.setattr(main, "search_workspace_drills", fake_search)
+
+    response = client.get(
+        "/workspace-drills/search",
+        params={"q": "passing drills for young players"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"] == fake_results
+    assert body["provider"] == "claude"
+
+
+def test_workspace_drill_search_requires_query():
+    response = client.get("/workspace-drills/search", params={"q": ""})
+    assert response.status_code == 400
+
+
+def test_workspace_drill_search_not_configured_returns_404(monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: False)
+
+    response = client.get("/workspace-drills/search", params={"q": "passing"})
+    assert response.status_code == 404
+
+
+def test_workspace_drill_search_propagates_recommendation_errors(monkeypatch):
+    import main
+    from app.services.smart_recommendation_service import RecommendationError
+
+    monkeypatch.setattr(main, "is_provider_configured", lambda provider: True)
+
+    def fake_raise(**kwargs):
+        raise RecommendationError("Could not parse AI search results")
+
+    monkeypatch.setattr(main, "search_workspace_drills", fake_raise)
+
+    response = client.get("/workspace-drills/search", params={"q": "passing"})
+    assert response.status_code == 502
+
+
 def test_player_smart_recommendations_raises_502_on_recommendation_error(monkeypatch):
     import main
 

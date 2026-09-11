@@ -87,6 +87,7 @@ from app.services.smart_recommendation_service import (
     get_tactical_scores,
     get_profile_scores,
     is_provider_configured,
+    search_workspace_drills,
 )
 from app.drill_recommendations import build_drill_recommendations
 from app.match_performance import MatchPerformance, MATCH_PERFORMANCE_FIELD_HINTS
@@ -2235,6 +2236,32 @@ def get_player_recommended_drill(
     }
     _RECOMMENDED_DRILL_CACHE[cache_key] = (datetime.now(), result)
     return result
+
+
+@app.get("/workspace-drills/search")
+def search_workspace_drills_endpoint(request: Request):
+    provider = resolve_ai_provider(request)
+    query = request.query_params.get("q", "").strip()
+
+    if not query:
+        raise HTTPException(status_code=400, detail="Search query is required")
+
+    if not is_provider_configured(provider):
+        raise HTTPException(
+            status_code=404,
+            detail="Smart recommendations are not configured",
+        )
+
+    try:
+        results = search_workspace_drills(
+            query=query,
+            available_drills=WORKSPACE_DRILL_CATALOG,
+            provider=provider,
+        )
+    except RecommendationError as error:
+        raise HTTPException(status_code=502, detail=str(error))
+
+    return {"results": results, "provider": provider}
 
 
 @app.get("/players/{player_id}/tactical-assessment")

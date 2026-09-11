@@ -443,6 +443,59 @@ def get_drill_diagram_recommendation(
     return result
 
 
+def search_workspace_drills(
+    query: str,
+    available_drills: list[dict],
+    provider: str = "claude",
+) -> list[dict]:
+    _require_provider(provider)
+
+    catalog = "\n".join(
+        f'- key: "{drill["key"]}", name: "{drill["name"]}", '
+        f'summary: "{drill["summary"]}"'
+        for drill in available_drills
+    )
+
+    prompt = (
+        "You are a youth football coach searching a small drill library "
+        "using natural language.\n"
+        f'Coach search: "{query}"\n\n'
+        f"Available drills:\n{catalog}\n\n"
+        "Rank EVERY drill above by how well it matches this search, most "
+        "relevant first — include all of them, even weak matches, so the "
+        "full library stays browsable. Reply with ONLY a JSON array (no "
+        "prose, no markdown fences), where each item has this shape: "
+        '{"drill_key": "<one of the keys above, exactly as written>", '
+        '"reasoning": "one short sentence on how well this drill matches '
+        'the search"}'
+    )
+
+    raw_text = _call_model(prompt, provider)
+    match = re.search(r"\[.*\]", raw_text, re.DOTALL)
+
+    if match is None:
+        raise RecommendationError("Could not parse AI search results")
+
+    try:
+        results = json.loads(match.group(0))
+    except json.JSONDecodeError as error:
+        raise RecommendationError("Could not parse AI search results") from error
+
+    if not isinstance(results, list) or not results:
+        raise RecommendationError("Could not parse AI search results")
+
+    valid_keys = {drill["key"] for drill in available_drills}
+    filtered = [
+        item for item in results
+        if isinstance(item, dict) and item.get("drill_key") in valid_keys
+    ]
+
+    if not filtered:
+        raise RecommendationError("AI search results did not match the drill library")
+
+    return filtered
+
+
 def get_coaching_insights(
     player_name: str,
     age: int,

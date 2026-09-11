@@ -142,6 +142,98 @@ def test_get_drill_diagram_recommendation_requires_configured_provider(monkeypat
         )
 
 
+def test_search_workspace_drills_parses_ranked_results(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    anthropic_payload = {
+        "content": [{
+            "type": "text",
+            "text": (
+                '[{"drill_key": "passing-pairs", "reasoning": "Best match."}, '
+                '{"drill_key": "control-turn", "reasoning": "Weaker match."}, '
+                '{"drill_key": "first-touch-gates", "reasoning": "Not related."}]'
+            ),
+        }]
+    }
+
+    monkeypatch.setattr(
+        service.urllib.request,
+        "urlopen",
+        lambda request, timeout=None: FakeHTTPResponse(anthropic_payload),
+    )
+
+    results = service.search_workspace_drills(
+        query="passing drills",
+        available_drills=DRILL_CATALOG,
+    )
+
+    assert [item["drill_key"] for item in results] == [
+        "passing-pairs",
+        "control-turn",
+        "first-touch-gates",
+    ]
+
+
+def test_search_workspace_drills_drops_unknown_keys_but_keeps_valid_ones(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    anthropic_payload = {
+        "content": [{
+            "type": "text",
+            "text": (
+                '[{"drill_key": "not-a-real-drill", "reasoning": "..."}, '
+                '{"drill_key": "passing-pairs", "reasoning": "Valid match."}]'
+            ),
+        }]
+    }
+
+    monkeypatch.setattr(
+        service.urllib.request,
+        "urlopen",
+        lambda request, timeout=None: FakeHTTPResponse(anthropic_payload),
+    )
+
+    results = service.search_workspace_drills(
+        query="passing drills",
+        available_drills=DRILL_CATALOG,
+    )
+
+    assert results == [{"drill_key": "passing-pairs", "reasoning": "Valid match."}]
+
+
+def test_search_workspace_drills_raises_when_all_keys_unknown(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    anthropic_payload = {
+        "content": [{
+            "type": "text",
+            "text": '[{"drill_key": "not-a-real-drill", "reasoning": "..."}]',
+        }]
+    }
+
+    monkeypatch.setattr(
+        service.urllib.request,
+        "urlopen",
+        lambda request, timeout=None: FakeHTTPResponse(anthropic_payload),
+    )
+
+    with pytest.raises(service.RecommendationError):
+        service.search_workspace_drills(
+            query="passing drills",
+            available_drills=DRILL_CATALOG,
+        )
+
+
+def test_search_workspace_drills_requires_configured_provider(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "")
+
+    with pytest.raises(service.RecommendationError):
+        service.search_workspace_drills(
+            query="passing drills",
+            available_drills=DRILL_CATALOG,
+        )
+
+
 def test_generate_focus_areas_skips_leading_thinking_block(monkeypatch):
     # Extended-thinking models return a "thinking" content block before the
     # actual "text" block — content[0] is not reliably the answer.
