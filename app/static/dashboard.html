@@ -1232,6 +1232,41 @@
     .workspace-modal-head h3 { margin: 0 0 4px; font-size: 19px; color: var(--ink); }
     .workspace-modal-head p { margin: 0; color: var(--muted); font-size: 13px; }
     .workspace-modal-close { border: 0; background: none; color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; padding: 4px; }
+    #workspace-modal-diagram-wrap { position: relative; }
+    #workspace-annotation-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      pointer-events: none;
+      cursor: crosshair;
+    }
+    .workspace-annotation-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .workspace-annotation-toolbar button {
+      padding: 7px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      font-size: 12.5px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .workspace-annotation-toolbar button:hover { background: rgba(244, 247, 250, .06); }
+    .workspace-draw-toggle-active {
+      background: rgba(255, 91, 91, .15) !important;
+      border-color: rgba(255, 91, 91, .4) !important;
+      color: #ff8a8a !important;
+    }
+    #workspace-draw-status { color: var(--muted); font-size: 12px; }
     .workspace-modal-steps { margin: 16px 0 0; padding-left: 20px; color: var(--ink); font-size: 13.5px; }
     .workspace-modal-steps li { margin-bottom: 6px; }
 
@@ -2533,18 +2568,177 @@ function renderPlayer(players, analyses) {
         </div>
         <button type="button" class="workspace-modal-close" id="workspace-modal-close" aria-label="Close">×</button>
       </div>
-      <div id="workspace-modal-diagram"></div>
+      <div id="workspace-modal-diagram-wrap">
+        <div id="workspace-modal-diagram"></div>
+        <svg id="workspace-annotation-svg" viewBox="0 0 600 380"></svg>
+      </div>
+      <div class="workspace-annotation-toolbar">
+        <button type="button" id="workspace-draw-toggle">✏️ Draw</button>
+        <button type="button" id="workspace-draw-clear">🗑 Clear</button>
+        <button type="button" id="workspace-draw-save" hidden>💾 Save note</button>
+        <span id="workspace-draw-status"></span>
+      </div>
       <ol class="workspace-modal-steps" id="workspace-modal-steps"></ol>
     </div>
   </div>
   <script>
     (function () {
       const modal = document.querySelector("#workspace-drill-modal");
-      document.querySelector("#workspace-modal-close").addEventListener("click", () => { modal.hidden = true; });
-      modal.addEventListener("click", (event) => { if (event.target === modal) modal.hidden = true; });
+      const annotationSvg = document.querySelector("#workspace-annotation-svg");
+      const drawToggleBtn = document.querySelector("#workspace-draw-toggle");
+      const drawClearBtn = document.querySelector("#workspace-draw-clear");
+      const drawSaveBtn = document.querySelector("#workspace-draw-save");
+      const drawStatus = document.querySelector("#workspace-draw-status");
+      const SVG_NS = "http://www.w3.org/2000/svg";
+
+      let currentDiagramKey = null;
+      let currentStrokes = [];
+      let drawModeOn = false;
+      let activeStroke = null;
+      let activePathEl = null;
+      let dirty = false;
+
+      document.querySelector("#workspace-modal-close").addEventListener("click", () => { closeModal(); });
+      modal.addEventListener("click", (event) => { if (event.target === modal) closeModal(); });
       document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && !modal.hidden) modal.hidden = true;
+        if (event.key === "Escape" && !modal.hidden) closeModal();
       });
+
+      function closeModal() {
+        modal.hidden = true;
+        setDrawMode(false);
+      }
+
+      function setDrawStatus(text) {
+        drawStatus.textContent = text || "";
+      }
+
+      function setDrawMode(on) {
+        drawModeOn = on;
+        annotationSvg.style.pointerEvents = on ? "auto" : "none";
+        drawToggleBtn.classList.toggle("workspace-draw-toggle-active", on);
+        drawToggleBtn.textContent = on ? "✏️ Drawing…" : "✏️ Draw";
+      }
+
+      function strokeToPathData(points) {
+        return points
+          .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+          .join(" ");
+      }
+
+      function renderStrokes() {
+        for (const path of annotationSvg.querySelectorAll("path")) path.remove();
+        for (const stroke of currentStrokes) {
+          const path = document.createElementNS(SVG_NS, "path");
+          path.setAttribute("d", strokeToPathData(stroke));
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", "#ff5b5b");
+          path.setAttribute("stroke-width", "3");
+          path.setAttribute("stroke-linecap", "round");
+          path.setAttribute("stroke-linejoin", "round");
+          annotationSvg.append(path);
+        }
+      }
+
+      function pointerToSvgPoint(event) {
+        const point = annotationSvg.createSVGPoint();
+        point.x = event.clientX;
+        point.y = event.clientY;
+        const ctm = annotationSvg.getScreenCTM();
+        if (!ctm) return { x: 0, y: 0 };
+        const transformed = point.matrixTransform(ctm.inverse());
+        return { x: transformed.x, y: transformed.y };
+      }
+
+      annotationSvg.addEventListener("pointerdown", (event) => {
+        if (!drawModeOn) return;
+        event.preventDefault();
+        annotationSvg.setPointerCapture(event.pointerId);
+        activeStroke = [pointerToSvgPoint(event)];
+        activePathEl = document.createElementNS(SVG_NS, "path");
+        activePathEl.setAttribute("fill", "none");
+        activePathEl.setAttribute("stroke", "#ff5b5b");
+        activePathEl.setAttribute("stroke-width", "3");
+        activePathEl.setAttribute("stroke-linecap", "round");
+        activePathEl.setAttribute("stroke-linejoin", "round");
+        annotationSvg.append(activePathEl);
+      });
+
+      annotationSvg.addEventListener("pointermove", (event) => {
+        if (!drawModeOn || !activeStroke) return;
+        event.preventDefault();
+        activeStroke.push(pointerToSvgPoint(event));
+        activePathEl.setAttribute("d", strokeToPathData(activeStroke));
+      });
+
+      function finishStroke() {
+        if (!activeStroke) return;
+        if (activeStroke.length > 1) {
+          currentStrokes.push(activeStroke);
+          dirty = true;
+          drawSaveBtn.hidden = false;
+          setDrawStatus("Unsaved markup");
+        } else {
+          activePathEl?.remove();
+        }
+        activeStroke = null;
+        activePathEl = null;
+      }
+
+      annotationSvg.addEventListener("pointerup", finishStroke);
+      annotationSvg.addEventListener("pointercancel", finishStroke);
+
+      drawToggleBtn.addEventListener("click", () => setDrawMode(!drawModeOn));
+
+      drawClearBtn.addEventListener("click", () => {
+        if (!currentStrokes.length) return;
+        currentStrokes = [];
+        renderStrokes();
+        dirty = true;
+        drawSaveBtn.hidden = false;
+        setDrawStatus("Unsaved markup");
+      });
+
+      drawSaveBtn.addEventListener("click", async () => {
+        if (!currentDiagramKey) return;
+        drawSaveBtn.disabled = true;
+        setDrawStatus("Saving…");
+        try {
+          const response = await fetch(
+            `/workspace-drills/${encodeURIComponent(currentDiagramKey)}/annotation`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ strokes: currentStrokes }),
+            }
+          );
+          if (!response.ok) throw new Error("save failed");
+          dirty = false;
+          drawSaveBtn.hidden = true;
+          setDrawStatus("Saved ✓");
+        } catch (error) {
+          setDrawStatus("Could not save — try again");
+        } finally {
+          drawSaveBtn.disabled = false;
+        }
+      });
+
+      async function loadAnnotation(diagramKey) {
+        currentStrokes = [];
+        renderStrokes();
+        try {
+          const response = await fetch(
+            `/workspace-drills/${encodeURIComponent(diagramKey)}/annotation`
+          );
+          if (response.ok) {
+            const data = await response.json();
+            currentStrokes = data.strokes || [];
+            renderStrokes();
+          }
+        } catch (error) {
+          // No saved markup, or offline — start with a blank overlay.
+        }
+      }
 
       function openWorkspaceDrillModal(entry) {
         const diagram = entry.diagram;
@@ -2562,6 +2756,14 @@ function renderPlayer(players, analyses) {
           li.textContent = step;
           return li;
         }));
+
+        currentDiagramKey = entry.key;
+        dirty = false;
+        drawSaveBtn.hidden = true;
+        setDrawStatus("");
+        setDrawMode(false);
+        loadAnnotation(entry.key);
+
         modal.hidden = false;
       }
 

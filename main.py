@@ -40,6 +40,7 @@ from app.api_schemas import (
     PublicRegistrationSchema,
     RequestPasswordResetSchema,
     ReviewPrivacyRequestSchema,
+    SaveDrillDiagramAnnotationSchema,
     UpdateUserSchema,
 )
 from app.avatar_upload import (
@@ -75,7 +76,12 @@ from app.data_models import (
     AIAnalysisRecord,
     TrainingPlanData,
 )
-from app.db_models import GeneratedDrillDiagramDB, PlayerDB, UserDB
+from app.db_models import (
+    DrillDiagramAnnotationDB,
+    GeneratedDrillDiagramDB,
+    PlayerDB,
+    UserDB,
+)
 from app.development_plan import create_development_plan
 from app.development_forecast import forecast_development
 from app.development_snapshot import build_development_snapshot, calculate_player_age
@@ -2360,6 +2366,42 @@ def search_workspace_drills_endpoint(
         "generated": generated_payload,
         "provider": provider,
     }
+
+
+@app.get("/workspace-drills/{diagram_key}/annotation")
+def get_drill_diagram_annotation(
+    diagram_key: str,
+    db: Session = Depends(get_db),
+):
+    row = db.get(DrillDiagramAnnotationDB, diagram_key)
+    return {"strokes": row.strokes_json if row is not None else []}
+
+
+@app.put("/workspace-drills/{diagram_key}/annotation")
+def save_drill_diagram_annotation(
+    diagram_key: str,
+    annotation_data: SaveDrillDiagramAnnotationSchema,
+    db: Session = Depends(get_db),
+):
+    strokes_json = [
+        [{"x": point.x, "y": point.y} for point in stroke]
+        for stroke in annotation_data.strokes
+    ]
+
+    row = db.get(DrillDiagramAnnotationDB, diagram_key)
+    if row is None:
+        row = DrillDiagramAnnotationDB(
+            diagram_key=diagram_key,
+            strokes_json=strokes_json,
+            updated_at=datetime.now(),
+        )
+        db.add(row)
+    else:
+        row.strokes_json = strokes_json
+        row.updated_at = datetime.now()
+
+    db.commit()
+    return {"strokes": strokes_json}
 
 
 @app.get("/players/{player_id}/tactical-assessment")

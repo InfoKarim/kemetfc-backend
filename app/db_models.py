@@ -470,6 +470,19 @@ class GeneratedDrillDiagramDB(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class DrillDiagramAnnotationDB(Base):
+    """A coach's freehand pen markup (e.g. drawn with an Apple Pencil on an
+    iPad) sketched on top of one drill diagram — one shared note per
+    diagram key, not per-account, since this is a single small coaching
+    staff annotating a shared drill library."""
+
+    __tablename__ = "drill_diagram_annotations"
+
+    diagram_key: Mapped[str] = mapped_column(String, primary_key=True)
+    strokes_json: Mapped[list] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class AuditEventDB(Base):
     __tablename__ = "audit_events"
 

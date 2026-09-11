@@ -1618,6 +1618,65 @@ def test_workspace_drill_search_reuses_previously_generated_diagram(monkeypatch)
     assert first.json()["generated"]["key"] == second.json()["generated"]["key"]
 
 
+def test_drill_diagram_annotation_defaults_to_empty():
+    response = client.get("/workspace-drills/first-touch-gates/annotation")
+
+    assert response.status_code == 200
+    assert response.json() == {"strokes": []}
+
+
+def test_drill_diagram_annotation_can_be_saved_and_read_back():
+    strokes = [
+        [{"x": 10, "y": 20}, {"x": 15, "y": 25}, {"x": 20, "y": 30}],
+        [{"x": 100, "y": 50}, {"x": 110, "y": 60}],
+    ]
+
+    saved = client.put(
+        "/workspace-drills/passing-pairs/annotation",
+        json={"strokes": strokes},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["strokes"] == strokes
+
+    fetched = client.get("/workspace-drills/passing-pairs/annotation")
+    assert fetched.status_code == 200
+    assert fetched.json()["strokes"] == strokes
+
+
+def test_drill_diagram_annotation_save_overwrites_previous():
+    client.put(
+        "/workspace-drills/control-turn/annotation",
+        json={"strokes": [[{"x": 1, "y": 1}]]},
+    )
+    overwritten = client.put(
+        "/workspace-drills/control-turn/annotation",
+        json={"strokes": []},
+    )
+
+    assert overwritten.status_code == 200
+    assert overwritten.json()["strokes"] == []
+
+    fetched = client.get("/workspace-drills/control-turn/annotation")
+    assert fetched.json()["strokes"] == []
+
+
+def test_drill_diagram_annotation_rejects_out_of_bounds_points():
+    response = client.put(
+        "/workspace-drills/rondo-possession/annotation",
+        json={"strokes": [[{"x": 99999, "y": 20}]]},
+    )
+    assert response.status_code == 422
+
+
+def test_drill_diagram_annotation_rejects_too_many_strokes():
+    strokes = [[{"x": 1, "y": 1}]] * 301
+    response = client.put(
+        "/workspace-drills/shooting-technique/annotation",
+        json={"strokes": strokes},
+    )
+    assert response.status_code == 422
+
+
 def test_player_smart_recommendations_raises_502_on_recommendation_error(monkeypatch):
     import main
 

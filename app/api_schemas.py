@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PhysicalProfileSchema(BaseModel):
@@ -440,3 +440,22 @@ class CreateMessageSchema(BaseModel):
     recipient_id: str = Field(min_length=1, max_length=64)
     subject: str = Field(min_length=1, max_length=200)
     body: str = Field(min_length=1, max_length=5000)
+
+
+class DrillDiagramStrokePointSchema(BaseModel):
+    x: float = Field(ge=0, le=600)
+    y: float = Field(ge=0, le=380)
+
+
+class SaveDrillDiagramAnnotationSchema(BaseModel):
+    strokes: list[list[DrillDiagramStrokePointSchema]] = Field(
+        default_factory=list, max_length=300
+    )
+
+    @field_validator("strokes")
+    @classmethod
+    def _limit_points_per_stroke(cls, strokes):
+        for stroke in strokes:
+            if len(stroke) > 2000:
+                raise ValueError("A single stroke cannot exceed 2000 points")
+        return strokes
