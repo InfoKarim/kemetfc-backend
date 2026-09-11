@@ -2178,6 +2178,26 @@ WORKSPACE_DRILL_CATALOG = [
         "name": "Control & turn",
         "summary": "Receive, control and turn into space with a positive next action.",
     },
+    {
+        "key": "one-v-one-take-on",
+        "name": "1v1 take-on",
+        "summary": "Beat a defender one-on-one with a change of pace and drive through the gate.",
+    },
+    {
+        "key": "rondo-possession",
+        "name": "Rondo (4v1 possession)",
+        "summary": "Keep the ball moving around a square under pressure from a middle defender.",
+    },
+    {
+        "key": "shooting-technique",
+        "name": "Shooting technique",
+        "summary": "Receive at the edge of the box and strike a first-time shot on goal.",
+    },
+    {
+        "key": "switching-play",
+        "name": "Switching play",
+        "summary": "Switch the ball long across the pitch and drive forward into space.",
+    },
 ]
 
 # Unlike the other AI recommendation endpoints (button-triggered, on demand),

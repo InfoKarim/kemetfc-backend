@@ -52,9 +52,13 @@
     return node;
   }
 
+  // The geometric midpoint between the path's start and end — NOT
+  // `points[Math.floor(points.length / 2)]`, which for a 2-point path
+  // (every straight pass/dribble segment) just returns the start point.
   function midpoint(points) {
-    const mid = points[Math.floor((points.length - 1) / 2)];
-    return mid;
+    const first = points[0];
+    const last = points[points.length - 1];
+    return { x: (first.x + last.x) / 2, y: (first.y + last.y) / 2 };
   }
 
   function pointsToLinePath(points) {

@@ -202,6 +202,223 @@
     ],
   };
 
+  const ONE_V_ONE_TAKE_ON = {
+    id: "one-v-one-take-on",
+    name: "1v1 take-on",
+    description:
+      "An attacker drives at a defender, uses a change of pace to beat them, and drives through an end gate.",
+    viewBox: { width: 600, height: 380 },
+    cones: [
+      { id: "gate-1", x: 480, y: 140 },
+      { id: "gate-2", x: 480, y: 260 },
+    ],
+    players: [
+      { id: "a", x: 120, y: 200, label: "A" },
+      { id: "d", x: 300, y: 200, label: "D" },
+    ],
+    balls: [{ id: "ball-start", x: 120, y: 222 }],
+    paths: [
+      {
+        id: "drive-at",
+        type: "dribble",
+        points: [
+          { x: 134, y: 200 },
+          { x: 300, y: 280 },
+        ],
+        step: 2,
+        label: "Drive at defender",
+      },
+      {
+        id: "beat",
+        type: "dribble",
+        points: [
+          { x: 300, y: 280 },
+          { x: 465, y: 255 },
+        ],
+        step: 3,
+        label: "Beat defender",
+      },
+      {
+        id: "jog-back",
+        type: "player_move",
+        points: [
+          { x: 465, y: 255 },
+          { x: 250, y: 260 },
+          { x: 120, y: 200 },
+        ],
+        step: 4,
+        label: "Reset",
+      },
+    ],
+    steps: [
+      "Player A (attacker) faces Player D (defender) with the ball, about 10 yards apart.",
+      "Player A drives directly at the defender with the ball.",
+      "A change of pace takes Player A past the defender and through the gate.",
+      "Player A jogs back with the ball; swap attacker and defender every 3 reps.",
+    ],
+  };
+
+  const RONDO_POSSESSION = {
+    id: "rondo-possession",
+    name: "Rondo (4v1 possession)",
+    description:
+      "Four players keep the ball moving around a square with quick, accurate passes while one defender in the middle tries to win it back.",
+    viewBox: { width: 600, height: 380 },
+    players: [
+      { id: "p1", x: 150, y: 110, label: "P1" },
+      { id: "p2", x: 450, y: 110, label: "P2" },
+      { id: "p3", x: 450, y: 290, label: "P3" },
+      { id: "p4", x: 150, y: 290, label: "P4" },
+      { id: "d", x: 300, y: 200, label: "D" },
+    ],
+    balls: [{ id: "ball-start", x: 150, y: 132 }],
+    paths: [
+      {
+        id: "pass-1",
+        type: "ball_pass",
+        points: [
+          { x: 164, y: 110 },
+          { x: 436, y: 110 },
+        ],
+        step: 2,
+        label: "Pass",
+      },
+      {
+        id: "pass-2",
+        type: "ball_pass",
+        points: [
+          { x: 450, y: 124 },
+          { x: 450, y: 276 },
+        ],
+        step: 3,
+        label: "Pass",
+      },
+      {
+        id: "pass-3",
+        type: "ball_pass",
+        points: [
+          { x: 436, y: 290 },
+          { x: 164, y: 290 },
+        ],
+        step: 4,
+        label: "Pass",
+      },
+      {
+        id: "pass-4",
+        type: "ball_pass",
+        points: [
+          { x: 150, y: 276 },
+          { x: 150, y: 124 },
+        ],
+        step: 5,
+        label: "Pass",
+      },
+    ],
+    steps: [
+      "Four players form a square around one defender in the middle.",
+      "Player 1 passes along the outside to Player 2.",
+      "Player 2 switches it to Player 3.",
+      "Player 3 keeps it moving to Player 4.",
+      "Player 4 returns it to Player 1; the defender rotates in after every 10 completed passes.",
+    ],
+  };
+
+  const SHOOTING_TECHNIQUE = {
+    id: "shooting-technique",
+    name: "Shooting technique",
+    description:
+      "A player receives a pass at the edge of the box and strikes a first-time shot low between the posts.",
+    viewBox: { width: 600, height: 380 },
+    cones: [
+      { id: "post-1", x: 520, y: 150 },
+      { id: "post-2", x: 520, y: 250 },
+    ],
+    players: [
+      { id: "p1", x: 100, y: 280, label: "P1" },
+      { id: "p2", x: 260, y: 280, label: "P2" },
+    ],
+    balls: [{ id: "ball-start", x: 100, y: 302 }],
+    paths: [
+      {
+        id: "pass",
+        type: "ball_pass",
+        points: [
+          { x: 114, y: 280 },
+          { x: 246, y: 280 },
+        ],
+        step: 2,
+        label: "Pass",
+      },
+      {
+        id: "shot",
+        type: "ball_pass",
+        points: [
+          { x: 274, y: 280 },
+          { x: 500, y: 200 },
+        ],
+        step: 3,
+        label: "Shot",
+      },
+      {
+        id: "follow-in",
+        type: "player_move",
+        points: [
+          { x: 260, y: 280 },
+          { x: 480, y: 220 },
+        ],
+        step: 4,
+        label: "Follow in",
+      },
+    ],
+    steps: [
+      "Player 2 checks away from goal, ready to receive on the edge of the box.",
+      "Player 1 plays a firm pass into Player 2's stride.",
+      "Player 2 strikes a first-time shot low between the posts.",
+      "Player 2 follows the shot in for a rebound; rotate after every 5 shots.",
+    ],
+  };
+
+  const SWITCHING_PLAY = {
+    id: "switching-play",
+    name: "Switching play",
+    description:
+      "A long diagonal pass switches the ball from one wide area to the other; the receiving player controls and drives forward.",
+    viewBox: { width: 600, height: 380 },
+    players: [
+      { id: "p1", x: 100, y: 120, label: "P1" },
+      { id: "p2", x: 500, y: 280, label: "P2" },
+    ],
+    balls: [{ id: "ball-start", x: 100, y: 142 }],
+    paths: [
+      {
+        id: "switch",
+        type: "ball_pass",
+        points: [
+          { x: 114, y: 128 },
+          { x: 486, y: 272 },
+        ],
+        step: 2,
+        label: "Switch",
+      },
+      {
+        id: "drive",
+        type: "dribble",
+        points: [
+          { x: 500, y: 280 },
+          { x: 500, y: 170 },
+        ],
+        step: 3,
+        label: "Drive forward",
+      },
+    ],
+    steps: [
+      "Player 1 receives on the left touchline with room to switch the play.",
+      "Player 1 drives a long diagonal pass to Player 2 on the far side.",
+      "Player 2 controls out of the air and drives forward into space.",
+      "Player 2 delivers into the box or carries on; repeat switching sides each rep.",
+    ],
+  };
+
   window.DRILL_LIBRARY_DIAGRAMS = {
     "first-touch-gates": {
       key: "first-touch-gates",
@@ -220,6 +437,30 @@
       name: "Control & turn",
       summary: "Receive, control and turn into space with a positive next action.",
       diagram: CONTROL_AND_TURN,
+    },
+    "one-v-one-take-on": {
+      key: "one-v-one-take-on",
+      name: "1v1 take-on",
+      summary: "Beat a defender one-on-one with a change of pace and drive through the gate.",
+      diagram: ONE_V_ONE_TAKE_ON,
+    },
+    "rondo-possession": {
+      key: "rondo-possession",
+      name: "Rondo (4v1 possession)",
+      summary: "Keep the ball moving around a square under pressure from a middle defender.",
+      diagram: RONDO_POSSESSION,
+    },
+    "shooting-technique": {
+      key: "shooting-technique",
+      name: "Shooting technique",
+      summary: "Receive at the edge of the box and strike a first-time shot on goal.",
+      diagram: SHOOTING_TECHNIQUE,
+    },
+    "switching-play": {
+      key: "switching-play",
+      name: "Switching play",
+      summary: "Switch the ball long across the pitch and drive forward into space.",
+      diagram: SWITCHING_PLAY,
     },
   };
 })();
