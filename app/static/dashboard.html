@@ -1222,6 +1222,7 @@
       width: min(680px, 100%);
       max-height: 90vh;
       overflow-y: auto;
+      overscroll-behavior: contain;
       padding: 24px;
       border: 1px solid var(--line);
       border-radius: 18px;
@@ -1232,7 +1233,7 @@
     .workspace-modal-head h3 { margin: 0 0 4px; font-size: 19px; color: var(--ink); }
     .workspace-modal-head p { margin: 0; color: var(--muted); font-size: 13px; }
     .workspace-modal-close { border: 0; background: none; color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; padding: 4px; }
-    #workspace-modal-diagram-wrap { position: relative; aspect-ratio: 600 / 380; }
+    #workspace-modal-diagram-wrap { position: relative; aspect-ratio: 600 / 380; touch-action: none; }
     #workspace-annotation-svg {
       position: absolute;
       inset: 0;
@@ -2585,6 +2586,7 @@ function renderPlayer(players, analyses) {
   <script>
     (function () {
       const modal = document.querySelector("#workspace-drill-modal");
+      const modalCard = document.querySelector(".workspace-modal-card");
       const annotationSvg = document.querySelector("#workspace-annotation-svg");
       const drawToggleBtn = document.querySelector("#workspace-draw-toggle");
       const drawClearBtn = document.querySelector("#workspace-draw-clear");
@@ -2619,6 +2621,11 @@ function renderPlayer(players, analyses) {
         annotationSvg.style.pointerEvents = on ? "auto" : "none";
         drawToggleBtn.classList.toggle("workspace-draw-toggle-active", on);
         drawToggleBtn.textContent = on ? "✏️ Drawing…" : "✏️ Draw";
+        // Touch-action alone doesn't reliably stop iOS Safari from scrolling
+        // the page/modal during an Apple Pencil stroke, so also hard-lock
+        // scrolling on both the modal card and the page while drawing.
+        document.body.style.overflow = on ? "hidden" : "";
+        modalCard.style.overflowY = on ? "hidden" : "auto";
       }
 
       function strokeToPathData(points) {
