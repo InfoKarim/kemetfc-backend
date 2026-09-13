@@ -17,7 +17,7 @@ ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 ANTHROPIC_VERSION = "2023-06-01"
 OPENAI_API_URL = "https://api.openai.com/v1/chat/completions"
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
-REQUEST_TIMEOUT_SECONDS = 15
+REQUEST_TIMEOUT_SECONDS = 30
 PROVIDERS = {"claude", "chatgpt"}
 
 
@@ -43,7 +43,7 @@ def _describe(items: list) -> str:
 
 def _call_anthropic(
     prompt: str,
-    max_tokens: int = 700,
+    max_tokens: int = 2048,
     timeout: int = REQUEST_TIMEOUT_SECONDS,
 ) -> str:
     api_key = get_anthropic_api_key()
@@ -105,7 +105,7 @@ def get_openai_model() -> str:
 
 def _call_openai(
     prompt: str,
-    max_tokens: int = 700,
+    max_tokens: int = 2048,
     timeout: int = REQUEST_TIMEOUT_SECONDS,
 ) -> str:
     api_key = get_openai_api_key()
@@ -148,7 +148,7 @@ def _call_openai(
 def _call_model(
     prompt: str,
     provider: str = "claude",
-    max_tokens: int = 700,
+    max_tokens: int = 2048,
     timeout: int = REQUEST_TIMEOUT_SECONDS,
 ) -> str:
     if provider == "chatgpt":
