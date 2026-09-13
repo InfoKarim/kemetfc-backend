@@ -306,6 +306,15 @@
       font-weight: 750;
     }
     .recommendation-source { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+    .ai-section-error {
+      margin: 0;
+      padding: 12px 14px;
+      border-radius: 8px;
+      background: #fdeeee;
+      border: 1px solid #f3c8c8;
+      color: #8a2b2b !important;
+      font-size: 13.5px;
+    }
     .focus-area { padding: 16px; border-left: 4px solid #1265ed; border-radius: 8px; background: #f5f8ff; margin-bottom: 12px; }
     .focus-area h3 { font-size: 16px; margin: 0 0 4px; color: #16233B !important; }
     .focus-area p { margin: 0 0 10px; color: #16233B !important; }
@@ -946,6 +955,13 @@
       });
     }
 
+    function showAiSectionError(bodyId, sectionId, text) {
+      const container = document.querySelector(`#${bodyId}`);
+      const section = document.querySelector(`#${sectionId}`);
+      container.replaceChildren(make("p", "ai-section-error", text));
+      section.hidden = false;
+    }
+
     async function loadSmartRecommendations(playerId) {
       const provider =
         document.querySelector("#ai-recommendations-provider")?.value || "claude";
@@ -955,14 +971,33 @@
             `?provider=${encodeURIComponent(provider)}`
         );
 
-        if (!response.ok) return;
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          showAiSectionError(
+            "ai-recommendations-body",
+            "ai-recommendations",
+            data.detail || `Could not load AI-suggested training from ${provider}.`
+          );
+          return;
+        }
 
         const result = await response.json();
-        if (!result.focus_areas?.length) return;
+        if (!result.focus_areas?.length) {
+          showAiSectionError(
+            "ai-recommendations-body",
+            "ai-recommendations",
+            `No AI-suggested training available from ${provider}.`
+          );
+          return;
+        }
 
         renderSmartRecommendations(result);
       } catch (error) {
-        // Keep the rule-based recommendations already shown.
+        showAiSectionError(
+          "ai-recommendations-body",
+          "ai-recommendations",
+          `Could not reach ${provider}. Please try again.`
+        );
       }
     }
 
@@ -998,14 +1033,33 @@
             `?provider=${encodeURIComponent(provider)}`
         );
 
-        if (!response.ok) return;
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          showAiSectionError(
+            "medicine-notes-body",
+            "medicine-notes",
+            data.detail || `Could not load sports medicine notes from ${provider}.`
+          );
+          return;
+        }
 
         const result = await response.json();
-        if (!result.notes?.length) return;
+        if (!result.notes?.length) {
+          showAiSectionError(
+            "medicine-notes-body",
+            "medicine-notes",
+            `No sports medicine notes available from ${provider}.`
+          );
+          return;
+        }
 
         renderSportsMedicineNotes(result);
       } catch (error) {
-        // No sports medicine notes available; leave the section hidden.
+        showAiSectionError(
+          "medicine-notes-body",
+          "medicine-notes",
+          `Could not reach ${provider}. Please try again.`
+        );
       }
     }
 
@@ -1032,14 +1086,33 @@
             `?provider=${encodeURIComponent(provider)}`
         );
 
-        if (!response.ok) return;
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          showAiSectionError(
+            "coaching-insights-body",
+            "coaching-insights",
+            data.detail || `Could not load coaching insights from ${provider}.`
+          );
+          return;
+        }
 
         const result = await response.json();
-        if (!result.insights?.length) return;
+        if (!result.insights?.length) {
+          showAiSectionError(
+            "coaching-insights-body",
+            "coaching-insights",
+            `No coaching insights available from ${provider}.`
+          );
+          return;
+        }
 
         renderCoachingInsights(result);
       } catch (error) {
-        // No coaching insights available; leave the section hidden.
+        showAiSectionError(
+          "coaching-insights-body",
+          "coaching-insights",
+          `Could not reach ${provider}. Please try again.`
+        );
       }
     }
 
