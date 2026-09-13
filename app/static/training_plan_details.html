@@ -305,6 +305,21 @@
       font: inherit;
       font-weight: 750;
     }
+    .ai-regenerate-btn {
+      width: auto;
+      padding: 9px 12px;
+      border: 1px solid #c9cfd8;
+      border-radius: 9px;
+      background: #f5f7fa;
+      color: #16233B;
+      font: inherit;
+      font-weight: 750;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .ai-regenerate-btn:hover:not(:disabled) { background: #eceff3; }
+    .ai-regenerate-btn:disabled { opacity: .6; cursor: default; }
     .recommendation-source { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
     .ai-section-error {
       margin: 0;
@@ -465,6 +480,9 @@
         "display:flex;align-items:center;justify-content:space-between;gap:10px;";
       row.append(make("h2", "", title));
 
+      const controls = make("div");
+      controls.style.cssText = "display:flex;align-items:center;gap:8px;";
+
       const select = document.createElement("select");
       select.id = selectId;
       select.className = "ai-provider-select";
@@ -475,7 +493,25 @@
         select.append(option);
       }
       select.addEventListener("change", onProviderChange);
-      row.append(select);
+      controls.append(select);
+
+      const regenerateBtn = document.createElement("button");
+      regenerateBtn.type = "button";
+      regenerateBtn.className = "ai-regenerate-btn";
+      regenerateBtn.textContent = "🔄 Regenerate";
+      regenerateBtn.addEventListener("click", async () => {
+        regenerateBtn.disabled = true;
+        regenerateBtn.textContent = "🔄 Regenerating…";
+        try {
+          await onProviderChange();
+        } finally {
+          regenerateBtn.disabled = false;
+          regenerateBtn.textContent = "🔄 Regenerate";
+        }
+      });
+      controls.append(regenerateBtn);
+
+      row.append(controls);
 
       return row;
     }
