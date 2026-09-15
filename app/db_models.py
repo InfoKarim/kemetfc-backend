@@ -699,3 +699,39 @@ class ContactMessageDB(Base):
     topic: Mapped[str] = mapped_column(String)
     message: Mapped[str] = mapped_column(String)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class PhysicalAssessmentDB(Base):
+    """One objective physical-performance test result for a player.
+
+    First pillar of the future KEMET Player Score (Physical / Technical /
+    Tactical / Coach Assessment). Each row is a single point-in-time test —
+    never overwritten — so a player's full test history and development
+    trend stay reconstructable. ``methodology_version`` records exactly how
+    ``calculated_metrics`` was derived from ``raw_data`` so a later change
+    to the calculation never silently rewrites the meaning of a past
+    result.
+    """
+
+    __tablename__ = "physical_assessments"
+
+    assessment_id: Mapped[str] = mapped_column(String, primary_key=True)
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    test_category: Mapped[str] = mapped_column(String, index=True)
+    test_type: Mapped[str] = mapped_column(String, index=True)
+    methodology_version: Mapped[str] = mapped_column(String)
+    test_date: Mapped[date] = mapped_column(Date)
+    age_at_assessment_years: Mapped[int] = mapped_column(Integer)
+    raw_data: Mapped[dict] = mapped_column(JSON)
+    calculated_metrics: Mapped[dict] = mapped_column(JSON)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    recorded_by_user_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)

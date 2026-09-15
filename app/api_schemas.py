@@ -459,3 +459,18 @@ class SaveDrillDiagramAnnotationSchema(BaseModel):
             if len(stroke) > 2000:
                 raise ValueError("A single stroke cannot exceed 2000 points")
         return strokes
+
+
+class RecordYoYoKidsSchema(BaseModel):
+    test_date: date
+    level: int = Field(ge=1, le=25)
+    shuttle: int = Field(ge=1, le=10)
+    total_distance_m: float = Field(gt=0, le=3000)
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("test_date")
+    @classmethod
+    def _not_in_future(cls, value: date) -> date:
+        if value > date.today():
+            raise ValueError("Test date cannot be in the future")
+        return value
