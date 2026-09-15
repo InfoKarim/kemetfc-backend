@@ -729,6 +729,12 @@ class PlayerAssessmentDB(Base):
     age_at_assessment_years: Mapped[int] = mapped_column(Integer)
     raw_data: Mapped[dict] = mapped_column(JSON)
     calculated_metrics: Mapped[dict] = mapped_column(JSON)
+    # True when the coach saved an AI video-analysis suggestion as-is
+    # (possibly after editing it) rather than entering ratings from
+    # scratch — keeps AI-assisted results identifiable, per product
+    # guidance that AI-generated input must never look indistinguishable
+    # from a coach's own direct observation.
+    ai_assisted: Mapped[bool] = mapped_column(Boolean, default=False)
     notes: Mapped[str | None] = mapped_column(String, nullable=True)
     recorded_by_user_id: Mapped[str | None] = mapped_column(
         String,

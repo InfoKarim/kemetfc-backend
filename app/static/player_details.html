@@ -264,6 +264,52 @@
       .yoyo-notes-label { grid-column: span 2; }
     }
 
+    .ai-video-analyze {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      gap: 12px;
+      margin-bottom: 6px;
+    }
+    .ai-video-file-label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+    .ai-video-file-label input {
+      font-size: 13px;
+      color: #16233B;
+    }
+    #ball-mastery-analyze-btn {
+      padding: 10px 14px;
+      border: 0;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #7c4dff, #536dfe);
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    #ball-mastery-analyze-btn:disabled { opacity: .6; cursor: default; }
+    .ai-video-disclaimer {
+      margin: 0 0 12px;
+      font-size: 12px;
+      color: var(--muted);
+      font-style: italic;
+    }
+    .ai-assisted-badge {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eef0ff;
+      color: #4c3fd6;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
     .mobile-nav { display: none; }
     @media (max-width: 850px) {
       .layout { grid-template-columns: 1fr; }
@@ -393,6 +439,20 @@
             <p class="muted" style="margin:0 0 12px;">
               Sole rolls, inside/outside cuts, L-turn, drag-back — rate 1-5
               each. Can he do it with head up? Both feet?
+            </p>
+            <div class="ai-video-analyze">
+              <label class="ai-video-file-label">
+                Assessment clip
+                <input type="file" id="ball-mastery-video-input" accept="video/*">
+              </label>
+              <button type="button" id="ball-mastery-analyze-btn">✨ Analyze with AI</button>
+              <span id="ball-mastery-analyze-status" class="muted"></span>
+            </div>
+            <p class="ai-video-disclaimer">
+              AI reads a handful of still frames from the clip, not
+              continuous motion — treat this as a starting suggestion, not
+              a measurement. Review and adjust every rating below before
+              saving.
             </p>
             <form id="ball-mastery-form" class="yoyo-form">
               <label>
@@ -722,7 +782,13 @@
       assessments.forEach((assessment) => {
         const item = make("article", "item");
         const head = make("div", "item-head");
-        head.append(make("strong", "", describeRow(assessment).title));
+        const row = describeRow(assessment);
+        const titleWrap = make("span");
+        titleWrap.append(make("strong", "", row.title));
+        if (row.aiAssisted) {
+          titleWrap.append(make("span", "ai-assisted-badge", "✨ AI-assisted"));
+        }
+        head.append(titleWrap);
 
         const deleteButton = make("button", "delete-assessment-item", "Delete");
         deleteButton.type = "button";
@@ -806,6 +872,7 @@
             assessment.raw_data || {};
           return {
             title: `Ball Mastery — ${assessment.test_date}`,
+            aiAssisted: Boolean(assessment.ai_assisted),
             summary: `Sole rolls ${sole_rolls} · In/out cuts ${inside_outside_cuts} ` +
               `· L-turn ${l_turn} · Drag-back ${drag_back} ` +
               `(age ${assessment.age_at_assessment_years})`,
@@ -882,6 +949,19 @@
       afterSuccess: loadPhysicalAssessments,
     });
 
+    let ballMasteryAiAssisted = false;
+    const ballMasteryRatingIds = [
+      "ball-mastery-sole-rolls",
+      "ball-mastery-cuts",
+      "ball-mastery-l-turn",
+      "ball-mastery-drag-back",
+    ];
+    ballMasteryRatingIds.forEach((id) => {
+      document.querySelector(`#${id}`).addEventListener("input", () => {
+        ballMasteryAiAssisted = false;
+      });
+    });
+
     bindAssessmentForm({
       formId: "ball-mastery-form",
       submitBtnId: "ball-mastery-submit-btn",
@@ -895,8 +975,63 @@
         l_turn: Number(document.querySelector("#ball-mastery-l-turn").value),
         drag_back: Number(document.querySelector("#ball-mastery-drag-back").value),
         notes: document.querySelector("#ball-mastery-notes").value || null,
+        ai_assisted: ballMasteryAiAssisted,
       }),
-      afterSuccess: loadTechnicalAssessments,
+      afterSuccess: async () => {
+        ballMasteryAiAssisted = false;
+        await loadTechnicalAssessments();
+      },
+    });
+
+    document.querySelector("#ball-mastery-analyze-btn").addEventListener("click", async () => {
+      const fileInput = document.querySelector("#ball-mastery-video-input");
+      const status = document.querySelector("#ball-mastery-analyze-status");
+      const analyzeBtn = document.querySelector("#ball-mastery-analyze-btn");
+      const file = fileInput.files[0];
+
+      if (!file) {
+        status.textContent = "Choose a video clip first.";
+        return;
+      }
+      if (!playerId) return;
+
+      analyzeBtn.disabled = true;
+      analyzeBtn.textContent = "Analyzing…";
+      status.textContent = "Sampling frames and asking Claude — this can take a bit.";
+
+      try {
+        const formData = new FormData();
+        formData.append("video", file);
+
+        const response = await fetch(
+          `/players/${encodeURIComponent(playerId)}/technical-assessments/ball-mastery/analyze-video`,
+          { method: "POST", body: formData }
+        );
+
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.detail || "Could not analyze this video.");
+        }
+
+        const suggestion = await response.json();
+        document.querySelector("#ball-mastery-sole-rolls").value = suggestion.sole_rolls;
+        document.querySelector("#ball-mastery-cuts").value = suggestion.inside_outside_cuts;
+        document.querySelector("#ball-mastery-l-turn").value = suggestion.l_turn;
+        document.querySelector("#ball-mastery-drag-back").value = suggestion.drag_back;
+        const observations = [
+          suggestion.notes,
+          `Head up: ${suggestion.head_up_observed ? "yes" : "no"}.`,
+          `Both feet: ${suggestion.both_feet_observed ? "yes" : "no"}.`,
+        ].join(" ");
+        document.querySelector("#ball-mastery-notes").value = observations;
+        ballMasteryAiAssisted = true;
+        status.textContent = "AI suggestion filled in below — review and adjust before saving.";
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        analyzeBtn.disabled = false;
+        analyzeBtn.textContent = "✨ Analyze with AI";
+      }
     });
 
     function renderPlans(plans) {

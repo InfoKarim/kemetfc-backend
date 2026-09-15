@@ -483,6 +483,7 @@ class RecordBallMasterySchema(BaseModel):
     l_turn: int = Field(ge=1, le=5)
     drag_back: int = Field(ge=1, le=5)
     notes: str | None = Field(default=None, max_length=1000)
+    ai_assisted: bool = False
 
     @field_validator("test_date")
     @classmethod

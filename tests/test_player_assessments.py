@@ -6,10 +6,28 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.routers.player_assessments as player_assessments_router
 from app.database import Base, get_db
 from app.db_models import PlayerDB, UserDB
 from app.services.auth_service import hash_password, utcnow
 from main import CSRF_COOKIE_NAME, app
+
+cv2 = pytest.importorskip("cv2")
+import numpy as np  # noqa: E402
+
+
+def make_test_video_bytes(seconds: float = 2.0, fps: float = 10.0) -> bytes:
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "clip.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(str(path), fourcc, fps, (64, 48))
+        for i in range(int(seconds * fps)):
+            writer.write(np.full((48, 64, 3), i % 256, dtype=np.uint8))
+        writer.release()
+        return path.read_bytes()
 
 
 test_engine = create_engine(
@@ -260,6 +278,17 @@ def test_record_ball_mastery_assessment(client):
         "drag_back": 2,
     }
     assert body["calculated_metrics"] == {}
+    assert body["ai_assisted"] is False
+
+
+def test_record_ball_mastery_can_be_marked_ai_assisted(client):
+    response = client.post(
+        "/players/P001/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(ai_assisted=True),
+    )
+
+    assert response.status_code == 201
+    assert response.json()["ai_assisted"] is True
 
 
 def test_record_ball_mastery_requires_authentication(anonymous_client):
@@ -351,3 +380,115 @@ def test_delete_unknown_player_assessment_returns_404(client):
     response = client.delete("/player-assessments/ASSESS_NOPE")
 
     assert response.status_code == 404
+
+
+# --- AI video analysis (Ball Mastery) --------------------------------------
+
+FAKE_AI_SUGGESTION = {
+    "sole_rolls": 4,
+    "inside_outside_cuts": 3,
+    "l_turn": 3,
+    "drag_back": 2,
+    "head_up_observed": True,
+    "both_feet_observed": False,
+    "notes": "Confident on sole rolls, watches the ball on cuts.",
+}
+
+
+def test_analyze_ball_mastery_video_returns_ai_suggestion(client, monkeypatch):
+    monkeypatch.setattr(
+        player_assessments_router,
+        "is_provider_configured",
+        lambda provider: True,
+    )
+    monkeypatch.setattr(
+        player_assessments_router,
+        "analyze_ball_mastery_video",
+        lambda frames: FAKE_AI_SUGGESTION,
+    )
+
+    response = client.post(
+        "/players/P001/technical-assessments/ball-mastery/analyze-video",
+        files={"video": ("clip.mp4", make_test_video_bytes(), "video/mp4")},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == FAKE_AI_SUGGESTION
+
+
+def test_analyze_ball_mastery_video_requires_authentication(anonymous_client):
+    response = anonymous_client.post(
+        "/players/P001/technical-assessments/ball-mastery/analyze-video",
+        files={"video": ("clip.mp4", make_test_video_bytes(), "video/mp4")},
+    )
+
+    assert response.status_code == 401
+
+
+def test_analyze_ball_mastery_video_requires_configured_provider(client, monkeypatch):
+    monkeypatch.setattr(
+        player_assessments_router,
+        "is_provider_configured",
+        lambda provider: False,
+    )
+
+    response = client.post(
+        "/players/P001/technical-assessments/ball-mastery/analyze-video",
+        files={"video": ("clip.mp4", make_test_video_bytes(), "video/mp4")},
+    )
+
+    assert response.status_code == 404
+
+
+def test_analyze_ball_mastery_video_rejects_unsupported_format(client, monkeypatch):
+    monkeypatch.setattr(
+        player_assessments_router,
+        "is_provider_configured",
+        lambda provider: True,
+    )
+
+    response = client.post(
+        "/players/P001/technical-assessments/ball-mastery/analyze-video",
+        files={"video": ("clip.txt", b"not a video", "text/plain")},
+    )
+
+    assert response.status_code == 400
+
+
+def test_analyze_ball_mastery_video_rejects_bad_signature(client, monkeypatch):
+    monkeypatch.setattr(
+        player_assessments_router,
+        "is_provider_configured",
+        lambda provider: True,
+    )
+
+    response = client.post(
+        "/players/P001/technical-assessments/ball-mastery/analyze-video",
+        files={"video": ("clip.mp4", b"not actually an mp4 container", "video/mp4")},
+    )
+
+    assert response.status_code == 400
+
+
+def test_analyze_ball_mastery_video_surfaces_ai_error_as_502(client, monkeypatch):
+    from app.services.smart_recommendation_service import RecommendationError
+
+    monkeypatch.setattr(
+        player_assessments_router,
+        "is_provider_configured",
+        lambda provider: True,
+    )
+
+    def raise_error(frames):
+        raise RecommendationError("Could not parse AI video analysis")
+
+    monkeypatch.setattr(
+        player_assessments_router, "analyze_ball_mastery_video", raise_error
+    )
+
+    response = client.post(
+        "/players/P001/technical-assessments/ball-mastery/analyze-video",
+        files={"video": ("clip.mp4", make_test_video_bytes(), "video/mp4")},
+    )
+
+    assert response.status_code == 502

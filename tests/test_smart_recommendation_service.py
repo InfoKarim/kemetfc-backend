@@ -673,3 +673,102 @@ def test_get_smart_recommendations_requires_configured_provider(monkeypatch):
             strengths=[],
             provider="chatgpt",
         )
+
+
+VALID_BALL_MASTERY_REPLY = {
+    "content": [{
+        "type": "text",
+        "text": (
+            '{"sole_rolls": 4, "inside_outside_cuts": 3, "l_turn": 3, '
+            '"drag_back": 2, "head_up_observed": true, '
+            '"both_feet_observed": false, '
+            '"notes": "Confident on sole rolls, watches the ball on cuts."}'
+        ),
+    }]
+}
+
+
+def test_analyze_ball_mastery_video_sends_images_and_parses_reply(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    def fake_urlopen(request, timeout=None):
+        body = json.loads(request.data)
+        content = body["messages"][0]["content"]
+        assert isinstance(content, list)
+        assert content[0] == {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": "frame-one",
+            },
+        }
+        assert content[-1]["type"] == "text"
+        return FakeHTTPResponse(VALID_BALL_MASTERY_REPLY)
+
+    monkeypatch.setattr(service.urllib.request, "urlopen", fake_urlopen)
+
+    result = service.analyze_ball_mastery_video(["frame-one", "frame-two"])
+
+    assert result == {
+        "sole_rolls": 4,
+        "inside_outside_cuts": 3,
+        "l_turn": 3,
+        "drag_back": 2,
+        "head_up_observed": True,
+        "both_feet_observed": False,
+        "notes": "Confident on sole rolls, watches the ball on cuts.",
+    }
+
+
+def test_analyze_ball_mastery_video_requires_configured_provider(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "")
+
+    with pytest.raises(service.RecommendationError):
+        service.analyze_ball_mastery_video(["frame-one"])
+
+
+def test_analyze_ball_mastery_video_rejects_out_of_range_rating(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    bad_reply = {
+        "content": [{
+            "type": "text",
+            "text": (
+                '{"sole_rolls": 9, "inside_outside_cuts": 3, "l_turn": 3, '
+                '"drag_back": 2, "head_up_observed": true, '
+                '"both_feet_observed": false, "notes": "..."}'
+            ),
+        }]
+    }
+    monkeypatch.setattr(
+        service.urllib.request,
+        "urlopen",
+        lambda request, timeout=None: FakeHTTPResponse(bad_reply),
+    )
+
+    with pytest.raises(service.RecommendationError):
+        service.analyze_ball_mastery_video(["frame-one"])
+
+
+def test_analyze_ball_mastery_video_rejects_missing_notes(monkeypatch):
+    monkeypatch.setattr(service, "get_anthropic_api_key", lambda: "sk-ant-test")
+
+    bad_reply = {
+        "content": [{
+            "type": "text",
+            "text": (
+                '{"sole_rolls": 4, "inside_outside_cuts": 3, "l_turn": 3, '
+                '"drag_back": 2, "head_up_observed": true, '
+                '"both_feet_observed": false, "notes": ""}'
+            ),
+        }]
+    }
+    monkeypatch.setattr(
+        service.urllib.request,
+        "urlopen",
+        lambda request, timeout=None: FakeHTTPResponse(bad_reply),
+    )
+
+    with pytest.raises(service.RecommendationError):
+        service.analyze_ball_mastery_video(["frame-one"])

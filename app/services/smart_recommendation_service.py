@@ -45,12 +45,33 @@ def _call_anthropic(
     prompt: str,
     max_tokens: int = 2048,
     timeout: int = REQUEST_TIMEOUT_SECONDS,
+    images_base64: list[str] | None = None,
 ) -> str:
     api_key = get_anthropic_api_key()
+
+    if images_base64:
+        # Claude has no native video input — this sends still frames sampled
+        # from the clip as images, not continuous motion, so its read is a
+        # judgment from a handful of snapshots, not true video understanding.
+        content = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/jpeg",
+                    "data": image,
+                },
+            }
+            for image in images_base64
+        ]
+        content.append({"type": "text", "text": prompt})
+    else:
+        content = prompt
+
     body = json.dumps({
         "model": get_anthropic_model(),
         "max_tokens": max_tokens,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": content}],
     }).encode("utf-8")
 
     request = urllib.request.Request(
@@ -307,6 +328,96 @@ def generate_coaching_insights(
         raise RecommendationError("Could not parse AI recommendations")
 
     return insights[:max_items]
+
+
+BALL_MASTERY_VIDEO_ANALYSIS_PROMPT = (
+    "You are a youth football technical coach reviewing still frames "
+    "sampled from a Ball Mastery assessment clip (not continuous video — "
+    "judge only what is visible in these frames). The four skills being "
+    "assessed are: sole rolls, inside/outside cuts, L-turn, and drag-back.\n\n"
+    "For each skill, rate 1-5 based on what you can see: 1 = cannot "
+    "perform / loses control, 3 = performs with visible hesitation or "
+    "watching the ball closely, 5 = fluent, confident, head up. If a "
+    "skill is not clearly visible in any frame, still give your best "
+    "single estimate from what IS visible and say so in notes — do not "
+    "refuse to rate.\n\n"
+    "Also report whether the player's head appeared up (scanning/looking "
+    "forward, not fixated on the ball) in most frames, and whether both "
+    "feet were used across the visible skills (not just the strong foot).\n\n"
+    "Reply with ONLY a JSON object (no prose, no markdown fences), "
+    "exactly this shape: "
+    '{"sole_rolls": 1-5, "inside_outside_cuts": 1-5, "l_turn": 1-5, '
+    '"drag_back": 1-5, "head_up_observed": true/false, '
+    '"both_feet_observed": true/false, "notes": "one or two sentences on '
+    'what you actually saw, and any caveats about frame coverage"}'
+)
+
+
+def _validate_ball_mastery_rating(value, field: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or not (1 <= value <= 5):
+        raise RecommendationError(
+            f"AI video analysis returned an invalid '{field}' rating"
+        )
+    return value
+
+
+def analyze_ball_mastery_video(images_base64: list[str]) -> dict:
+    """Ask Claude to rate Ball Mastery from frames sampled off an
+    assessment clip. Claude-only: this needs vision input, and only the
+    Anthropic integration supports images here. The result is a
+    suggestion for the coach to review, not a validated measurement —
+    callers must keep it clearly labeled as AI-assisted and let the coach
+    edit it before anything is saved.
+    """
+    if not is_provider_configured("claude"):
+        raise RecommendationError(
+            "AI video analysis is not configured (ANTHROPIC_API_KEY is missing)"
+        )
+
+    raw_text = _call_anthropic(
+        BALL_MASTERY_VIDEO_ANALYSIS_PROMPT,
+        max_tokens=1024,
+        timeout=60,
+        images_base64=images_base64,
+    )
+    match = re.search(r"\{.*\}", raw_text, re.DOTALL)
+
+    if match is None:
+        raise RecommendationError("Could not parse AI video analysis")
+
+    try:
+        result = json.loads(match.group(0))
+    except json.JSONDecodeError as error:
+        raise RecommendationError("Could not parse AI video analysis") from error
+
+    if not isinstance(result, dict):
+        raise RecommendationError("Could not parse AI video analysis")
+
+    for field in ("head_up_observed", "both_feet_observed"):
+        if not isinstance(result.get(field), bool):
+            raise RecommendationError(
+                f"AI video analysis returned an invalid '{field}' value"
+            )
+
+    notes = result.get("notes")
+    if not isinstance(notes, str) or not notes.strip():
+        raise RecommendationError("AI video analysis returned no notes")
+
+    return {
+        "sole_rolls": _validate_ball_mastery_rating(
+            result.get("sole_rolls"), "sole_rolls"
+        ),
+        "inside_outside_cuts": _validate_ball_mastery_rating(
+            result.get("inside_outside_cuts"), "inside_outside_cuts"
+        ),
+        "l_turn": _validate_ball_mastery_rating(result.get("l_turn"), "l_turn"),
+        "drag_back": _validate_ball_mastery_rating(
+            result.get("drag_back"), "drag_back"
+        ),
+        "head_up_observed": result["head_up_observed"],
+        "both_feet_observed": result["both_feet_observed"],
+        "notes": notes.strip(),
+    }
 
 
 def search_training_videos(query: str, max_results: int = 3) -> list[dict]:

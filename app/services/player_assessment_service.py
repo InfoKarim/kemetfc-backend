@@ -51,6 +51,7 @@ class PlayerAssessmentService:
         raw_data: dict,
         calculated_metrics: dict,
         notes: str | None,
+        ai_assisted: bool = False,
     ) -> PlayerAssessmentDB:
         assessment = PlayerAssessmentDB(
             assessment_id=next_entity_id(self.db, "player_assessment"),
@@ -65,6 +66,7 @@ class PlayerAssessmentService:
             ),
             raw_data=raw_data,
             calculated_metrics=calculated_metrics,
+            ai_assisted=ai_assisted,
             notes=notes,
             recorded_by_user_id=recorded_by_user_id,
             created_at=utcnow(),
@@ -119,6 +121,7 @@ class PlayerAssessmentService:
             },
             calculated_metrics={},
             notes=payload.notes,
+            ai_assisted=payload.ai_assisted,
         )
 
     def list_for_player(
