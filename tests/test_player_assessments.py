@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -163,6 +163,22 @@ def yoyo_payload(**overrides):
     return payload
 
 
+def ball_mastery_payload(**overrides):
+    payload = {
+        "test_date": "2026-09-01",
+        "sole_rolls": 4,
+        "inside_outside_cuts": 3,
+        "l_turn": 3,
+        "drag_back": 2,
+        "notes": "Head up on sole rolls, still watching the ball on cuts.",
+    }
+    payload.update(overrides)
+    return payload
+
+
+# --- Yo-Yo Kids (physical / endurance) ---------------------------------
+
+
 def test_record_yoyo_kids_assessment(client):
     response = client.post(
         "/players/P001/physical-assessments/yoyo-kids",
@@ -172,6 +188,7 @@ def test_record_yoyo_kids_assessment(client):
     assert response.status_code == 201
     body = response.json()
     assert body["player_id"] == "P001"
+    assert body["pillar"] == "physical"
     assert body["test_category"] == "endurance"
     assert body["test_type"] == "yoyo_kids"
     assert body["raw_data"] == {
@@ -221,37 +238,102 @@ def test_record_yoyo_kids_rejects_negative_distance(client):
     assert response.status_code == 422
 
 
-def test_list_physical_assessments_orders_newest_first(client):
+# --- Ball Mastery (technical) -------------------------------------------
+
+
+def test_record_ball_mastery_assessment(client):
+    response = client.post(
+        "/players/P001/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["player_id"] == "P001"
+    assert body["pillar"] == "technical"
+    assert body["test_category"] == "ball_mastery"
+    assert body["test_type"] == "ball_mastery"
+    assert body["raw_data"] == {
+        "sole_rolls": 4,
+        "inside_outside_cuts": 3,
+        "l_turn": 3,
+        "drag_back": 2,
+    }
+    assert body["calculated_metrics"] == {}
+
+
+def test_record_ball_mastery_requires_authentication(anonymous_client):
+    response = anonymous_client.post(
+        "/players/P001/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(),
+    )
+
+    assert response.status_code == 401
+
+
+def test_record_ball_mastery_rejects_out_of_range_rating(client):
+    response = client.post(
+        "/players/P001/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(sole_rolls=6),
+    )
+
+    assert response.status_code == 422
+
+
+# --- Cross-pillar listing -------------------------------------------------
+
+
+def test_list_assessments_orders_newest_first_across_pillars(client):
     client.post(
         "/players/P001/physical-assessments/yoyo-kids",
         json=yoyo_payload(test_date="2026-01-01", total_distance_m=500.0),
     )
     client.post(
-        "/players/P001/physical-assessments/yoyo-kids",
-        json=yoyo_payload(test_date="2026-06-01", total_distance_m=560.0),
+        "/players/P001/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-06-01"),
     )
 
-    response = client.get("/players/P001/physical-assessments")
+    response = client.get("/players/P001/assessments")
 
     assert response.status_code == 200
     dates = [item["test_date"] for item in response.json()["assessments"]]
     assert dates == sorted(dates, reverse=True)
 
 
-def test_list_physical_assessments_requires_authentication(anonymous_client):
-    response = anonymous_client.get("/players/P001/physical-assessments")
+def test_list_assessments_can_filter_by_pillar(client):
+    client.post(
+        "/players/P001/physical-assessments/yoyo-kids",
+        json=yoyo_payload(),
+    )
+    client.post(
+        "/players/P001/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(),
+    )
+
+    response = client.get("/players/P001/assessments?pillar=technical")
+
+    assert response.status_code == 200
+    pillars = {item["pillar"] for item in response.json()["assessments"]}
+    assert pillars == {"technical"}
+
+
+def test_list_assessments_requires_authentication(anonymous_client):
+    response = anonymous_client.get("/players/P001/assessments")
 
     assert response.status_code == 401
 
 
-def test_delete_physical_assessment(client):
+# --- Delete ---------------------------------------------------------------
+
+
+def test_delete_player_assessment(client):
     created = client.post(
         "/players/P001/physical-assessments/yoyo-kids",
         json=yoyo_payload(),
     ).json()
 
     response = client.delete(
-        f"/physical-assessments/{created['assessment_id']}"
+        f"/player-assessments/{created['assessment_id']}"
     )
 
     assert response.status_code == 200
@@ -259,13 +341,13 @@ def test_delete_physical_assessment(client):
     remaining_ids = [
         item["assessment_id"]
         for item in client.get(
-            "/players/P001/physical-assessments"
+            "/players/P001/assessments"
         ).json()["assessments"]
     ]
     assert created["assessment_id"] not in remaining_ids
 
 
-def test_delete_unknown_physical_assessment_returns_404(client):
-    response = client.delete("/physical-assessments/PHYS_NOPE")
+def test_delete_unknown_player_assessment_returns_404(client):
+    response = client.delete("/player-assessments/ASSESS_NOPE")
 
     assert response.status_code == 404

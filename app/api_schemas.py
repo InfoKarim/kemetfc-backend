@@ -474,3 +474,19 @@ class RecordYoYoKidsSchema(BaseModel):
         if value > date.today():
             raise ValueError("Test date cannot be in the future")
         return value
+
+
+class RecordBallMasterySchema(BaseModel):
+    test_date: date
+    sole_rolls: int = Field(ge=1, le=5)
+    inside_outside_cuts: int = Field(ge=1, le=5)
+    l_turn: int = Field(ge=1, le=5)
+    drag_back: int = Field(ge=1, le=5)
+    notes: str | None = Field(default=None, max_length=1000)
+
+    @field_validator("test_date")
+    @classmethod
+    def _not_in_future(cls, value: date) -> date:
+        if value > date.today():
+            raise ValueError("Test date cannot be in the future")
+        return value

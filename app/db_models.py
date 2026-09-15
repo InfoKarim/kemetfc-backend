@@ -701,19 +701,19 @@ class ContactMessageDB(Base):
     submitted_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
-class PhysicalAssessmentDB(Base):
-    """One objective physical-performance test result for a player.
-
-    First pillar of the future KEMET Player Score (Physical / Technical /
-    Tactical / Coach Assessment). Each row is a single point-in-time test —
-    never overwritten — so a player's full test history and development
-    trend stay reconstructable. ``methodology_version`` records exactly how
+class PlayerAssessmentDB(Base):
+    """One objective or coach-rated test result for a player, from any
+    KEMET Player Score pillar (Physical / Technical / Tactical / Coach
+    Assessment — see ``pillar``). Each row is a single point-in-time test —
+    never overwritten — so a player's full assessment history and
+    development trend across every pillar stay reconstructable in one
+    chronological stream. ``methodology_version`` records exactly how
     ``calculated_metrics`` was derived from ``raw_data`` so a later change
     to the calculation never silently rewrites the meaning of a past
     result.
     """
 
-    __tablename__ = "physical_assessments"
+    __tablename__ = "player_assessments"
 
     assessment_id: Mapped[str] = mapped_column(String, primary_key=True)
     player_id: Mapped[str] = mapped_column(
@@ -721,6 +721,7 @@ class PhysicalAssessmentDB(Base):
         ForeignKey("players.player_id"),
         index=True,
     )
+    pillar: Mapped[str] = mapped_column(String, index=True)
     test_category: Mapped[str] = mapped_column(String, index=True)
     test_type: Mapped[str] = mapped_column(String, index=True)
     methodology_version: Mapped[str] = mapped_column(String)

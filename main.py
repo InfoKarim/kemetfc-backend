@@ -145,7 +145,7 @@ from app.routers import billing as billing_router
 from app.routers import drills as drills_router
 from app.routers import matches as matches_router
 from app.routers import messaging as messaging_router
-from app.routers import physical_assessments as physical_assessments_router
+from app.routers import player_assessments as player_assessments_router
 from app.routers import seasons as seasons_router
 from app.routers import teams as teams_router
 from app.routers import training_plans as training_plans_router
@@ -155,7 +155,7 @@ app.include_router(billing_router.router)
 app.include_router(drills_router.router)
 app.include_router(matches_router.router)
 app.include_router(messaging_router.router)
-app.include_router(physical_assessments_router.router)
+app.include_router(player_assessments_router.router)
 app.include_router(seasons_router.router)
 app.include_router(teams_router.router)
 app.include_router(training_plans_router.router)
@@ -349,7 +349,7 @@ def required_feature_for_path(path: str) -> str | None:
         return "assessments"
     if path.startswith("/players"):
         return "players"
-    if path.startswith("/physical-assessments"):
+    if path.startswith("/player-assessments"):
         return "players"
 
     return None

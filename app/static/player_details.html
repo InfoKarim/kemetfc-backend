@@ -389,6 +389,45 @@
           </section>
 
           <section class="card section">
+            <h2>Technical — Ball Mastery</h2>
+            <p class="muted" style="margin:0 0 12px;">
+              Sole rolls, inside/outside cuts, L-turn, drag-back — rate 1-5
+              each. Can he do it with head up? Both feet?
+            </p>
+            <form id="ball-mastery-form" class="yoyo-form">
+              <label>
+                Test date
+                <input type="date" id="ball-mastery-test-date" required>
+              </label>
+              <label>
+                Sole rolls (1-5)
+                <input type="number" id="ball-mastery-sole-rolls" min="1" max="5" required>
+              </label>
+              <label>
+                In/out cuts (1-5)
+                <input type="number" id="ball-mastery-cuts" min="1" max="5" required>
+              </label>
+              <label>
+                L-turn (1-5)
+                <input type="number" id="ball-mastery-l-turn" min="1" max="5" required>
+              </label>
+              <label>
+                Drag-back (1-5)
+                <input type="number" id="ball-mastery-drag-back" min="1" max="5" required>
+              </label>
+              <label class="yoyo-notes-label">
+                Notes (optional)
+                <input type="text" id="ball-mastery-notes" maxlength="1000">
+              </label>
+              <button type="submit" id="ball-mastery-submit-btn">Log result</button>
+            </form>
+            <p id="ball-mastery-form-status" class="muted"></p>
+            <div id="player-technical-assessments" class="list">
+              <div class="empty">Loading technical assessments...</div>
+            </div>
+          </section>
+
+          <section class="card section">
             <h2>Training Plans</h2>
             <div id="player-training-plans" class="list">
               <div class="empty">Loading training plans...</div>
@@ -421,6 +460,9 @@
     const yoyoDateInput = document.querySelector("#yoyo-test-date");
     yoyoDateInput.max = todayIso;
     yoyoDateInput.value = todayIso;
+    const ballMasteryDateInput = document.querySelector("#ball-mastery-test-date");
+    ballMasteryDateInput.max = todayIso;
+    ballMasteryDateInput.value = todayIso;
 
     const average = (values) => {
       const numbers = Object.values(values || {})
@@ -668,28 +710,24 @@
       });
     }
 
-    function renderPhysicalAssessments(assessments) {
-      const target = document.querySelector("#player-physical-assessments");
+    function renderAssessmentList(targetId, assessments, emptyText, describeRow) {
+      const target = document.querySelector(`#${targetId}`);
       target.replaceChildren();
 
       if (!assessments.length) {
-        target.append(make("div", "empty", "No physical assessments yet."));
+        target.append(make("div", "empty", emptyText));
         return;
       }
 
       assessments.forEach((assessment) => {
         const item = make("article", "item");
         const head = make("div", "item-head");
-        head.append(make(
-          "strong",
-          "",
-          `Yo-Yo Kids — ${assessment.test_date}`
-        ));
+        head.append(make("strong", "", describeRow(assessment).title));
 
         const deleteButton = make("button", "delete-assessment-item", "Delete");
         deleteButton.type = "button";
         deleteButton.addEventListener("click", async () => {
-          if (!window.confirm("Delete this physical assessment? This cannot be undone.")) {
+          if (!window.confirm("Delete this assessment? This cannot be undone.")) {
             return;
           }
 
@@ -698,7 +736,7 @@
 
           try {
             const response = await fetch(
-              `/physical-assessments/${encodeURIComponent(assessment.assessment_id)}`,
+              `/player-assessments/${encodeURIComponent(assessment.assessment_id)}`,
               { method: "DELETE" }
             );
 
@@ -709,7 +747,7 @@
 
             item.remove();
             if (!target.children.length) {
-              target.append(make("div", "empty", "No physical assessments yet."));
+              target.append(make("div", "empty", emptyText));
             }
           } catch (error) {
             deleteButton.disabled = false;
@@ -720,13 +758,7 @@
         head.append(deleteButton);
         item.append(head);
 
-        const { level, shuttle, total_distance_m } = assessment.raw_data || {};
-        item.append(make(
-          "p",
-          "muted",
-          `Level ${level}.${shuttle} — ${total_distance_m} m covered ` +
-            `(age ${assessment.age_at_assessment_years})`
-        ));
+        item.append(make("p", "muted", describeRow(assessment).summary));
         if (assessment.notes) {
           item.append(make("p", "", assessment.notes));
         }
@@ -734,66 +766,137 @@
       });
     }
 
-    async function loadPhysicalAssessments() {
+    async function loadAssessments(pillar, targetId, emptyText, describeRow) {
       try {
         const response = await fetch(
-          `/players/${encodeURIComponent(playerId)}/physical-assessments`
+          `/players/${encodeURIComponent(playerId)}/assessments?pillar=${encodeURIComponent(pillar)}`
         );
         if (!response.ok) return;
         const data = await response.json();
-        renderPhysicalAssessments(data.assessments || []);
+        renderAssessmentList(targetId, data.assessments || [], emptyText, describeRow);
       } catch (error) {
         // Leave the "Loading..." placeholder if this fails; the rest of
         // the profile still loaded successfully.
       }
     }
 
-    document.querySelector("#yoyo-kids-form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      if (!playerId) return;
+    function loadPhysicalAssessments() {
+      return loadAssessments(
+        "physical",
+        "player-physical-assessments",
+        "No physical assessments yet.",
+        (assessment) => {
+          const { level, shuttle, total_distance_m } = assessment.raw_data || {};
+          return {
+            title: `Yo-Yo Kids — ${assessment.test_date}`,
+            summary: `Level ${level}.${shuttle} — ${total_distance_m} m covered ` +
+              `(age ${assessment.age_at_assessment_years})`,
+          };
+        }
+      );
+    }
 
-      const submitBtn = document.querySelector("#yoyo-submit-btn");
-      const status = document.querySelector("#yoyo-form-status");
-      const payload = {
+    function loadTechnicalAssessments() {
+      return loadAssessments(
+        "technical",
+        "player-technical-assessments",
+        "No technical assessments yet.",
+        (assessment) => {
+          const { sole_rolls, inside_outside_cuts, l_turn, drag_back } =
+            assessment.raw_data || {};
+          return {
+            title: `Ball Mastery — ${assessment.test_date}`,
+            summary: `Sole rolls ${sole_rolls} · In/out cuts ${inside_outside_cuts} ` +
+              `· L-turn ${l_turn} · Drag-back ${drag_back} ` +
+              `(age ${assessment.age_at_assessment_years})`,
+          };
+        }
+      );
+    }
+
+    function bindAssessmentForm({
+      formId,
+      submitBtnId,
+      statusId,
+      dateInput,
+      endpoint,
+      collectPayload,
+      afterSuccess,
+    }) {
+      document.querySelector(`#${formId}`).addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!playerId) return;
+
+        const submitBtn = document.querySelector(`#${submitBtnId}`);
+        const status = document.querySelector(`#${statusId}`);
+        const payload = collectPayload();
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Logging...";
+        status.textContent = "";
+
+        try {
+          const response = await fetch(
+            `/players/${encodeURIComponent(playerId)}/${endpoint}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            }
+          );
+
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            const detail = Array.isArray(data.detail)
+              ? data.detail.map((item) => item.msg).join("; ")
+              : data.detail;
+            throw new Error(detail || "Could not log this result.");
+          }
+
+          event.target.reset();
+          dateInput.value = todayIso;
+          status.textContent = "Result logged.";
+          await afterSuccess();
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "Log result";
+        }
+      });
+    }
+
+    bindAssessmentForm({
+      formId: "yoyo-kids-form",
+      submitBtnId: "yoyo-submit-btn",
+      statusId: "yoyo-form-status",
+      dateInput: yoyoDateInput,
+      endpoint: "physical-assessments/yoyo-kids",
+      collectPayload: () => ({
         test_date: document.querySelector("#yoyo-test-date").value,
         level: Number(document.querySelector("#yoyo-level").value),
         shuttle: Number(document.querySelector("#yoyo-shuttle").value),
         total_distance_m: Number(document.querySelector("#yoyo-distance").value),
         notes: document.querySelector("#yoyo-notes").value || null,
-      };
+      }),
+      afterSuccess: loadPhysicalAssessments,
+    });
 
-      submitBtn.disabled = true;
-      submitBtn.textContent = "Logging...";
-      status.textContent = "";
-
-      try {
-        const response = await fetch(
-          `/players/${encodeURIComponent(playerId)}/physical-assessments/yoyo-kids`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-          }
-        );
-
-        if (!response.ok) {
-          const data = await response.json().catch(() => ({}));
-          const detail = Array.isArray(data.detail)
-            ? data.detail.map((item) => item.msg).join("; ")
-            : data.detail;
-          throw new Error(detail || "Could not log this result.");
-        }
-
-        event.target.reset();
-        yoyoDateInput.value = todayIso;
-        status.textContent = "Result logged.";
-        await loadPhysicalAssessments();
-      } catch (error) {
-        status.textContent = error.message;
-      } finally {
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Log result";
-      }
+    bindAssessmentForm({
+      formId: "ball-mastery-form",
+      submitBtnId: "ball-mastery-submit-btn",
+      statusId: "ball-mastery-form-status",
+      dateInput: ballMasteryDateInput,
+      endpoint: "technical-assessments/ball-mastery",
+      collectPayload: () => ({
+        test_date: document.querySelector("#ball-mastery-test-date").value,
+        sole_rolls: Number(document.querySelector("#ball-mastery-sole-rolls").value),
+        inside_outside_cuts: Number(document.querySelector("#ball-mastery-cuts").value),
+        l_turn: Number(document.querySelector("#ball-mastery-l-turn").value),
+        drag_back: Number(document.querySelector("#ball-mastery-drag-back").value),
+        notes: document.querySelector("#ball-mastery-notes").value || null,
+      }),
+      afterSuccess: loadTechnicalAssessments,
     });
 
     function renderPlans(plans) {
@@ -869,6 +972,7 @@
           allPlans.filter((plan) => plan.player_id === playerId)
         );
         loadPhysicalAssessments();
+        loadTechnicalAssessments();
       } catch (error) {
         document.querySelector("#player-profile").replaceChildren(
           make("div", "error", error.message)

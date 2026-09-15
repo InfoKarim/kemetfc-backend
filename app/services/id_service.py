@@ -11,7 +11,7 @@ from app.db_models import (
     IdCounterDB,
     MatchDB,
     MLDatasetEntryDB,
-    PhysicalAssessmentDB,
+    PlayerAssessmentDB,
     PlayerDB,
     PrivacyRequestDB,
     SeasonDB,
@@ -39,7 +39,7 @@ ENTITY_CONFIG = {
     "ml_dataset_entry": ("MLDS", MLDatasetEntryDB),
     "contact_message": ("MSG", ContactMessageDB),
     "generated_drill_diagram": ("GEN", GeneratedDrillDiagramDB),
-    "physical_assessment": ("PHYS", PhysicalAssessmentDB),
+    "player_assessment": ("ASSESS", PlayerAssessmentDB),
 }
 
 
