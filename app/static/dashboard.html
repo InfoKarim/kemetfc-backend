@@ -1478,6 +1478,13 @@
           </div>
           <div class="stat-spark" id="videos-spark"></div>
         </article>
+        <article class="stat" id="new-registrations-card" hidden>
+          <div class="stat-icon">R</div>
+          <div class="stat-body">
+            <span>New Registrations</span><strong id="new-registrations-count">0</strong>
+            <a class="stat-delta" href="/registrations-dashboard">Review →</a>
+          </div>
+        </article>
       </section>
 
       <div class="dashboard-grid">
@@ -2324,6 +2331,7 @@ function renderPlayer(players, analyses) {
           can("teams") ? fetch("/teams") : Promise.resolve(null),
           can("videos") ? fetch("/videos") : Promise.resolve(null),
           can("matches") ? fetch("/matches") : Promise.resolve(null),
+          can("assessments") ? fetch("/registrations") : Promise.resolve(null),
         ];
         const responses = await Promise.all(requests);
 
@@ -2331,7 +2339,7 @@ function renderPlayer(players, analyses) {
           throw new Error("Could not load dashboard data.");
         }
 
-        const [players, analyses, plans, drills, teams, videos, matches] = await Promise.all(
+        const [players, analyses, plans, drills, teams, videos, matches, registrations] = await Promise.all(
           responses.map((response) => response ? response.json() : [])
         );
 
@@ -2339,6 +2347,14 @@ function renderPlayer(players, analyses) {
         document.querySelector("#teams-count").textContent = teams.length;
         document.querySelector("#analyses-count").textContent = analyses.length;
         document.querySelector("#videos-count").textContent = videos.length;
+
+        if (registrations) {
+          const newRegistrationsCount = registrations.filter(
+            (item) => (item.status || "submitted") === "submitted"
+          ).length;
+          document.querySelector("#new-registrations-count").textContent = newRegistrationsCount;
+          document.querySelector("#new-registrations-card").hidden = false;
+        }
 
         updateStatCard("players", players, "created_at");
         updateStatCard("teams", teams, "created_at");

@@ -91,13 +91,15 @@ def get_billing_status(
     if PlayerService(db=db).get_player(player_id) is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
-    subscription = BillingService(db=db).get_subscription_for_player(player_id)
+    service = BillingService(db=db)
+    subscription = service.get_subscription_for_player(player_id)
 
     return {
         "configured": is_configured(),
         "subscription": (
             _subscription_payload(subscription) if subscription is not None else None
         ),
+        "membership": service.get_membership_plan_summary_for_player(player_id),
     }
 
 

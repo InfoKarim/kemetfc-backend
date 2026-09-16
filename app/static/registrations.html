@@ -163,6 +163,18 @@
     .status-badge.submitted { background: #eef5ff; color: #0866f5; }
     .status-badge.player_created { background: #e8f8ee; color: #1c8a4a; }
     .status-badge.archived { background: #eef1f5; color: #4a5968; }
+    .status-badge.waitlisted { background: #fff8e9; color: #b9790a; }
+    .secondary-action {
+      padding: 5px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: #405269;
+      background: white;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .secondary-action:hover { background: #f3f6fa; }
 
     #registrations-list {
       display: grid;
@@ -385,7 +397,9 @@
         <select id="status-filter">
           <option value="submitted">Awaiting review</option>
           <option value="all">All statuses</option>
+          <option value="waitlisted">Waitlisted</option>
           <option value="player_created">Player created</option>
+          <option value="archived">Archived</option>
         </select>
       </section>
 
@@ -442,8 +456,40 @@
     }
 
     function statusLabel(status) {
-      return { submitted: "Awaiting review", player_created: "Player created", archived: "Archived" }[status]
-        || status || "Awaiting review";
+      return {
+        submitted: "Awaiting review",
+        waitlisted: "Waitlisted",
+        player_created: "Player created",
+        archived: "Archived",
+      }[status] || status || "Awaiting review";
+    }
+
+    async function setRegistrationStatus(registrationId, status, button) {
+      button.disabled = true;
+      try {
+        const response = await fetch(
+          `/registrations/${encodeURIComponent(registrationId)}/status`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status }),
+          }
+        );
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({}));
+          const detail = result.detail;
+          throw new Error((detail && detail.message) || detail || "Could not update status.");
+        }
+        const updated = await response.json();
+        const index = registrations.findIndex(
+          (item) => item.registration_id === registrationId
+        );
+        if (index !== -1) registrations[index] = updated;
+        render();
+      } catch (error) {
+        button.disabled = false;
+        alert(error.message);
+      }
     }
 
     function render() {
@@ -555,6 +601,33 @@
           ? `/player-details?player_id=${encodeURIComponent(registration.player_id)}`
           : `/create-player-from-registration?registration_id=${encodeURIComponent(registration.registration_id)}`;
         footerActions.append(convertLink);
+
+        if (status === "submitted") {
+          const waitlistButton = make("button", "secondary-action", "Waitlist");
+          waitlistButton.type = "button";
+          waitlistButton.addEventListener("click", () => {
+            setRegistrationStatus(registration.registration_id, "waitlisted", waitlistButton);
+          });
+          footerActions.append(waitlistButton);
+        }
+
+        if (status === "waitlisted") {
+          const restoreButton = make("button", "secondary-action", "Restore");
+          restoreButton.type = "button";
+          restoreButton.addEventListener("click", () => {
+            setRegistrationStatus(registration.registration_id, "submitted", restoreButton);
+          });
+          footerActions.append(restoreButton);
+        }
+
+        if (status === "submitted" || status === "waitlisted") {
+          const archiveButton = make("button", "secondary-action", "Archive");
+          archiveButton.type = "button";
+          archiveButton.addEventListener("click", () => {
+            setRegistrationStatus(registration.registration_id, "archived", archiveButton);
+          });
+          footerActions.append(archiveButton);
+        }
 
         const deleteButton = make("button", "delete-registration", "Delete");
         deleteButton.type = "button";

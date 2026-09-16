@@ -67,7 +67,7 @@
     .badge.canceled { background: #eef1f5; color: #4a5968 !important; }
 
     button.link-button {
-      padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--blue) !important;
+      padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: white !important; color: var(--blue) !important;
       font-size: 12px; font-weight: 750; cursor: pointer;
     }
 
@@ -93,9 +93,14 @@
     .row-list { display: grid; gap: 8px; margin-bottom: 10px; }
     .row-list .row { display: flex; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; color: #2c3e58 !important; }
 
-    .btn { padding: 9px 14px; border: 0; border-radius: 8px; background: var(--blue); color: white; font-weight: 750; cursor: pointer; font-size: 13px; }
-    .btn.secondary { background: white; border: 1px solid var(--line); color: #2c3e58 !important; }
-    .btn.danger { background: #fff0f0; border: 1px solid #f3c9c9; color: #a21f2b !important; }
+    /* design-system.css targets the bare <button> tag and .secondary
+       class with !important — these rules need matching specificity
+       (a class selector) plus !important of their own to win inside
+       this page's light modal, instead of design-system's dark-theme
+       defaults (near-invisible transparent buttons on a white modal). */
+    .btn { padding: 9px 14px; border: 0; border-radius: 8px; background: var(--blue) !important; color: white !important; font-weight: 750; cursor: pointer; font-size: 13px; }
+    .btn.secondary { background: white !important; border: 1px solid var(--line); color: #2c3e58 !important; }
+    .btn.danger { background: #fff0f0 !important; border: 1px solid #f3c9c9; color: #a21f2b !important; }
     .btn:disabled { opacity: .6; cursor: default; }
 
     .actions-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
@@ -275,6 +280,10 @@
       render();
     }
 
+    async function refreshAll() {
+      await Promise.all([loadSummary(), loadRows()]);
+    }
+
     function render() {
       const query = document.querySelector("#search").value.toLowerCase().trim();
       const statusValue = document.querySelector("#status-filter").value;
@@ -300,6 +309,10 @@
 
         const statusCell = make("td");
         statusCell.append(make("span", `badge ${statusOf(row)}`, statusOf(row).replace(/_/g, " ")));
+        if (!row.guardian_name || !row.has_membership_assigned) {
+          statusCell.append(document.createElement("br"));
+          statusCell.append(make("span", "badge past_due", "Setup Needed"));
+        }
         tr.append(statusCell);
 
         const actionCell = make("td");
@@ -370,7 +383,7 @@
             body: JSON.stringify({ plan_id: planSelect.value }),
           });
           closeModal();
-          await loadRows();
+          await refreshAll();
         } catch (error) {
           alert(error.message);
           assignButton.disabled = false;
@@ -439,7 +452,7 @@
           try {
             await fetchJSON(`/billing/subscriptions/${encodeURIComponent(row.player_id)}/pause`, { method: "POST" });
             closeModal();
-            await loadRows();
+            await refreshAll();
           } catch (error) {
             alert(error.message);
           }
@@ -457,7 +470,7 @@
               body: JSON.stringify({ player_id: row.player_id }),
             });
             closeModal();
-            await loadRows();
+            await refreshAll();
           } catch (error) {
             alert(error.message);
           }
@@ -472,7 +485,7 @@
           try {
             await fetchJSON(`/billing/subscriptions/${encodeURIComponent(row.player_id)}/resume`, { method: "POST" });
             closeModal();
-            await loadRows();
+            await refreshAll();
           } catch (error) {
             alert(error.message);
           }
@@ -564,7 +577,7 @@
             }),
           });
           closeModal();
-          await loadRows();
+          await refreshAll();
         } catch (error) {
           submitButton.disabled = false;
           messageEl.textContent = error.message;
@@ -580,6 +593,12 @@
       const message = document.querySelector("#page-message");
       try {
         await Promise.all([loadSummary(), loadPlans(), loadRows()]);
+
+        const requestedPlayerId = new URLSearchParams(location.search).get("player_id");
+        if (requestedPlayerId) {
+          const row = rows.find((item) => item.player_id === requestedPlayerId);
+          if (row) openDetail(row);
+        }
       } catch (error) {
         message.textContent = error.message;
       }

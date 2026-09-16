@@ -113,6 +113,31 @@ class RegistrationService:
         self.db.commit()
         return True
 
+    def update_status(
+        self,
+        registration_id: str,
+        status: str,
+        actor_user_id: str,
+    ) -> AssessmentRegistrationDB:
+        registration = self.db.get(AssessmentRegistrationDB, registration_id)
+        if registration is None:
+            raise RegistrationNotFoundError("Registration not found")
+
+        if registration.status == "player_created":
+            raise RegistrationAlreadyLinkedError(registration.player_id)
+
+        registration.status = status
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="registration_status_changed",
+            resource_type="registration",
+            resource_id=registration_id,
+            details={"new_status": status},
+        )
+        self.db.commit()
+        self.db.refresh(registration)
+        return registration
+
     def find_duplicate_players(
         self, registration: AssessmentRegistrationDB
     ) -> list[Player]:

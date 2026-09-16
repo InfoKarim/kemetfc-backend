@@ -42,6 +42,7 @@ from app.api_schemas import (
     RequestPasswordResetSchema,
     ReviewPrivacyRequestSchema,
     SaveDrillDiagramAnnotationSchema,
+    UpdateRegistrationStatusSchema,
     UpdateUserSchema,
 )
 from app.avatar_upload import (
@@ -1452,6 +1453,32 @@ def delete_registration(
         )
 
     return {"message": "Registration deleted"}
+
+
+@app.patch("/registrations/{registration_id}/status")
+def update_registration_status(
+    registration_id: str,
+    payload: UpdateRegistrationStatusSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    try:
+        registration = RegistrationService(db=db).update_status(
+            registration_id,
+            payload.status,
+            actor_user_id=request.state.current_user["user_id"],
+        )
+    except RegistrationNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except RegistrationAlreadyLinkedError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={"message": str(error), "player_id": error.player_id},
+        )
+
+    return registration_payload(registration)
 
 
 @app.get("/registrations/{registration_id}")

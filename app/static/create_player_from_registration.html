@@ -87,21 +87,23 @@
     .banner.info { border-left-color: var(--blue); background: #eef5ff; }
     .banner h3 { margin: 0 0 6px; font-size: 14px; color: #16233B !important; }
     .banner p { margin: 0 0 8px; font-size: 13px; color: #2c3e58 !important; }
-    .banner a.button, .actions a.button, .actions button {
+    .banner a.action-btn, .actions a.action-btn, .actions button.action-btn {
       display: inline-block;
       padding: 9px 14px;
       border: 0;
       border-radius: 8px;
       background: var(--blue);
-      color: white;
+      color: white !important;
       text-decoration: none;
       font-size: 13px;
       font-weight: 750;
       cursor: pointer;
       margin-right: 8px;
     }
-    .banner a.button.secondary, .actions a.secondary, .actions button.secondary {
-      background: white; border: 1px solid var(--line); color: #2c3e58;
+    .banner a.action-btn.action-btn-secondary,
+    .actions a.action-btn-secondary,
+    .actions button.action-btn-secondary {
+      background: white; border: 1px solid var(--line); color: #2c3e58 !important;
     }
 
     label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 5px; }
@@ -445,12 +447,27 @@
       banner.append(make("h3", "", "Player created"));
       banner.append(make("p", "", "The registration is now linked to this player."));
       const actions = make("div", "actions");
-      const openProfile = make("a", "button", "Open Player Profile");
+
+      const openProfile = make("a", "action-btn", "Open Player Profile");
       openProfile.href = `/player-details?player_id=${encodeURIComponent(result.player_id)}`;
       actions.append(openProfile);
-      const backToRegistrations = make("a", "button secondary", "Back to Registrations");
+
+      const assignTeam = make("a", "action-btn action-btn-secondary", "Assign Team");
+      assignTeam.href = `/add-player?player_id=${encodeURIComponent(result.player_id)}`;
+      actions.append(assignTeam);
+
+      const assignMembership = make("a", "action-btn action-btn-secondary", "Assign Membership");
+      assignMembership.href = `/payment-control?player_id=${encodeURIComponent(result.player_id)}`;
+      actions.append(assignMembership);
+
+      const startAssessment = make("a", "action-btn action-btn-secondary", "Start Assessment");
+      startAssessment.href = "/add-assessment";
+      actions.append(startAssessment);
+
+      const backToRegistrations = make("a", "action-btn action-btn-secondary", "Back to Registrations");
       backToRegistrations.href = "/registrations-dashboard";
       actions.append(backToRegistrations);
+
       banner.append(actions);
       root.append(banner);
     }
@@ -504,7 +521,7 @@
           banner.append(make("h3", "", "Player already created"));
           banner.append(make("p", "", "This registration is already linked to a player."));
           const actions = make("div", "actions");
-          const openProfile = make("a", "button", "Open Player Profile");
+          const openProfile = make("a", "action-btn", "Open Player Profile");
           openProfile.href = `/player-details?player_id=${encodeURIComponent(registration.player_id)}`;
           actions.append(openProfile);
           banner.append(actions);

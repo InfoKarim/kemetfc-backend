@@ -49,6 +49,16 @@
     .status-badge.active { background: #eefbf3; color: #17a957 !important; }
     .status-badge.past_due, .status-badge.unpaid { background: #fff0f0; color: #c83b45 !important; }
     .status-badge.canceled, .status-badge.none { background: #eef1f5; color: #4a5968 !important; }
+    .payment-due-notice {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: #fff8e9;
+    }
+    .payment-due-notice .due-amount { font-size: 22px; color: #16233B !important; }
     button {
       padding: 12px 18px;
       border: 0;
@@ -128,6 +138,14 @@
       return subscription.status;
     }
 
+    function formatMoney(cents, currency) {
+      if (cents === null || cents === undefined) return "—";
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: (currency || "usd").toUpperCase(),
+      }).format(cents / 100);
+    }
+
     async function renderChild(child, role) {
       const card = make("article", "child-card");
       card.append(make("h2", "", child.name));
@@ -144,16 +162,31 @@
       }
 
       const subscription = statusData.subscription;
+      const membership = statusData.membership;
       const badge = make("span", `status-badge ${statusClass(subscription)}`, statusLabel(subscription));
       card.append(badge);
       card.append(document.createElement("br"));
+
+      if (!subscription && membership) {
+        const dueNotice = make("div", "payment-due-notice");
+        dueNotice.append(make("span", "muted", "Payment Due"));
+        dueNotice.append(make("strong", "due-amount", formatMoney(membership.amount_cents, membership.currency)));
+        dueNotice.append(make(
+          "span",
+          "muted",
+          `${membership.name} — billed ${membership.billing_interval}ly`
+        ));
+        card.append(dueNotice);
+      }
 
       const actionButton = make(
         "button",
         subscription && !subscription.cancel_at_period_end ? "cancel" : "",
         subscription && !subscription.cancel_at_period_end
           ? "Cancel subscription"
-          : "Subscribe"
+          : membership
+            ? "Pay Now"
+            : "Subscribe"
       );
 
       if (!statusData.configured) {

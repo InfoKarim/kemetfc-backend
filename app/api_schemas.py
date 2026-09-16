@@ -411,6 +411,10 @@ class RefundPaymentSchema(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class UpdateRegistrationStatusSchema(BaseModel):
+    status: Literal["submitted", "waitlisted", "archived"]
+
+
 class RegistrationConsentSchema(BaseModel):
     parent_consent: bool
     liability_waiver: bool

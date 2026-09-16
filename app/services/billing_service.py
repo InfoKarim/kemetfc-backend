@@ -535,6 +535,28 @@ class BillingService:
     def get_membership_for_player(self, player_id: str) -> PlayerMembershipDB | None:
         return self.db.get(PlayerMembershipDB, player_id)
 
+    def get_membership_plan_summary_for_player(self, player_id: str) -> dict | None:
+        """The plan a staff member has assigned this player to, if any —
+        shown to both the guardian (as "payment due") and staff (Player
+        Profile -> Membership) before any Stripe subscription exists."""
+        membership = self.get_membership_for_player(player_id)
+        if membership is None:
+            return None
+
+        plan = self.db.get(MembershipPlanDB, membership.plan_id)
+        if plan is None:
+            return None
+
+        return {
+            "plan_id": plan.plan_id,
+            "name": plan.name,
+            "amount_cents": plan.amount_cents,
+            "currency": plan.currency,
+            "billing_interval": plan.billing_interval,
+            "active": plan.active,
+            "assigned_at": membership.assigned_at,
+        }
+
     def get_admin_billing_summary(self) -> dict:
         now = datetime.now(UTC).replace(tzinfo=None)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)

@@ -387,6 +387,15 @@
         </section>
 
         <div>
+          <section class="card section" id="membership-section" hidden>
+            <h2>Membership</h2>
+            <div id="membership-facts" class="facts"></div>
+            <a id="view-billing-link" href="/payment-control" style="display:inline-block;margin-top:10px;">View Billing →</a>
+
+            <h3 style="margin-top:22px;">Player Onboarding</h3>
+            <div id="onboarding-checklist" class="list"></div>
+          </section>
+
           <section class="card">
             <h2>Development overview</h2>
             <div id="player-scores" class="scores"></div>
@@ -1065,6 +1074,92 @@
       });
     }
 
+    function formatMoney(cents, currency) {
+      if (cents === null || cents === undefined) return "—";
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: (currency || "usd").toUpperCase(),
+      }).format(cents / 100);
+    }
+
+    async function loadMembershipSection(player) {
+      // Financial visibility is admin-only — coaches never see this
+      // section, matching Payment Control's own access rule.
+      let me;
+      try {
+        const meResponse = await fetch("/auth/me");
+        if (!meResponse.ok) return;
+        me = await meResponse.json();
+      } catch (error) {
+        return;
+      }
+      if (me.user.role !== "admin") return;
+
+      document.querySelector("#membership-section").hidden = false;
+      document.querySelector("#view-billing-link").href =
+        `/payment-control?player_id=${encodeURIComponent(playerId)}`;
+
+      const [statusResponse, rowsResponse, registrationsResponse, assessmentsResponse] =
+        await Promise.all([
+          fetch(`/billing/status/${encodeURIComponent(playerId)}`),
+          fetch("/billing/admin/players"),
+          fetch("/registrations"),
+          fetch(`/players/${encodeURIComponent(playerId)}/assessments`),
+        ]);
+
+      const status = statusResponse.ok
+        ? await statusResponse.json()
+        : { subscription: null, membership: null };
+      const rows = rowsResponse.ok ? (await rowsResponse.json()).rows : [];
+      const registrations = registrationsResponse.ok ? await registrationsResponse.json() : [];
+      const assessments = assessmentsResponse.ok ? await assessmentsResponse.json() : [];
+
+      const row = rows.find((item) => item.player_id === playerId);
+      const registration = registrations.find((item) => item.player_id === playerId);
+
+      const facts = document.querySelector("#membership-facts");
+      facts.replaceChildren();
+
+      const subscriptionStatus = status.subscription ? status.subscription.status : "none";
+      [
+        ["Status", subscriptionStatus.replace(/_/g, " ")],
+        ["Plan", status.membership ? status.membership.name : "No plan assigned"],
+        ["Guardian", (row && row.guardian_name) || "Not linked"],
+        [
+          "Next Payment",
+          status.subscription && status.subscription.current_period_end
+            ? new Date(status.subscription.current_period_end).toLocaleDateString()
+            : "—",
+        ],
+        [
+          "Amount",
+          status.membership ? formatMoney(status.membership.amount_cents, status.membership.currency) : "—",
+        ],
+      ].forEach(([label, value]) => {
+        const fact = make("div", "fact");
+        fact.append(make("span", "muted", label), make("strong", "", String(value)));
+        facts.append(fact);
+      });
+
+      const checklist = document.querySelector("#onboarding-checklist");
+      checklist.replaceChildren();
+
+      const steps = [
+        ["Registration Received", Boolean(registration)],
+        ["Player Profile Created", true],
+        ["Guardian Linked", Boolean(row && row.guardian_name)],
+        ["Team Assigned", Boolean(player.team_id)],
+        ["Membership Assigned", Boolean(status.membership)],
+        ["Payment Setup", Boolean(status.subscription)],
+        ["Initial Assessment", assessments.length > 0],
+      ];
+      for (const [label, done] of steps) {
+        const item = make("div", "fact");
+        item.append(make("span", "muted", label), make("strong", "", done ? "✓" : "○"));
+        checklist.append(item);
+      }
+    }
+
     async function loadProfile() {
       if (!playerId) {
         document.querySelector("#player-profile").innerHTML =
@@ -1108,6 +1203,7 @@
         );
         loadPhysicalAssessments();
         loadTechnicalAssessments();
+        loadMembershipSection(player);
       } catch (error) {
         document.querySelector("#player-profile").replaceChildren(
           make("div", "error", error.message)

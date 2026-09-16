@@ -201,6 +201,106 @@ def test_delete_unknown_registration_returns_404(client):
     assert response.status_code == 404
 
 
+def test_admin_can_waitlist_and_restore_a_registration(client, anonymous_client):
+    registration_id = submit_registration(
+        anonymous_client,
+        parent_name="Waitlist Parent",
+        parent_email="waitlist-parent@example.com",
+        player_name="Waitlist Kid",
+    )
+
+    waitlist_response = client.patch(
+        f"/registrations/{registration_id}/status",
+        json={"status": "waitlisted"},
+    )
+    assert waitlist_response.status_code == 200
+    assert waitlist_response.json()["status"] == "waitlisted"
+
+    restore_response = client.patch(
+        f"/registrations/{registration_id}/status",
+        json={"status": "submitted"},
+    )
+    assert restore_response.status_code == 200
+    assert restore_response.json()["status"] == "submitted"
+
+
+def test_admin_can_archive_a_registration(client, anonymous_client):
+    registration_id = submit_registration(
+        anonymous_client,
+        parent_name="Archive Parent",
+        parent_email="archive-parent@example.com",
+        player_name="Archive Kid",
+    )
+
+    response = client.patch(
+        f"/registrations/{registration_id}/status",
+        json={"status": "archived"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "archived"
+
+
+def test_cannot_change_status_of_a_registration_already_linked_to_a_player(
+    client, anonymous_client
+):
+    registration_id = submit_registration(
+        anonymous_client,
+        parent_name="Locked Parent",
+        parent_email="locked-parent@example.com",
+        player_name="Locked Kid",
+    )
+    create_response = client.post(
+        f"/registrations/{registration_id}/create-player",
+        json=additional_player_payload(),
+    )
+    assert create_response.status_code == 201
+
+    response = client.patch(
+        f"/registrations/{registration_id}/status",
+        json={"status": "archived"},
+    )
+    assert response.status_code == 409
+
+
+def test_non_admin_cannot_change_registration_status(client, anonymous_client):
+    registration_id = submit_registration(
+        anonymous_client,
+        parent_name="No Access Parent",
+        parent_email="no-access-status@example.com",
+        player_name="No Access Kid",
+    )
+
+    coach_client = TestClient(app)
+    client.post(
+        "/auth/users",
+        json={
+            "username": "registrations.status.coach",
+            "password": "CoachPassword123!",
+            "role": "coach",
+        },
+    )
+    login_response = coach_client.post(
+        "/auth/login",
+        json={"username": "registrations.status.coach", "password": "CoachPassword123!"},
+    )
+    assert login_response.status_code == 200
+    coach_client.headers.update({
+        "X-CSRF-Token": coach_client.cookies.get(CSRF_COOKIE_NAME),
+    })
+
+    response = coach_client.patch(
+        f"/registrations/{registration_id}/status",
+        json={"status": "archived"},
+    )
+    assert response.status_code == 403
+
+    anon_response = anonymous_client.patch(
+        f"/registrations/{registration_id}/status",
+        json={"status": "archived"},
+    )
+    assert anon_response.status_code == 401
+
+
 def additional_player_payload(**overrides):
     payload = {
         "first_name_ar": "ليلى",

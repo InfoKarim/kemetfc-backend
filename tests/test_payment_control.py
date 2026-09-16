@@ -277,6 +277,32 @@ def test_admin_can_assign_membership_plan_to_player(client):
     assert row["plan_name"] == "Monthly Plan assign"
 
 
+def test_billing_status_reflects_assigned_plan_before_any_payment(client):
+    create_test_player(client, "PC_P_PAYMENT_DUE")
+    plan_id = create_membership_plan(client, "due")
+
+    client.post(
+        "/billing/subscriptions/PC_P_PAYMENT_DUE/membership",
+        json={"plan_id": plan_id},
+    )
+
+    status_response = client.get("/billing/status/PC_P_PAYMENT_DUE")
+    assert status_response.status_code == 200
+    body = status_response.json()
+    assert body["subscription"] is None
+    assert body["membership"]["plan_id"] == plan_id
+    assert body["membership"]["amount_cents"] == 12000
+    assert body["membership"]["name"] == "Monthly Plan due"
+
+
+def test_billing_status_has_no_membership_when_none_assigned(client):
+    create_test_player(client, "PC_P_NO_MEMBERSHIP")
+
+    status_response = client.get("/billing/status/PC_P_NO_MEMBERSHIP")
+    assert status_response.status_code == 200
+    assert status_response.json()["membership"] is None
+
+
 def test_assigning_inactive_or_unknown_plan_is_rejected(client):
     create_test_player(client, "PC_P_BADPLAN")
 
