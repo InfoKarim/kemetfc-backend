@@ -43,7 +43,12 @@ DEFAULT_ROLE_FEATURES = {
         "reports",
         "messaging",
     },
-    "guardian": {"messaging"},
+    # Read access only — every /players and /analyses route a guardian can
+    # actually reach is additionally scoped to their own linked child(ren)
+    # by require_guardian_player_access (see app/dependencies.py) and the
+    # guardian-specific allowlist in enforce_authentication. This feature
+    # flag alone grants no cross-player visibility.
+    "guardian": {"messaging", "players", "assessments"},
 }
 USERNAME_PATTERN = re.compile(r"[a-z0-9._-]{3,64}")
 SCRYPT_N = 2**14

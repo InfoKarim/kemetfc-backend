@@ -11,6 +11,7 @@ from app.dependencies import message_payload, notification_payload
 from app.services.message_service import MessageService
 from app.services.notification_service import NotificationService
 from app.services.player_service import PlayerService
+from app.services.privacy_service import PrivacyService
 from app.services.team_service import TeamService
 
 router = APIRouter()
@@ -120,15 +121,23 @@ def mark_message_read(
 
 
 @router.get("/search")
-def search(q: str = "", db: Session = Depends(get_db)):
+def search(request: Request, q: str = "", db: Session = Depends(get_db)):
     query = q.strip().lower()
 
     if len(query) < 2:
         return {"players": [], "teams": [], "videos": []}
 
-    players = (
-        PlayerService(db=db).get_all_players()
-    )
+    # A guardian must never discover another player through search —
+    # this isn't reachable for them today (not in the guardian path
+    # allowlist), but the handler enforces its own scope regardless, so
+    # it stays safe even if that allowlist ever changes.
+    if request.state.current_user["role"] == "guardian":
+        players = PrivacyService(db=db).list_guardian_players(
+            request.state.current_user["user_id"]
+        )
+    else:
+        players = PlayerService(db=db).get_all_players()
+
     matching_players = [
         {
             "player_id": p.player_id,

@@ -316,6 +316,30 @@ FEATURE_PAGE_PATHS = {
     "/registrations": "assessments",
 }
 
+# Read-only /players/{player_id}/<suffix> sub-resources a guardian may view
+# for their OWN linked child — mirrors the task's guardian profile tree
+# (Overview, Development, Assessments per pillar, Progress). Every handler
+# behind these paths also calls require_guardian_player_access itself, so
+# this allowlist only controls which SHAPE of request reaches that check;
+# it is never the sole authorization gate. Deliberately excluded:
+# "profile-suggestions" (a coach editing workflow, not a guardian view),
+# the bare "/players" list, and every write/delete endpoint.
+GUARDIAN_ALLOWED_PLAYER_SUFFIXES = {
+    "analyses",
+    "development-plan",
+    "development-snapshot",
+    "smart-recommendations",
+    "sports-medicine-notes",
+    "coaching-insights",
+    "recommended-drill",
+    "tactical-assessment",
+    "technical-assessment",
+    "mental-assessment",
+    "match-performance-assessment",
+    "weak-foot-assessment",
+    "assessments",
+}
+
 
 def required_feature_for_path(path: str) -> str | None:
     if path in FEATURE_PAGE_PATHS:
@@ -436,6 +460,21 @@ async def enforce_authentication(request: Request, call_next):
                 request.method in {"POST", "DELETE"}
                 and path.startswith("/players/")
                 and path.endswith("/photo")
+            )
+            or (
+                request.method == "GET"
+                and path.startswith("/players/")
+                and path.count("/") == 2
+            )
+            or (
+                request.method == "GET"
+                and path.startswith("/players/")
+                and path.rsplit("/", 1)[-1] in GUARDIAN_ALLOWED_PLAYER_SUFFIXES
+            )
+            or (
+                request.method == "GET"
+                and path.startswith("/analyses/")
+                and path.count("/") == 2
             )
         )
 
@@ -1077,7 +1116,9 @@ def get_guardian_child_snapshot(
         resource_type="player",
         resource_id=player_id,
     )
-    return get_player_development_snapshot(player_id=player_id, db=db)
+    return get_player_development_snapshot(
+        player_id=player_id, request=request, db=db
+    )
 
 
 @app.get("/guardian/children/{player_id}/data-export")
@@ -1402,6 +1443,7 @@ def delete_contact_message(
 @app.get("/players/{player_id}")
 def get_player(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = PlayerService(db=db)
@@ -1412,6 +1454,8 @@ def get_player(
             status_code=404,
             detail="Player not found",
         )
+
+    require_guardian_player_access(request, db, player_id)
 
     return player
 
@@ -1462,8 +1506,18 @@ def delete_player_photo(
 
 @app.get("/players")
 def get_all_players(
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    # Defense in depth: the auth middleware already denies guardians on
+    # this path (it's not in their allowlist), but a guardian must never
+    # receive the full roster even if that allowlist is ever misconfigured.
+    if request.state.current_user["role"] == "guardian":
+        raise HTTPException(
+            status_code=403,
+            detail="Guardians cannot list all players",
+        )
+
     service = PlayerService(db=db)
     return service.get_all_players()
 
@@ -1471,6 +1525,7 @@ def get_all_players(
 def update_player(
     player_id: str,
     player_data: PlayerSchema,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = PlayerService(db=db)
@@ -1481,6 +1536,8 @@ def update_player(
             status_code=404,
             detail="Player not found",
         )
+
+    require_guardian_player_access(request, db, player_id)
 
     if player_data.team_id is not None:
         team_service = TeamService(db=db)
@@ -1529,8 +1586,10 @@ def update_player(
 @app.delete("/players/{player_id}")
 def delete_player(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    require_guardian_player_access(request, db, player_id)
     service = PlayerService(db=db)
     deleted = service.delete_player(player_id)
 
@@ -1543,14 +1602,25 @@ def delete_player(
     return {"message": "Player deleted"}
 @app.get("/analyses")
 def get_all_analyses(
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    # Guardians must never see other players' analyses, and there's no
+    # "my linked children's analyses" meaning for a cross-player list —
+    # they use /players/{id}/analyses (ownership-checked) instead.
+    if request.state.current_user["role"] == "guardian":
+        raise HTTPException(
+            status_code=403,
+            detail="Guardians cannot list all analyses",
+        )
+
     service = AnalysisService(db=db)
     return service.get_all_analyses()
 
 @app.get("/analyses/{analysis_id}")
 def get_analysis(
     analysis_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = AnalysisService(db=db)
@@ -1561,6 +1631,8 @@ def get_analysis(
             status_code=404,
             detail="Analysis not found",
         )
+
+    require_guardian_player_access(request, db, analysis.player_id)
 
     return analysis
 
@@ -1576,6 +1648,8 @@ def get_analysis_smart_recommendations(
 
     if analysis is None:
         raise HTTPException(status_code=404, detail="Analysis not found")
+
+    require_guardian_player_access(request, db, analysis.player_id)
 
     if not is_provider_configured(provider):
         raise HTTPException(
@@ -1606,12 +1680,16 @@ def get_analysis_smart_recommendations(
 def create_analysis_development_forecast(
     analysis_id: str,
     criteria: DevelopmentForecastSchema,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     analysis = AnalysisService(db=db).get_analysis(analysis_id)
 
     if analysis is None:
         raise HTTPException(status_code=404, detail="Analysis not found")
+
+    require_guardian_player_access(request, db, analysis.player_id)
+
     if analysis.requires_human_review and not analysis.approved:
         raise HTTPException(
             status_code=409,
@@ -1642,6 +1720,8 @@ def create_analysis(
             status_code=404,
             detail="Player not found",
         )
+
+    require_guardian_player_access(request, db, analysis_data.player_id)
 
     service = AnalysisService(db=db)
     data = analysis_data.model_dump()
@@ -1689,6 +1769,8 @@ def update_analysis(
             detail="Analysis not found",
         )
 
+    require_guardian_player_access(request, db, existing_analysis.player_id)
+
     updated_data = analysis_data.model_dump()
     updated_data["analysis_id"] = analysis_id
 
@@ -1713,16 +1795,21 @@ def update_analysis(
 @app.delete("/analyses/{analysis_id}")
 def delete_analysis(
     analysis_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = AnalysisService(db=db)
-    deleted = service.delete_analysis(analysis_id)
+    existing_analysis = service.get_analysis(analysis_id)
 
-    if not deleted:
+    if existing_analysis is None:
         raise HTTPException(
             status_code=404,
             detail="Analysis not found",
         )
+
+    require_guardian_player_access(request, db, existing_analysis.player_id)
+
+    service.delete_analysis(analysis_id)
 
     return {"message": "Analysis deleted"}
 
@@ -1730,6 +1817,7 @@ def delete_analysis(
 def recommend_drills_for_analysis(
     analysis_id: str,
     criteria: AnalysisDrillRecommendationSchema,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     analysis_service = AnalysisService(db=db)
@@ -1740,6 +1828,8 @@ def recommend_drills_for_analysis(
             status_code=404,
             detail="Analysis not found",
         )
+
+    require_guardian_player_access(request, db, analysis.player_id)
 
     require_approved_analysis(analysis)
 
@@ -1784,6 +1874,7 @@ def recommend_drills_for_analysis(
 def create_training_plan_from_analysis(
     analysis_id: str,
     plan_data: CreateTrainingPlanSchema,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     analysis_service = AnalysisService(db=db)
@@ -1794,6 +1885,8 @@ def create_training_plan_from_analysis(
             status_code=404,
             detail="Analysis not found",
         )
+
+    require_guardian_player_access(request, db, analysis.player_id)
 
     require_approved_analysis(analysis)
 
@@ -1816,6 +1909,7 @@ def create_training_plan_from_analysis(
     recommendations = recommend_drills_for_analysis(
         analysis_id=analysis_id,
         criteria=recommendation_criteria,
+        request=request,
         db=db,
     )
 
@@ -1838,13 +1932,22 @@ def create_training_plan_from_analysis(
 @app.get("/players/{player_id}/analyses")
 def get_analyses_by_player(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
+
     service = AnalysisService(db=db)
     return service.get_analyses_by_player(player_id)
+
+
 @app.get("/players/{player_id}/development-plan")
 def get_development_plan(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = PlayerService(db=db)
@@ -1856,12 +1959,15 @@ def get_development_plan(
             detail="Player not found",
         )
 
+    require_guardian_player_access(request, db, player_id)
+
     return create_development_plan(player)
 
 
 @app.get("/players/{player_id}/development-snapshot")
 def get_player_development_snapshot(
     player_id: str,
+    request: Request,
     player_difficulty: str | None = None,
     target_duration: int | None = None,
     available_equipment: str | None = None,
@@ -1874,6 +1980,8 @@ def get_player_development_snapshot(
             status_code=404,
             detail="Player not found",
         )
+
+    require_guardian_player_access(request, db, player_id)
 
     equipment = None
 
@@ -2019,12 +2127,15 @@ _ANALYSIS_ATTRIBUTE_TO_PROFILE_FIELD = {
 @app.get("/players/{player_id}/profile-suggestions")
 def get_player_profile_suggestions(
     player_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
 
     analyses = AnalysisService(db=db).get_analyses_by_player(player_id)
     latest_analysis = max(
@@ -2075,6 +2186,8 @@ def get_player_smart_recommendations(
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
+    require_guardian_player_access(request, db, player_id)
+
     if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
@@ -2111,6 +2224,8 @@ def get_player_sports_medicine_notes(
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
+    require_guardian_player_access(request, db, player_id)
+
     if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
@@ -2146,6 +2261,8 @@ def get_player_coaching_insights(
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
 
     if not is_provider_configured(provider):
         raise HTTPException(
@@ -2232,6 +2349,8 @@ def get_player_recommended_drill(
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
 
     if not is_provider_configured(provider):
         raise HTTPException(
@@ -2420,6 +2539,8 @@ def get_player_tactical_assessment(
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
+    require_guardian_player_access(request, db, player_id)
+
     if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
@@ -2460,6 +2581,8 @@ def get_player_technical_assessment(
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
 
     if not is_provider_configured(provider):
         raise HTTPException(
@@ -2504,6 +2627,8 @@ def get_player_mental_assessment(
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
 
+    require_guardian_player_access(request, db, player_id)
+
     if not is_provider_configured(provider):
         raise HTTPException(
             status_code=404,
@@ -2546,6 +2671,8 @@ def get_player_match_performance_assessment(
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
 
     if not is_provider_configured(provider):
         raise HTTPException(
@@ -2595,6 +2722,8 @@ def get_player_weak_foot_assessment(
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
 
     if not is_provider_configured(provider):
         raise HTTPException(

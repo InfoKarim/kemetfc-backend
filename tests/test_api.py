@@ -3790,8 +3790,19 @@ def test_guardian_can_only_access_linked_child_snapshot():
     )
     assert unrelated.status_code == 404
 
+    # Direct /players/{id} access is allowed for the guardian's OWN
+    # linked child (the task's explicit requirement: "/players/101 ->
+    # ALLOWED" for a guardian linked to player 101) — but still denied,
+    # server-side, for any other player, including by simply swapping
+    # the ID in the URL.
     direct_player_access = guardian_client.get("/players/P_GUARDIAN_LINKED")
-    assert direct_player_access.status_code == 403
+    assert direct_player_access.status_code == 200
+    assert direct_player_access.json()["player_id"] == "P_GUARDIAN_LINKED"
+
+    direct_unrelated_access = guardian_client.get(
+        "/players/P_GUARDIAN_UNRELATED"
+    )
+    assert direct_unrelated_access.status_code == 404
 
     mutation = guardian_client.post(
         "/drills",

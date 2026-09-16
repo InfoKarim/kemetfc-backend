@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from app.api_schemas import RecordBallMasterySchema, RecordYoYoKidsSchema
 from app.database import get_db
+from app.db_models import PlayerAssessmentDB
+from app.dependencies import require_guardian_player_access
 from app.player_video_upload import SUPPORTED_VIDEO_TYPES
 from app.services.player_assessment_service import PlayerAssessmentService
 from app.services.player_service import PlayerService
@@ -29,6 +31,18 @@ router = APIRouter()
 MAX_ANALYSIS_VIDEO_BYTES = 150 * 1024 * 1024
 
 
+def _require_staff(request: Request) -> None:
+    """Recording/deleting an assessment is a coach/admin action — a
+    guardian is a read-only observer of their own linked child's results,
+    never a data-entry actor, regardless of which player is targeted.
+    """
+    if request.state.current_user["role"] == "guardian":
+        raise HTTPException(
+            status_code=403,
+            detail="Guardians cannot record or delete assessments",
+        )
+
+
 @router.post(
     "/players/{player_id}/physical-assessments/yoyo-kids",
     status_code=201,
@@ -39,6 +53,7 @@ def record_yoyo_kids_assessment(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    _require_staff(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
@@ -62,6 +77,7 @@ def record_ball_mastery_assessment(
     request: Request,
     db: Session = Depends(get_db),
 ):
+    _require_staff(request)
     player = PlayerService(db=db).get_player(player_id)
 
     if player is None:
@@ -78,6 +94,7 @@ def record_ball_mastery_assessment(
 @router.post("/players/{player_id}/technical-assessments/ball-mastery/analyze-video")
 async def analyze_ball_mastery_assessment_video(
     player_id: str,
+    request: Request,
     video: UploadFile,
     db: Session = Depends(get_db),
 ):
@@ -88,6 +105,8 @@ async def analyze_ball_mastery_assessment_video(
     record-result form before it's persisted, and the uploaded video is
     discarded immediately after sampling, never stored.
     """
+    _require_staff(request)
+
     if not is_provider_configured("claude"):
         raise HTTPException(
             status_code=404,
@@ -148,6 +167,7 @@ async def analyze_ball_mastery_assessment_video(
 @router.get("/players/{player_id}/assessments")
 def list_player_assessments(
     player_id: str,
+    request: Request,
     pillar: str | None = None,
     db: Session = Depends(get_db),
 ):
@@ -155,6 +175,8 @@ def list_player_assessments(
 
     if player is None:
         raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
 
     service = PlayerAssessmentService(db=db)
     return {
@@ -165,12 +187,17 @@ def list_player_assessments(
 @router.delete("/player-assessments/{assessment_id}")
 def delete_player_assessment(
     assessment_id: str,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    service = PlayerAssessmentService(db=db)
-    deleted = service.delete_assessment(assessment_id)
+    _require_staff(request)
+    assessment = db.get(PlayerAssessmentDB, assessment_id)
 
-    if not deleted:
+    if assessment is None:
         raise HTTPException(status_code=404, detail="Assessment not found")
+
+    require_guardian_player_access(request, db, assessment.player_id)
+
+    PlayerAssessmentService(db=db).delete_assessment(assessment_id)
 
     return {"message": "Assessment deleted"}
