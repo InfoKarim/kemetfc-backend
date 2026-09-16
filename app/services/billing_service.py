@@ -31,7 +31,10 @@ class BillingError(ValueError):
 
 
 def is_configured() -> bool:
-    return bool(get_stripe_secret_key()) and bool(get_stripe_price_id())
+    # STRIPE_PRICE_ID is a legacy single-price fallback, not a hard
+    # prerequisite — an academy using only per-plan pricing (MembershipPlanDB)
+    # never needs to set it. The secret key is the only real requirement.
+    return bool(get_stripe_secret_key())
 
 
 def _stripe_timestamp_to_datetime(value: int | None) -> datetime | None:
@@ -91,6 +94,21 @@ class BillingService:
             if plan is not None and plan.active:
                 price_id = plan.stripe_price_id
 
+        if not price_id:
+            raise BillingError(
+                "No membership plan is assigned to this player and no "
+                "default price is configured"
+            )
+
+        checkout_kwargs = {}
+        if membership is not None and membership.discount_percent_off is not None:
+            # A discount an admin approved before this guardian ever paid
+            # (see apply_discount) — attach it here so the very first
+            # invoice already reflects it, rather than requiring a second
+            # manual step after checkout completes.
+            coupon_id = self._ensure_discount_coupon(membership.discount_percent_off)
+            checkout_kwargs["discounts"] = [{"coupon": coupon_id}]
+
         base_url = get_billing_return_base_url()
         session = stripe.checkout.Session.create(
             mode="subscription",
@@ -103,6 +121,7 @@ class BillingService:
             },
             success_url=f"{base_url}/billing?checkout=success",
             cancel_url=f"{base_url}/billing?checkout=cancelled",
+            **checkout_kwargs,
         )
         return session.url
 
@@ -252,40 +271,128 @@ class BillingService:
             .all()
         )
 
-    def apply_discount(self, player_id: str, percent_off: int) -> SubscriptionDB:
-        """Apply an ongoing (duration=forever) percentage discount to a
-        player's subscription — admin-only, reversible via
-        remove_discount(). Reuses one Stripe coupon per percentage rather
-        than minting a new one on every click.
-        """
-        subscription = self.get_subscription_for_player(player_id)
-        if subscription is None:
-            raise BillingError("No subscription found for this player")
-
+    def _ensure_discount_coupon(self, percent_off: int) -> str:
         coupon_id = _discount_coupon_id(percent_off)
         try:
-            stripe.Coupon.retrieve(coupon_id)
-        except stripe.InvalidRequestError:
-            stripe.Coupon.create(
-                id=coupon_id,
-                percent_off=percent_off,
-                duration="forever",
+            try:
+                stripe.Coupon.retrieve(coupon_id)
+            except stripe.InvalidRequestError:
+                stripe.Coupon.create(
+                    id=coupon_id,
+                    percent_off=percent_off,
+                    duration="forever",
+                )
+        except stripe.StripeError as error:
+            raise BillingError(f"Stripe rejected this discount: {error.user_message or error}")
+        return coupon_id
+
+    def apply_discount(
+        self,
+        player_id: str,
+        percent_off: int,
+        actor_user_id: str,
+    ) -> dict:
+        """Apply an ongoing (duration=forever) percentage discount for a
+        player — admin-only, reversible via remove_discount().
+
+        If the player already has a real, paid Stripe subscription, the
+        discount is attached to it directly (takes effect on the next
+        invoice). Otherwise — the common case for a family who hasn't
+        checked out yet — it's stored on their PlayerMembershipDB as a
+        pending discount and applied automatically the moment their
+        Stripe Checkout Session is created, so their very first invoice
+        already reflects it. Either way, one Stripe coupon is reused per
+        percentage rather than minting a new one every click.
+        """
+        subscription = self.get_subscription_for_player(player_id)
+
+        if subscription is not None:
+            coupon_id = self._ensure_discount_coupon(percent_off)
+            updated = stripe.Subscription.modify(
+                subscription.stripe_subscription_id,
+                coupon=coupon_id,
+            )
+            result = self.upsert_subscription_from_stripe_object(
+                _stripe_object_to_dict(updated)
+            )
+            self._audit(
+                actor_user_id=actor_user_id,
+                action="discount_applied",
+                resource_type="player",
+                resource_id=player_id,
+                details={"percent_off": percent_off, "applies_to": "active_subscription"},
+            )
+            self.db.commit()
+            return {
+                "player_id": player_id,
+                "discount_percent_off": result.discount_percent_off,
+                "applies_to": "active_subscription",
+            }
+
+        membership = self.get_membership_for_player(player_id)
+        if membership is None:
+            raise BillingError(
+                "Assign a membership plan to this player before applying a discount"
             )
 
-        updated = stripe.Subscription.modify(
-            subscription.stripe_subscription_id,
-            coupon=coupon_id,
+        membership.discount_percent_off = percent_off
+        membership.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="discount_applied",
+            resource_type="player",
+            resource_id=player_id,
+            details={"percent_off": percent_off, "applies_to": "pending_membership"},
         )
-        return self.upsert_subscription_from_stripe_object(_stripe_object_to_dict(updated))
+        self.db.commit()
+        return {
+            "player_id": player_id,
+            "discount_percent_off": percent_off,
+            "applies_to": "pending_membership",
+        }
 
-    def remove_discount(self, player_id: str) -> SubscriptionDB:
+    def remove_discount(self, player_id: str, actor_user_id: str) -> dict:
         subscription = self.get_subscription_for_player(player_id)
-        if subscription is None:
-            raise BillingError("No subscription found for this player")
 
-        stripe.Subscription.delete_discount(subscription.stripe_subscription_id)
-        updated = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
-        return self.upsert_subscription_from_stripe_object(_stripe_object_to_dict(updated))
+        if subscription is not None and subscription.discount_percent_off is not None:
+            stripe.Subscription.delete_discount(subscription.stripe_subscription_id)
+            updated = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+            result = self.upsert_subscription_from_stripe_object(
+                _stripe_object_to_dict(updated)
+            )
+            self._audit(
+                actor_user_id=actor_user_id,
+                action="discount_removed",
+                resource_type="player",
+                resource_id=player_id,
+                details={"applies_to": "active_subscription"},
+            )
+            self.db.commit()
+            return {
+                "player_id": player_id,
+                "discount_percent_off": result.discount_percent_off,
+                "applies_to": "active_subscription",
+            }
+
+        membership = self.get_membership_for_player(player_id)
+        if membership is None or membership.discount_percent_off is None:
+            raise BillingError("No discount is applied for this player")
+
+        membership.discount_percent_off = None
+        membership.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="discount_removed",
+            resource_type="player",
+            resource_id=player_id,
+            details={"applies_to": "pending_membership"},
+        )
+        self.db.commit()
+        return {
+            "player_id": player_id,
+            "discount_percent_off": None,
+            "applies_to": "pending_membership",
+        }
 
     def pause_subscription(self, player_id: str, actor_user_id: str) -> SubscriptionDB:
         subscription = self.get_subscription_for_player(player_id)
@@ -420,18 +527,38 @@ class BillingService:
         self,
         actor_user_id: str,
         name: str,
-        stripe_price_id: str,
         amount_cents: int,
         currency: str,
         billing_interval: str,
+        stripe_price_id: str | None = None,
     ) -> MembershipPlanDB:
-        existing = (
-            self.db.query(MembershipPlanDB)
-            .filter(MembershipPlanDB.stripe_price_id == stripe_price_id)
-            .first()
-        )
-        if existing is not None:
-            raise BillingError("A plan for this Stripe price already exists")
+        if stripe_price_id is None:
+            if not get_stripe_secret_key():
+                raise BillingError(
+                    "Billing is not configured — set a Stripe secret key "
+                    "before creating a plan"
+                )
+            # Create a real Stripe Product + Price so the admin never has
+            # to touch the Stripe dashboard just to set a price — this IS
+            # "controlling the price" from inside Payment Control.
+            try:
+                price = stripe.Price.create(
+                    unit_amount=amount_cents,
+                    currency=currency.lower(),
+                    recurring={"interval": billing_interval},
+                    product_data={"name": name},
+                )
+            except stripe.StripeError as error:
+                raise BillingError(f"Stripe rejected this plan: {error.user_message or error}")
+            stripe_price_id = price["id"]
+        else:
+            existing = (
+                self.db.query(MembershipPlanDB)
+                .filter(MembershipPlanDB.stripe_price_id == stripe_price_id)
+                .first()
+            )
+            if existing is not None:
+                raise BillingError("A plan for this Stripe price already exists")
 
         now = datetime.now(UTC).replace(tzinfo=None)
         plan = MembershipPlanDB(
@@ -470,16 +597,46 @@ class BillingService:
         actor_user_id: str,
         name: str | None = None,
         active: bool | None = None,
+        amount_cents: int | None = None,
     ) -> MembershipPlanDB:
         plan = self.db.get(MembershipPlanDB, plan_id)
         if plan is None:
             raise BillingError("Plan not found")
 
-        previous = {"name": plan.name, "active": plan.active}
+        previous = {
+            "name": plan.name,
+            "active": plan.active,
+            "amount_cents": plan.amount_cents,
+        }
         if name is not None:
             plan.name = name
         if active is not None:
             plan.active = active
+        if amount_cents is not None and amount_cents != plan.amount_cents:
+            if not get_stripe_secret_key():
+                raise BillingError(
+                    "Billing is not configured — set a Stripe secret key "
+                    "before changing a plan's price"
+                )
+            # Stripe Prices can't be edited in place — mint a new one and
+            # archive the old one so it can't be picked for a new checkout.
+            try:
+                new_price = stripe.Price.create(
+                    unit_amount=amount_cents,
+                    currency=plan.currency,
+                    recurring={"interval": plan.billing_interval},
+                    product_data={"name": plan.name},
+                )
+            except stripe.StripeError as error:
+                raise BillingError(
+                    f"Stripe rejected this price change: {error.user_message or error}"
+                )
+            try:
+                stripe.Price.modify(plan.stripe_price_id, active=False)
+            except stripe.InvalidRequestError:
+                pass
+            plan.stripe_price_id = new_price["id"]
+            plan.amount_cents = amount_cents
         plan.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
         self._audit(
@@ -487,7 +644,14 @@ class BillingService:
             action="membership_plan_updated",
             resource_type="membership_plan",
             resource_id=plan_id,
-            details={"previous": previous, "new": {"name": plan.name, "active": plan.active}},
+            details={
+                "previous": previous,
+                "new": {
+                    "name": plan.name,
+                    "active": plan.active,
+                    "amount_cents": plan.amount_cents,
+                },
+            },
         )
         self.db.commit()
         self.db.refresh(plan)
@@ -555,6 +719,7 @@ class BillingService:
             "billing_interval": plan.billing_interval,
             "active": plan.active,
             "assigned_at": membership.assigned_at,
+            "discount_percent_off": membership.discount_percent_off,
         }
 
     def get_admin_billing_summary(self) -> dict:
@@ -678,7 +843,7 @@ class BillingService:
                 "discount_percent_off": (
                     subscription.discount_percent_off
                     if subscription is not None
-                    else None
+                    else (membership.discount_percent_off if membership is not None else None)
                 ),
                 "has_membership_assigned": membership is not None,
             })

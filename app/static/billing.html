@@ -229,14 +229,17 @@
 
       card.append(actionButton);
 
-      if (role === "admin" && subscription) {
-        const hasDiscount = !!subscription.discount_percent_off;
+      if (role === "admin" && (subscription || membership)) {
+        const currentDiscount = subscription
+          ? subscription.discount_percent_off
+          : (membership ? membership.discount_percent_off : null);
+        const hasDiscount = !!currentDiscount;
 
         if (hasDiscount) {
           card.append(make(
             "span",
             "discount-note",
-            `${subscription.discount_percent_off}% discount applied`
+            `${currentDiscount}% discount applied`
           ));
         }
 

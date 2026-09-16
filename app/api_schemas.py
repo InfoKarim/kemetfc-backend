@@ -383,15 +383,24 @@ class ApplyDiscountSchema(BaseModel):
 
 class CreateMembershipPlanSchema(BaseModel):
     name: str = Field(min_length=1, max_length=120)
-    stripe_price_id: str = Field(min_length=1, max_length=120)
-    amount_cents: int = Field(ge=0)
-    currency: str = Field(min_length=3, max_length=3)
+    amount_cents: int = Field(ge=1)
+    currency: str = Field(min_length=3, max_length=3, default="usd")
     billing_interval: Literal["month", "year"]
+    # Optional escape hatch for a plan that should reuse a Stripe Price the
+    # admin already created directly in the Stripe dashboard. Left blank,
+    # the service creates a real Stripe Product + Price for the admin —
+    # they should never need Stripe dashboard access just to set a price.
+    stripe_price_id: str | None = Field(default=None, max_length=120)
 
 
 class UpdateMembershipPlanSchema(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     active: bool | None = None
+    # Stripe Price objects are immutable — setting this creates a brand
+    # new Stripe Price behind the scenes and repoints the plan at it.
+    # Players already assigned to the old price keep paying it until
+    # reassigned; this only changes what NEW checkouts charge.
+    amount_cents: int | None = Field(default=None, ge=1)
 
 
 class AssignMembershipPlanSchema(BaseModel):

@@ -5,7 +5,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
-from app.db_models import PaymentDB, PlayerDB, SubscriptionDB, UserDB
+from app.db_models import (
+    MembershipPlanDB,
+    PaymentDB,
+    PlayerDB,
+    PlayerMembershipDB,
+    SubscriptionDB,
+    UserDB,
+)
 from app.services import billing_service
 from app.services.billing_service import BillingError, BillingService
 
@@ -51,18 +58,30 @@ def make_db():
     return db
 
 
-def test_is_configured_requires_secret_key_and_price(monkeypatch):
+def test_is_configured_requires_only_secret_key(monkeypatch):
+    # STRIPE_PRICE_ID is a legacy single-price fallback, not required —
+    # an academy using only per-plan pricing never needs to set it.
     monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "")
     monkeypatch.setattr(billing_service, "get_stripe_price_id", lambda: "")
     assert billing_service.is_configured() is False
 
     monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
-    monkeypatch.setattr(billing_service, "get_stripe_price_id", lambda: "price_x")
     assert billing_service.is_configured() is True
 
 
 def test_create_checkout_session_raises_when_not_configured(monkeypatch):
     monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "")
+    monkeypatch.setattr(billing_service, "get_stripe_price_id", lambda: "")
+
+    db = make_db()
+    service = BillingService(db=db)
+
+    with pytest.raises(BillingError):
+        service.create_checkout_session("P1", "U1", "guardian@example.com")
+
+
+def test_create_checkout_session_raises_when_no_plan_and_no_default_price(monkeypatch):
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
     monkeypatch.setattr(billing_service, "get_stripe_price_id", lambda: "")
 
     db = make_db()
@@ -269,6 +288,31 @@ def test_construct_webhook_event_returns_event_on_success(monkeypatch):
     assert service.construct_webhook_event(b"{}", "good-signature") == fake_event
 
 
+def _seed_membership(service, discount_percent_off=None):
+    now = datetime.now()
+    plan = MembershipPlanDB(
+        plan_id="MPLAN1",
+        name="Monthly Plan",
+        stripe_price_id="price_plan_1",
+        amount_cents=12000,
+        currency="usd",
+        billing_interval="month",
+        active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    membership = PlayerMembershipDB(
+        player_id="P1",
+        plan_id="MPLAN1",
+        assigned_by_user_id="U1",
+        assigned_at=now,
+        discount_percent_off=discount_percent_off,
+        updated_at=now,
+    )
+    service.db.add_all([plan, membership])
+    service.db.commit()
+
+
 def _seed_subscription(service):
     service.upsert_subscription_from_stripe_object({
         "id": "sub_1",
@@ -407,12 +451,12 @@ def test_upsert_subscription_without_discount_clears_it():
     assert row.discount_percent_off is None
 
 
-def test_apply_discount_raises_when_no_subscription():
+def test_apply_discount_raises_when_no_subscription_and_no_membership():
     db = make_db()
     service = BillingService(db=db)
 
     with pytest.raises(BillingError):
-        service.apply_discount("P1", 50)
+        service.apply_discount("P1", 50, actor_user_id="U1")
 
 
 def test_apply_discount_reuses_existing_coupon_and_modifies_subscription(monkeypatch):
@@ -450,12 +494,13 @@ def test_apply_discount_reuses_existing_coupon_and_modifies_subscription(monkeyp
 
     monkeypatch.setattr(billing_service.stripe.Subscription, "modify", fake_modify)
 
-    row = service.apply_discount("P1", 50)
+    row = service.apply_discount("P1", 50, actor_user_id="U1")
 
     assert retrieved_coupon_ids == ["kemetfc-50pct-forever"]
     assert created_coupons == []  # coupon already existed, not recreated
     assert modify_calls == [("sub_1", {"coupon": "kemetfc-50pct-forever"})]
-    assert row.discount_percent_off == 50
+    assert row["discount_percent_off"] == 50
+    assert row["applies_to"] == "active_subscription"
 
 
 def test_apply_discount_creates_coupon_when_missing(monkeypatch):
@@ -489,20 +534,20 @@ def test_apply_discount_creates_coupon_when_missing(monkeypatch):
         },
     )
 
-    row = service.apply_discount("P1", 25)
+    row = service.apply_discount("P1", 25, actor_user_id="U1")
 
     assert created_coupons == [
         {"id": "kemetfc-25pct-forever", "percent_off": 25, "duration": "forever"}
     ]
-    assert row.discount_percent_off == 25
+    assert row["discount_percent_off"] == 25
 
 
-def test_remove_discount_raises_when_no_subscription():
+def test_remove_discount_raises_when_no_subscription_and_no_membership():
     db = make_db()
     service = BillingService(db=db)
 
     with pytest.raises(BillingError):
-        service.remove_discount("P1")
+        service.remove_discount("P1", actor_user_id="U1")
 
 
 def test_remove_discount_calls_stripe_and_clears_local_state(monkeypatch):
@@ -535,7 +580,82 @@ def test_remove_discount_calls_stripe_and_clears_local_state(monkeypatch):
         },
     )
 
-    row = service.remove_discount("P1")
+    row = service.remove_discount("P1", actor_user_id="U1")
 
     assert delete_calls == ["sub_1"]
-    assert row.discount_percent_off is None
+    assert row["discount_percent_off"] is None
+
+
+def test_apply_discount_stores_pending_discount_when_no_subscription_yet(monkeypatch):
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_membership(service)
+
+    row = service.apply_discount("P1", 30, actor_user_id="U1")
+
+    assert row == {
+        "player_id": "P1",
+        "discount_percent_off": 30,
+        "applies_to": "pending_membership",
+    }
+    membership = db.get(PlayerMembershipDB, "P1")
+    assert membership.discount_percent_off == 30
+
+
+def test_remove_pending_discount_when_no_subscription_yet():
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_membership(service, discount_percent_off=30)
+
+    row = service.remove_discount("P1", actor_user_id="U1")
+
+    assert row == {
+        "player_id": "P1",
+        "discount_percent_off": None,
+        "applies_to": "pending_membership",
+    }
+    membership = db.get(PlayerMembershipDB, "P1")
+    assert membership.discount_percent_off is None
+
+
+def test_removing_discount_with_nothing_applied_raises():
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_membership(service)
+
+    with pytest.raises(BillingError):
+        service.remove_discount("P1", actor_user_id="U1")
+
+
+def test_checkout_session_applies_pending_membership_discount(monkeypatch):
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
+    monkeypatch.setattr(billing_service, "get_stripe_price_id", lambda: "price_default")
+    monkeypatch.setattr(
+        billing_service, "get_billing_return_base_url", lambda: "https://app.kemetfc.com"
+    )
+
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_membership(service, discount_percent_off=30)
+
+    monkeypatch.setattr(
+        billing_service.stripe.Coupon,
+        "retrieve",
+        lambda coupon_id: None,
+    )
+
+    captured = {}
+
+    class FakeSession:
+        url = "https://checkout.stripe.com/session/abc"
+
+    def fake_create(**params):
+        captured.update(params)
+        return FakeSession()
+
+    monkeypatch.setattr(billing_service.stripe.checkout.Session, "create", fake_create)
+
+    service.create_checkout_session("P1", "U1", "guardian@example.com")
+
+    assert captured["line_items"] == [{"price": "price_plan_1", "quantity": 1}]
+    assert captured["discounts"] == [{"coupon": "kemetfc-30pct-forever"}]

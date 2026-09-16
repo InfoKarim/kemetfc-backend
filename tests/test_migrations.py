@@ -81,7 +81,7 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert revision == "086bf34fd6b5"
+    assert revision == "01a356dffda7"
     job_columns = {
         column["name"]
         for column in inspect(engine).get_columns("video_analysis_jobs")
@@ -100,7 +100,7 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
     assert "weak_foot_profile" in player_columns
 
     with engine.connect() as connection:
-        assert require_database_at_head(connection) == ("086bf34fd6b5",)
+        assert require_database_at_head(connection) == ("01a356dffda7",)
 
 
 def test_migration_health_rejects_database_without_migrations(tmp_path):

@@ -173,11 +173,15 @@ def apply_subscription_discount(
         raise HTTPException(status_code=404, detail="Player not found")
 
     try:
-        updated = BillingService(db=db).apply_discount(player_id, payload.percent_off)
+        result = BillingService(db=db).apply_discount(
+            player_id,
+            payload.percent_off,
+            actor_user_id=request.state.current_user["user_id"],
+        )
     except BillingError as error:
         raise HTTPException(status_code=404, detail=str(error))
 
-    return _subscription_payload(updated)
+    return result
 
 
 @router.delete("/billing/subscriptions/{player_id}/discount")
@@ -192,11 +196,14 @@ def remove_subscription_discount(
         raise HTTPException(status_code=404, detail="Player not found")
 
     try:
-        updated = BillingService(db=db).remove_discount(player_id)
+        result = BillingService(db=db).remove_discount(
+            player_id,
+            actor_user_id=request.state.current_user["user_id"],
+        )
     except BillingError as error:
         raise HTTPException(status_code=404, detail=str(error))
 
-    return _subscription_payload(updated)
+    return result
 
 
 @router.post("/billing/webhook")
@@ -398,6 +405,7 @@ def update_membership_plan(
             actor_user_id=request.state.current_user["user_id"],
             name=payload.name,
             active=payload.active,
+            amount_cents=payload.amount_cents,
         )
     except BillingError as error:
         raise HTTPException(status_code=404, detail=str(error))

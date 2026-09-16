@@ -139,6 +139,14 @@
         <div class="action-grid" id="action-grid"></div>
       </section>
 
+      <section class="card" id="plans-card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h2 style="margin:0;">Membership Plans</h2>
+          <button id="create-plan-btn" class="btn" type="button">Create Plan</button>
+        </div>
+        <div id="plans-list" class="row-list" style="margin-top:14px;"></div>
+      </section>
+
       <section class="card">
         <div class="toolbar">
           <input id="search" type="search" placeholder="Search by player or guardian name">
@@ -272,6 +280,196 @@
     async function loadPlans() {
       const data = await fetchJSON("/billing/membership-plans");
       plans = data.plans;
+      renderPlansList();
+    }
+
+    function renderPlansList() {
+      const list = document.querySelector("#plans-list");
+      list.replaceChildren();
+
+      if (!plans.length) {
+        list.append(make("div", "muted", "No membership plans yet — create one to start assigning prices to players."));
+        return;
+      }
+
+      for (const plan of plans) {
+        const row = make("div", "row");
+        const label = make("span", "", "");
+        label.append(make("strong", "", `${plan.name} `));
+        label.append(document.createTextNode(
+          `— ${formatMoney(plan.amount_cents, plan.currency)}/${plan.billing_interval}`
+        ));
+        if (!plan.active) label.append(make("span", "badge canceled", " inactive"));
+        row.append(label);
+
+        const actions = make("span");
+        const editButton = make("button", "link-button", "Edit price");
+        editButton.type = "button";
+        editButton.style.marginRight = "6px";
+        editButton.addEventListener("click", () => openEditPlanPriceModal(plan));
+        actions.append(editButton);
+
+        const toggleButton = make("button", "link-button", plan.active ? "Deactivate" : "Activate");
+        toggleButton.type = "button";
+        toggleButton.addEventListener("click", async () => {
+          toggleButton.disabled = true;
+          try {
+            await fetchJSON(`/billing/membership-plans/${encodeURIComponent(plan.plan_id)}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ active: !plan.active }),
+            });
+            await loadPlans();
+          } catch (error) {
+            toggleButton.disabled = false;
+            alert(error.message);
+          }
+        });
+        actions.append(toggleButton);
+
+        row.append(actions);
+        list.append(row);
+      }
+    }
+
+    function openCreatePlanModal() {
+      const backdrop = make("div", "modal-backdrop");
+      const modal = make("div", "modal");
+
+      const closeButton = make("button", "modal-close", "×");
+      closeButton.type = "button";
+      closeButton.addEventListener("click", closeModal);
+      modal.append(closeButton);
+
+      modal.append(make("h2", "", "Create Membership Plan"));
+      modal.append(make("p", "muted", "This creates a real price in your Stripe account — no need to open Stripe yourself."));
+
+      const form = make("form");
+
+      const nameField = make("div", "field");
+      nameField.append(make("label", "", "Plan name"));
+      const nameInput = make("input");
+      nameInput.required = true;
+      nameInput.placeholder = "Monthly Training";
+      nameField.append(nameInput);
+      form.append(nameField);
+
+      const amountField = make("div", "field");
+      amountField.append(make("label", "", "Price (in dollars)"));
+      const amountInput = make("input");
+      amountInput.type = "number";
+      amountInput.step = "0.01";
+      amountInput.min = "0.01";
+      amountInput.required = true;
+      amountField.append(amountInput);
+      form.append(amountField);
+
+      const intervalField = make("div", "field");
+      intervalField.append(make("label", "", "Billing interval"));
+      const intervalSelect = make("select");
+      for (const [value, label] of [["month", "Monthly"], ["year", "Yearly"]]) {
+        const option = make("option", "", label);
+        option.value = value;
+        intervalSelect.append(option);
+      }
+      intervalField.append(intervalSelect);
+      form.append(intervalField);
+
+      const messageEl = make("p", "", "");
+      form.append(messageEl);
+
+      const actionsRow = make("div", "actions-row");
+      const submitButton = make("button", "btn", "Create Plan");
+      submitButton.type = "submit";
+      actionsRow.append(submitButton);
+      form.append(actionsRow);
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        submitButton.disabled = true;
+        try {
+          await fetchJSON("/billing/membership-plans", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: nameInput.value.trim(),
+              amount_cents: Math.round(Number(amountInput.value) * 100),
+              currency: "usd",
+              billing_interval: intervalSelect.value,
+            }),
+          });
+          closeModal();
+          await loadPlans();
+        } catch (error) {
+          submitButton.disabled = false;
+          messageEl.textContent = error.message;
+        }
+      });
+
+      modal.append(form);
+      backdrop.append(modal);
+      document.querySelector("#modal-root").replaceChildren(backdrop);
+    }
+
+    function openEditPlanPriceModal(plan) {
+      const backdrop = make("div", "modal-backdrop");
+      const modal = make("div", "modal");
+
+      const closeButton = make("button", "modal-close", "×");
+      closeButton.type = "button";
+      closeButton.addEventListener("click", closeModal);
+      modal.append(closeButton);
+
+      modal.append(make("h2", "", `Edit Price — ${plan.name}`));
+      modal.append(make(
+        "p",
+        "muted",
+        "Stripe prices can't be changed in place — this creates a new price and switches the plan to it. Players already paying keep their current price until reassigned."
+      ));
+
+      const form = make("form");
+      const amountField = make("div", "field");
+      amountField.append(make("label", "", "New price (in dollars)"));
+      const amountInput = make("input");
+      amountInput.type = "number";
+      amountInput.step = "0.01";
+      amountInput.min = "0.01";
+      amountInput.required = true;
+      amountInput.value = (plan.amount_cents / 100).toFixed(2);
+      amountField.append(amountInput);
+      form.append(amountField);
+
+      const messageEl = make("p", "", "");
+      form.append(messageEl);
+
+      const actionsRow = make("div", "actions-row");
+      const submitButton = make("button", "btn", "Save New Price");
+      submitButton.type = "submit";
+      actionsRow.append(submitButton);
+      form.append(actionsRow);
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        submitButton.disabled = true;
+        try {
+          await fetchJSON(`/billing/membership-plans/${encodeURIComponent(plan.plan_id)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              amount_cents: Math.round(Number(amountInput.value) * 100),
+            }),
+          });
+          closeModal();
+          await loadPlans();
+        } catch (error) {
+          submitButton.disabled = false;
+          messageEl.textContent = error.message;
+        }
+      });
+
+      modal.append(form);
+      backdrop.append(modal);
+      document.querySelector("#modal-root").replaceChildren(backdrop);
     }
 
     async function loadRows() {
@@ -390,6 +588,63 @@
         }
       });
       modal.append(assignButton);
+
+      modal.append(make("div", "section-title", "Discount"));
+      const discountInfo = make(
+        "p",
+        "muted",
+        row.discount_percent_off
+          ? `${row.discount_percent_off}% off applied.`
+          : "No discount applied."
+      );
+      modal.append(discountInfo);
+
+      if (row.discount_percent_off) {
+        const removeDiscountButton = make("button", "btn secondary", "Remove Discount");
+        removeDiscountButton.type = "button";
+        removeDiscountButton.addEventListener("click", async () => {
+          removeDiscountButton.disabled = true;
+          try {
+            await fetchJSON(`/billing/subscriptions/${encodeURIComponent(row.player_id)}/discount`, {
+              method: "DELETE",
+            });
+            closeModal();
+            await refreshAll();
+          } catch (error) {
+            alert(error.message);
+            removeDiscountButton.disabled = false;
+          }
+        });
+        modal.append(removeDiscountButton);
+      } else {
+        const discountSelect = make("select");
+        for (const percent of [10, 20, 25, 50]) {
+          const option = make("option", "", `${percent}% off`);
+          option.value = String(percent);
+          discountSelect.append(option);
+        }
+        modal.append(discountSelect);
+
+        const applyDiscountButton = make("button", "btn secondary", "Give Discount");
+        applyDiscountButton.type = "button";
+        applyDiscountButton.style.marginLeft = "8px";
+        applyDiscountButton.addEventListener("click", async () => {
+          applyDiscountButton.disabled = true;
+          try {
+            await fetchJSON(`/billing/subscriptions/${encodeURIComponent(row.player_id)}/discount`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ percent_off: Number(discountSelect.value) }),
+            });
+            closeModal();
+            await refreshAll();
+          } catch (error) {
+            alert(error.message);
+            applyDiscountButton.disabled = false;
+          }
+        });
+        modal.append(discountSelect, applyDiscountButton);
+      }
 
       modal.append(make("div", "section-title", "Payments (Stripe)"));
       const paymentsList = make("div", "row-list");
@@ -606,6 +861,7 @@
 
     document.querySelector("#search").addEventListener("input", render);
     document.querySelector("#status-filter").addEventListener("change", render);
+    document.querySelector("#create-plan-btn").addEventListener("click", openCreatePlanModal);
 
     init();
   </script>

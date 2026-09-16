@@ -550,6 +550,13 @@ class PlayerMembershipDB(Base):
         ForeignKey("users.user_id"),
     )
     assigned_at: Mapped[datetime] = mapped_column(DateTime)
+    # A discount an admin has approved for this player before they've ever
+    # paid — applied to the real Stripe Checkout Session (as a Stripe
+    # coupon) the moment the guardian pays, so the first invoice already
+    # reflects it. None means no discount. Once a real subscription exists,
+    # discounts are tracked on SubscriptionDB instead (the authoritative,
+    # webhook-confirmed value) — this field stops being read at that point.
+    discount_percent_off: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 

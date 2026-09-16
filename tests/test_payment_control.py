@@ -244,6 +244,103 @@ def test_creating_plan_for_existing_stripe_price_is_rejected(client):
     assert plan_id
 
 
+def test_creating_plan_without_stripe_price_id_creates_one_via_stripe(client, monkeypatch):
+    from app.services import billing_service
+
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
+
+    captured = {}
+
+    def fake_price_create(**params):
+        captured.update(params)
+        return {"id": "price_auto_created"}
+
+    monkeypatch.setattr(billing_service.stripe.Price, "create", fake_price_create)
+
+    response = client.post(
+        "/billing/membership-plans",
+        json={
+            "name": "Auto Priced Plan",
+            "amount_cents": 9900,
+            "currency": "usd",
+            "billing_interval": "month",
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["stripe_price_id"] == "price_auto_created"
+    assert captured["unit_amount"] == 9900
+    assert captured["recurring"] == {"interval": "month"}
+    assert captured["product_data"] == {"name": "Auto Priced Plan"}
+
+
+def test_creating_plan_without_stripe_price_id_requires_billing_configured(client, monkeypatch):
+    from app.services import billing_service
+
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "")
+
+    response = client.post(
+        "/billing/membership-plans",
+        json={
+            "name": "Should Fail",
+            "amount_cents": 9900,
+            "currency": "usd",
+            "billing_interval": "month",
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_creating_plan_surfaces_stripe_error_clearly_instead_of_crashing(client, monkeypatch):
+    from app.services import billing_service
+
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_bad")
+
+    def fake_price_create(**kwargs):
+        raise billing_service.stripe.AuthenticationError("Invalid API Key provided")
+
+    monkeypatch.setattr(billing_service.stripe.Price, "create", fake_price_create)
+
+    response = client.post(
+        "/billing/membership-plans",
+        json={
+            "name": "Should Fail Clearly",
+            "amount_cents": 9900,
+            "currency": "usd",
+            "billing_interval": "month",
+        },
+    )
+    assert response.status_code == 400
+    assert "Stripe rejected" in response.json()["detail"]
+
+
+def test_admin_can_change_plan_price_which_mints_a_new_stripe_price(client, monkeypatch):
+    from app.services import billing_service
+
+    plan_id = create_membership_plan(client, "reprice")
+
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
+    monkeypatch.setattr(
+        billing_service.stripe.Price,
+        "create",
+        lambda **kwargs: {"id": "price_reprice_new"},
+    )
+    monkeypatch.setattr(
+        billing_service.stripe.Price,
+        "modify",
+        lambda price_id, **kwargs: {"id": price_id},
+    )
+
+    response = client.patch(
+        f"/billing/membership-plans/{plan_id}",
+        json={"amount_cents": 15000},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["amount_cents"] == 15000
+    assert body["stripe_price_id"] == "price_reprice_new"
+
+
 def test_non_admin_cannot_manage_membership_plans(client):
     coach_client = _create_role_client("pc.coach2", "CoachPassword123!", "coach")
 
@@ -277,6 +374,45 @@ def test_admin_can_assign_membership_plan_to_player(client):
     assert row["plan_name"] == "Monthly Plan assign"
 
 
+def test_admin_can_discount_a_player_before_any_payment_exists(client):
+    create_test_player(client, "PC_P_PRE_PAYMENT_DISCOUNT")
+    plan_id = create_membership_plan(client, "predisc")
+    client.post(
+        "/billing/subscriptions/PC_P_PRE_PAYMENT_DISCOUNT/membership",
+        json={"plan_id": plan_id},
+    )
+
+    apply_response = client.post(
+        "/billing/subscriptions/PC_P_PRE_PAYMENT_DISCOUNT/discount",
+        json={"percent_off": 40},
+    )
+    assert apply_response.status_code == 200
+    assert apply_response.json() == {
+        "player_id": "PC_P_PRE_PAYMENT_DISCOUNT",
+        "discount_percent_off": 40,
+        "applies_to": "pending_membership",
+    }
+
+    status_response = client.get("/billing/status/PC_P_PRE_PAYMENT_DISCOUNT")
+    assert status_response.json()["membership"]["discount_percent_off"] == 40
+
+    remove_response = client.delete(
+        "/billing/subscriptions/PC_P_PRE_PAYMENT_DISCOUNT/discount"
+    )
+    assert remove_response.status_code == 200
+    assert remove_response.json()["discount_percent_off"] is None
+
+
+def test_discount_without_a_membership_or_subscription_returns_404(client):
+    create_test_player(client, "PC_P_NO_DISCOUNT_TARGET")
+
+    response = client.post(
+        "/billing/subscriptions/PC_P_NO_DISCOUNT_TARGET/discount",
+        json={"percent_off": 20},
+    )
+    assert response.status_code == 404
+
+
 def test_billing_status_reflects_assigned_plan_before_any_payment(client):
     create_test_player(client, "PC_P_PAYMENT_DUE")
     plan_id = create_membership_plan(client, "due")
@@ -301,6 +437,18 @@ def test_billing_status_has_no_membership_when_none_assigned(client):
     status_response = client.get("/billing/status/PC_P_NO_MEMBERSHIP")
     assert status_response.status_code == 200
     assert status_response.json()["membership"] is None
+
+
+def test_billing_reports_configured_with_only_secret_key_no_legacy_price(client, monkeypatch):
+    from app.services import billing_service
+
+    create_test_player(client, "PC_P_CONFIGURED")
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
+    monkeypatch.setattr(billing_service, "get_stripe_price_id", lambda: "")
+
+    response = client.get("/billing/status/PC_P_CONFIGURED")
+    assert response.status_code == 200
+    assert response.json()["configured"] is True
 
 
 def test_assigning_inactive_or_unknown_plan_is_rejected(client):
