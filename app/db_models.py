@@ -448,6 +448,11 @@ class SubscriptionDB(Base):
         nullable=True,
     )
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Mirrors Stripe's own subscription.discount.coupon.percent_off exactly
+    # — set/cleared only from a real Stripe subscription object (via
+    # checkout, the discount endpoints, or any webhook refresh), never
+    # computed or asserted locally. None means no discount is applied.
+    discount_percent_off: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 

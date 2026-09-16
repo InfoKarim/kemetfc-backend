@@ -26,6 +26,32 @@ def _stripe_timestamp_to_datetime(value: int | None) -> datetime | None:
     return datetime.fromtimestamp(value, tz=UTC).replace(tzinfo=None)
 
 
+def _extract_discount_percent_off(subscription: dict) -> int | None:
+    discount = subscription.get("discount")
+    if not discount:
+        return None
+    coupon = discount.get("coupon") or {}
+    percent_off = coupon.get("percent_off")
+    return int(percent_off) if percent_off is not None else None
+
+
+def _stripe_object_to_dict(value) -> dict:
+    """Real stripe-python SDK objects deliberately aren't dict-like (no
+    .get()) — convert to a plain dict so the rest of this module can use
+    uniform dict access regardless of whether the caller passed a real
+    Stripe object or an already-plain dict (as tests do)."""
+    to_dict = getattr(value, "to_dict", None)
+    return to_dict() if callable(to_dict) else value
+
+
+def _discount_coupon_id(percent_off: int) -> str:
+    # A fixed, deterministic id per percentage so repeated "give a
+    # discount" actions reuse the same Stripe coupon instead of creating
+    # a new one every time — Stripe coupon ids are globally unique per
+    # account, and this stays stable and human-readable in the dashboard.
+    return f"kemetfc-{percent_off}pct-forever"
+
+
 class BillingService:
     def __init__(self, db: Session):
         self.db = db
@@ -82,6 +108,7 @@ class BillingService:
         current_period_end = _stripe_timestamp_to_datetime(
             subscription.get("current_period_end")
         )
+        discount_percent_off = _extract_discount_percent_off(subscription)
 
         if existing is None:
             existing = SubscriptionDB(
@@ -93,6 +120,7 @@ class BillingService:
                 status=subscription["status"],
                 current_period_end=current_period_end,
                 cancel_at_period_end=bool(subscription.get("cancel_at_period_end")),
+                discount_percent_off=discount_percent_off,
                 created_at=now,
                 updated_at=now,
             )
@@ -103,6 +131,7 @@ class BillingService:
             existing.cancel_at_period_end = bool(
                 subscription.get("cancel_at_period_end")
             )
+            existing.discount_percent_off = discount_percent_off
             existing.updated_at = now
 
         self.db.commit()
@@ -188,3 +217,38 @@ class BillingService:
             .order_by(PaymentDB.created_at.desc())
             .all()
         )
+
+    def apply_discount(self, player_id: str, percent_off: int) -> SubscriptionDB:
+        """Apply an ongoing (duration=forever) percentage discount to a
+        player's subscription — admin-only, reversible via
+        remove_discount(). Reuses one Stripe coupon per percentage rather
+        than minting a new one on every click.
+        """
+        subscription = self.get_subscription_for_player(player_id)
+        if subscription is None:
+            raise BillingError("No subscription found for this player")
+
+        coupon_id = _discount_coupon_id(percent_off)
+        try:
+            stripe.Coupon.retrieve(coupon_id)
+        except stripe.InvalidRequestError:
+            stripe.Coupon.create(
+                id=coupon_id,
+                percent_off=percent_off,
+                duration="forever",
+            )
+
+        updated = stripe.Subscription.modify(
+            subscription.stripe_subscription_id,
+            coupon=coupon_id,
+        )
+        return self.upsert_subscription_from_stripe_object(_stripe_object_to_dict(updated))
+
+    def remove_discount(self, player_id: str) -> SubscriptionDB:
+        subscription = self.get_subscription_for_player(player_id)
+        if subscription is None:
+            raise BillingError("No subscription found for this player")
+
+        stripe.Subscription.delete_discount(subscription.stripe_subscription_id)
+        updated = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+        return self.upsert_subscription_from_stripe_object(_stripe_object_to_dict(updated))

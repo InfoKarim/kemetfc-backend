@@ -4216,6 +4216,157 @@ def test_guardian_cannot_view_unrelated_players_payment_history():
     assert unrelated.status_code == 404
 
 
+def test_admin_can_apply_and_remove_a_subscription_discount(monkeypatch):
+    from app.services import billing_service
+
+    create_test_player("P_BILLING_DISCOUNT")
+    _push_subscription_webhook(monkeypatch, "P_BILLING_DISCOUNT", "sub_discount_test")
+
+    monkeypatch.setattr(
+        billing_service.stripe.Coupon,
+        "retrieve",
+        lambda coupon_id: None,
+    )
+    monkeypatch.setattr(
+        billing_service.stripe.Subscription,
+        "modify",
+        lambda subscription_id, **params: {
+            "id": subscription_id,
+            "customer": "cus_discount_test",
+            "status": "active",
+            "current_period_end": 1893456000,
+            "cancel_at_period_end": False,
+            "items": {"data": [{"price": {"id": "price_x"}}]},
+            "metadata": {"player_id": "P_BILLING_DISCOUNT", "paying_user_id": "TEST_ADMIN"},
+            "discount": {"coupon": {"percent_off": 50}},
+        },
+    )
+
+    apply_response = client.post(
+        "/billing/subscriptions/P_BILLING_DISCOUNT/discount",
+        json={"percent_off": 50},
+    )
+    assert apply_response.status_code == 200
+    assert apply_response.json()["discount_percent_off"] == 50
+
+    monkeypatch.setattr(
+        billing_service.stripe.Subscription,
+        "delete_discount",
+        lambda subscription_id: None,
+    )
+    monkeypatch.setattr(
+        billing_service.stripe.Subscription,
+        "retrieve",
+        lambda subscription_id: {
+            "id": subscription_id,
+            "customer": "cus_discount_test",
+            "status": "active",
+            "current_period_end": 1893456000,
+            "cancel_at_period_end": False,
+            "items": {"data": [{"price": {"id": "price_x"}}]},
+            "metadata": {"player_id": "P_BILLING_DISCOUNT", "paying_user_id": "TEST_ADMIN"},
+            "discount": None,
+        },
+    )
+
+    remove_response = client.delete("/billing/subscriptions/P_BILLING_DISCOUNT/discount")
+    assert remove_response.status_code == 200
+    assert remove_response.json()["discount_percent_off"] is None
+
+
+def test_guardian_cannot_apply_or_remove_a_discount():
+    create_test_player("P_BILLING_DISCOUNT_GUARDIAN")
+
+    user_response = client.post(
+        "/auth/users",
+        json={
+            "username": "billing.discount.parent",
+            "password": "GuardianPassword123!",
+            "role": "guardian",
+        },
+    )
+    guardian_user_id = user_response.json()["user_id"]
+    client.post(
+        "/guardian-player-links",
+        json={
+            "guardian_user_id": guardian_user_id,
+            "player_id": "P_BILLING_DISCOUNT_GUARDIAN",
+        },
+    )
+
+    guardian_client = TestClient(app)
+    login = guardian_client.post(
+        "/auth/login",
+        json={"username": "billing.discount.parent", "password": "GuardianPassword123!"},
+    )
+    assert login.status_code == 200
+    guardian_client.headers.update({
+        "X-CSRF-Token": guardian_client.cookies.get(CSRF_COOKIE_NAME),
+    })
+
+    apply_response = guardian_client.post(
+        "/billing/subscriptions/P_BILLING_DISCOUNT_GUARDIAN/discount",
+        json={"percent_off": 50},
+    )
+    remove_response = guardian_client.delete(
+        "/billing/subscriptions/P_BILLING_DISCOUNT_GUARDIAN/discount"
+    )
+
+    assert apply_response.status_code == 403
+    assert remove_response.status_code == 403
+
+
+def test_coach_cannot_apply_a_discount():
+    create_test_player("P_BILLING_DISCOUNT_COACH")
+    coach_client = _create_and_login_as(
+        "billing.discount.coach", "CoachPassword123!", role="coach"
+    )
+    coach_client.headers.update({
+        "X-CSRF-Token": coach_client.cookies.get(CSRF_COOKIE_NAME),
+    })
+
+    response = coach_client.post(
+        "/billing/subscriptions/P_BILLING_DISCOUNT_COACH/discount",
+        json={"percent_off": 50},
+    )
+
+    assert response.status_code == 403
+
+
+def test_apply_discount_requires_authentication():
+    create_test_player("P_BILLING_DISCOUNT_ANON")
+    anonymous = TestClient(app)
+
+    response = anonymous.post(
+        "/billing/subscriptions/P_BILLING_DISCOUNT_ANON/discount",
+        json={"percent_off": 50},
+    )
+
+    assert response.status_code == 401
+
+
+def test_apply_discount_rejects_out_of_range_percent():
+    create_test_player("P_BILLING_DISCOUNT_RANGE")
+
+    response = client.post(
+        "/billing/subscriptions/P_BILLING_DISCOUNT_RANGE/discount",
+        json={"percent_off": 150},
+    )
+
+    assert response.status_code == 422
+
+
+def test_apply_discount_returns_404_without_a_subscription():
+    create_test_player("P_BILLING_DISCOUNT_NO_SUB")
+
+    response = client.post(
+        "/billing/subscriptions/P_BILLING_DISCOUNT_NO_SUB/discount",
+        json={"percent_off": 50},
+    )
+
+    assert response.status_code == 404
+
+
 def test_guardian_with_video_access_uploads_only_for_linked_child(
     monkeypatch,
     tmp_path,

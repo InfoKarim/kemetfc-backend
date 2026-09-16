@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api_schemas import CreateCheckoutSessionSchema
+from app.api_schemas import ApplyDiscountSchema, CreateCheckoutSessionSchema
 from app.database import get_db
 from app.db_models import UserDB
-from app.dependencies import require_guardian_player_access
+from app.dependencies import require_admin, require_guardian_player_access
 from app.services.billing_service import BillingError, BillingService, is_configured
 from app.services.player_service import PlayerService
 
@@ -30,6 +30,7 @@ def _subscription_payload(subscription) -> dict:
         "status": subscription.status,
         "current_period_end": subscription.current_period_end,
         "cancel_at_period_end": subscription.cancel_at_period_end,
+        "discount_percent_off": subscription.discount_percent_off,
     }
 
 
@@ -107,6 +108,48 @@ def cancel_subscription(
 
     try:
         updated = service.cancel_subscription(subscription.stripe_subscription_id)
+    except BillingError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    return _subscription_payload(updated)
+
+
+@router.post("/billing/subscriptions/{player_id}/discount")
+def apply_subscription_discount(
+    player_id: str,
+    payload: ApplyDiscountSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    # Discounts are an admin/finance decision, not a coach or guardian
+    # action — deliberately require_admin here rather than the guardian
+    # ownership check used elsewhere in this file.
+    require_admin(request)
+
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    try:
+        updated = BillingService(db=db).apply_discount(player_id, payload.percent_off)
+    except BillingError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    return _subscription_payload(updated)
+
+
+@router.delete("/billing/subscriptions/{player_id}/discount")
+def remove_subscription_discount(
+    player_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    try:
+        updated = BillingService(db=db).remove_discount(player_id)
     except BillingError as error:
         raise HTTPException(status_code=404, detail=str(error))
 

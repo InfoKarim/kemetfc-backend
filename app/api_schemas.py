@@ -377,6 +377,10 @@ class CreateCheckoutSessionSchema(BaseModel):
     player_id: str = Field(min_length=1)
 
 
+class ApplyDiscountSchema(BaseModel):
+    percent_off: int = Field(ge=1, le=100)
+
+
 class RegistrationConsentSchema(BaseModel):
     parent_consent: bool
     liability_waiver: bool

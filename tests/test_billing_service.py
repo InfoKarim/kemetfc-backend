@@ -368,3 +368,174 @@ def test_list_payments_for_player_orders_newest_first():
     assert [p.stripe_invoice_id for p in payments] == ["in_2", "in_1"]
 
     assert service.list_payments_for_player("DOES_NOT_EXIST") == []
+
+
+def test_upsert_subscription_captures_discount_from_stripe_object():
+    db = make_db()
+    service = BillingService(db=db)
+
+    row = service.upsert_subscription_from_stripe_object({
+        "id": "sub_1",
+        "customer": "cus_1",
+        "status": "active",
+        "current_period_end": None,
+        "cancel_at_period_end": False,
+        "items": {"data": [{"price": {"id": "price_x"}}]},
+        "metadata": {"player_id": "P1", "paying_user_id": "U1"},
+        "discount": {"coupon": {"percent_off": 50}},
+    })
+
+    assert row.discount_percent_off == 50
+
+
+def test_upsert_subscription_without_discount_clears_it():
+    db = make_db()
+    service = BillingService(db=db)
+
+    base = {
+        "id": "sub_1",
+        "customer": "cus_1",
+        "status": "active",
+        "current_period_end": None,
+        "cancel_at_period_end": False,
+        "items": {"data": [{"price": {"id": "price_x"}}]},
+        "metadata": {"player_id": "P1", "paying_user_id": "U1"},
+    }
+    service.upsert_subscription_from_stripe_object({**base, "discount": {"coupon": {"percent_off": 50}}})
+    row = service.upsert_subscription_from_stripe_object({**base, "discount": None})
+
+    assert row.discount_percent_off is None
+
+
+def test_apply_discount_raises_when_no_subscription():
+    db = make_db()
+    service = BillingService(db=db)
+
+    with pytest.raises(BillingError):
+        service.apply_discount("P1", 50)
+
+
+def test_apply_discount_reuses_existing_coupon_and_modifies_subscription(monkeypatch):
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_subscription(service)
+
+    retrieved_coupon_ids = []
+    created_coupons = []
+    modify_calls = []
+
+    monkeypatch.setattr(
+        billing_service.stripe.Coupon,
+        "retrieve",
+        lambda coupon_id: retrieved_coupon_ids.append(coupon_id),
+    )
+
+    def fake_create(**params):
+        created_coupons.append(params)
+
+    monkeypatch.setattr(billing_service.stripe.Coupon, "create", fake_create)
+
+    def fake_modify(subscription_id, **params):
+        modify_calls.append((subscription_id, params))
+        return {
+            "id": "sub_1",
+            "customer": "cus_1",
+            "status": "active",
+            "current_period_end": None,
+            "cancel_at_period_end": False,
+            "items": {"data": [{"price": {"id": "price_x"}}]},
+            "metadata": {"player_id": "P1", "paying_user_id": "U1"},
+            "discount": {"coupon": {"percent_off": 50}},
+        }
+
+    monkeypatch.setattr(billing_service.stripe.Subscription, "modify", fake_modify)
+
+    row = service.apply_discount("P1", 50)
+
+    assert retrieved_coupon_ids == ["kemetfc-50pct-forever"]
+    assert created_coupons == []  # coupon already existed, not recreated
+    assert modify_calls == [("sub_1", {"coupon": "kemetfc-50pct-forever"})]
+    assert row.discount_percent_off == 50
+
+
+def test_apply_discount_creates_coupon_when_missing(monkeypatch):
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_subscription(service)
+
+    def fake_retrieve(coupon_id):
+        raise billing_service.stripe.InvalidRequestError("No such coupon", "id")
+
+    monkeypatch.setattr(billing_service.stripe.Coupon, "retrieve", fake_retrieve)
+
+    created_coupons = []
+    monkeypatch.setattr(
+        billing_service.stripe.Coupon,
+        "create",
+        lambda **params: created_coupons.append(params),
+    )
+    monkeypatch.setattr(
+        billing_service.stripe.Subscription,
+        "modify",
+        lambda subscription_id, **params: {
+            "id": "sub_1",
+            "customer": "cus_1",
+            "status": "active",
+            "current_period_end": None,
+            "cancel_at_period_end": False,
+            "items": {"data": [{"price": {"id": "price_x"}}]},
+            "metadata": {"player_id": "P1", "paying_user_id": "U1"},
+            "discount": {"coupon": {"percent_off": 25}},
+        },
+    )
+
+    row = service.apply_discount("P1", 25)
+
+    assert created_coupons == [
+        {"id": "kemetfc-25pct-forever", "percent_off": 25, "duration": "forever"}
+    ]
+    assert row.discount_percent_off == 25
+
+
+def test_remove_discount_raises_when_no_subscription():
+    db = make_db()
+    service = BillingService(db=db)
+
+    with pytest.raises(BillingError):
+        service.remove_discount("P1")
+
+
+def test_remove_discount_calls_stripe_and_clears_local_state(monkeypatch):
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_subscription(service)
+    service.db.query(SubscriptionDB).filter_by(stripe_subscription_id="sub_1").update(
+        {"discount_percent_off": 50}
+    )
+    service.db.commit()
+
+    delete_calls = []
+    monkeypatch.setattr(
+        billing_service.stripe.Subscription,
+        "delete_discount",
+        lambda subscription_id: delete_calls.append(subscription_id),
+    )
+    monkeypatch.setattr(
+        billing_service.stripe.Subscription,
+        "retrieve",
+        lambda subscription_id: {
+            "id": "sub_1",
+            "customer": "cus_1",
+            "status": "active",
+            "current_period_end": None,
+            "cancel_at_period_end": False,
+            "items": {"data": [{"price": {"id": "price_x"}}]},
+            "metadata": {"player_id": "P1", "paying_user_id": "U1"},
+            "discount": None,
+        },
+    )
+
+    row = service.remove_discount("P1")
+
+    assert delete_calls == ["sub_1"]
+    assert row.discount_percent_off is None
