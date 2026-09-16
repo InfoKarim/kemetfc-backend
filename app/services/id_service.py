@@ -9,7 +9,9 @@ from app.db_models import (
     GeneratedDrillDiagramDB,
     GuardianConsentDB,
     IdCounterDB,
+    ManualPaymentDB,
     MatchDB,
+    MembershipPlanDB,
     MLDatasetEntryDB,
     PlayerAssessmentDB,
     PlayerDB,
@@ -40,6 +42,8 @@ ENTITY_CONFIG = {
     "contact_message": ("MSG", ContactMessageDB),
     "generated_drill_diagram": ("GEN", GeneratedDrillDiagramDB),
     "player_assessment": ("ASSESS", PlayerAssessmentDB),
+    "membership_plan": ("MPLAN", MembershipPlanDB),
+    "manual_payment": ("MPAY", ManualPaymentDB),
 }
 
 

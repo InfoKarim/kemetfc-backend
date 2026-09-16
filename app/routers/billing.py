@@ -4,7 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.api_schemas import ApplyDiscountSchema, CreateCheckoutSessionSchema
+from app.api_schemas import (
+    ApplyDiscountSchema,
+    AssignMembershipPlanSchema,
+    CreateCheckoutSessionSchema,
+    CreateMembershipPlanSchema,
+    RecordManualPaymentSchema,
+    RefundPaymentSchema,
+    UpdateMembershipPlanSchema,
+)
 from app.database import get_db
 from app.db_models import UserDB
 from app.dependencies import require_admin, require_guardian_player_access
@@ -31,12 +39,45 @@ def _subscription_payload(subscription) -> dict:
         "current_period_end": subscription.current_period_end,
         "cancel_at_period_end": subscription.cancel_at_period_end,
         "discount_percent_off": subscription.discount_percent_off,
+        "plan_id": subscription.plan_id,
+    }
+
+
+def _plan_payload(plan) -> dict:
+    return {
+        "plan_id": plan.plan_id,
+        "name": plan.name,
+        "stripe_price_id": plan.stripe_price_id,
+        "amount_cents": plan.amount_cents,
+        "currency": plan.currency,
+        "billing_interval": plan.billing_interval,
+        "active": plan.active,
+    }
+
+
+def _manual_payment_payload(payment) -> dict:
+    return {
+        "manual_payment_id": payment.manual_payment_id,
+        "player_id": payment.player_id,
+        "amount_cents": payment.amount_cents,
+        "currency": payment.currency,
+        "method": payment.method,
+        "payment_date": payment.payment_date,
+        "note": payment.note,
+        "recorded_by_user_id": payment.recorded_by_user_id,
+        "recorded_at": payment.recorded_at,
+        "source": "manual",
     }
 
 
 @router.get("/billing")
 def billing_page():
     return FileResponse(STATIC_DIR / "billing.html")
+
+
+@router.get("/payment-control")
+def payment_control_page():
+    return FileResponse(STATIC_DIR / "payment_control.html")
 
 
 @router.get("/billing/status/{player_id}")
@@ -217,3 +258,187 @@ def list_payments(
 
     payments = BillingService(db=db).list_payments_for_player(player_id)
     return {"payments": [_payment_payload(payment) for payment in payments]}
+
+
+@router.post("/billing/subscriptions/{player_id}/pause")
+def pause_subscription(player_id: str, request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    try:
+        updated = BillingService(db=db).pause_subscription(
+            player_id, request.state.current_user["user_id"]
+        )
+    except BillingError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    return _subscription_payload(updated)
+
+
+@router.post("/billing/subscriptions/{player_id}/resume")
+def resume_subscription(player_id: str, request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    try:
+        updated = BillingService(db=db).resume_subscription(
+            player_id, request.state.current_user["user_id"]
+        )
+    except BillingError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    return _subscription_payload(updated)
+
+
+@router.post("/billing/payments/{stripe_invoice_id}/refund")
+def refund_payment(
+    stripe_invoice_id: str,
+    payload: RefundPaymentSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    try:
+        refund = BillingService(db=db).refund_payment(
+            stripe_invoice_id,
+            actor_user_id=request.state.current_user["user_id"],
+            amount_cents=payload.amount_cents,
+            reason=payload.reason,
+        )
+    except BillingError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    return {"refund_id": refund.get("id"), "status": refund.get("status")}
+
+
+@router.post("/billing/manual-payments/{player_id}", status_code=201)
+def record_manual_payment(
+    player_id: str,
+    payload: RecordManualPaymentSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    payment = BillingService(db=db).record_manual_payment(
+        player_id=player_id,
+        actor_user_id=request.state.current_user["user_id"],
+        amount_cents=payload.amount_cents,
+        currency=payload.currency,
+        method=payload.method,
+        payment_date=payload.payment_date,
+        note=payload.note,
+    )
+    return _manual_payment_payload(payment)
+
+
+@router.get("/billing/manual-payments/{player_id}")
+def list_manual_payments(player_id: str, request: Request, db: Session = Depends(get_db)):
+    require_guardian_player_access(request, db, player_id)
+
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    payments = BillingService(db=db).list_manual_payments_for_player(player_id)
+    return {"payments": [_manual_payment_payload(payment) for payment in payments]}
+
+
+@router.get("/billing/membership-plans")
+def list_membership_plans(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    plans = BillingService(db=db).list_membership_plans()
+    return {"plans": [_plan_payload(plan) for plan in plans]}
+
+
+@router.post("/billing/membership-plans", status_code=201)
+def create_membership_plan(
+    payload: CreateMembershipPlanSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    try:
+        plan = BillingService(db=db).create_membership_plan(
+            actor_user_id=request.state.current_user["user_id"],
+            name=payload.name,
+            stripe_price_id=payload.stripe_price_id,
+            amount_cents=payload.amount_cents,
+            currency=payload.currency,
+            billing_interval=payload.billing_interval,
+        )
+    except BillingError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    return _plan_payload(plan)
+
+
+@router.patch("/billing/membership-plans/{plan_id}")
+def update_membership_plan(
+    plan_id: str,
+    payload: UpdateMembershipPlanSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    try:
+        plan = BillingService(db=db).update_membership_plan(
+            plan_id,
+            actor_user_id=request.state.current_user["user_id"],
+            name=payload.name,
+            active=payload.active,
+        )
+    except BillingError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+
+    return _plan_payload(plan)
+
+
+@router.post("/billing/subscriptions/{player_id}/membership")
+def assign_membership(
+    player_id: str,
+    payload: AssignMembershipPlanSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    try:
+        membership = BillingService(db=db).assign_membership_plan(
+            player_id,
+            payload.plan_id,
+            actor_user_id=request.state.current_user["user_id"],
+        )
+    except BillingError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    return {
+        "player_id": membership.player_id,
+        "plan_id": membership.plan_id,
+        "assigned_by_user_id": membership.assigned_by_user_id,
+        "assigned_at": membership.assigned_at,
+    }
+
+
+@router.get("/billing/admin/summary")
+def get_admin_billing_summary(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    return BillingService(db=db).get_admin_billing_summary()
+
+
+@router.get("/billing/admin/players")
+def list_admin_billing_rows(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    return {"rows": BillingService(db=db).list_admin_billing_rows()}

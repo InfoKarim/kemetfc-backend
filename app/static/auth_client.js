@@ -372,6 +372,9 @@
         if (data.user.role === "admin") {
           const usersLink = document.querySelector("#admin-users-link");
           if (usersLink) usersLink.hidden = false;
+
+          const paymentControlLink = document.querySelector("#payment-control-link");
+          if (paymentControlLink) paymentControlLink.hidden = false;
         }
 
         if (data.user.role !== "admin") {

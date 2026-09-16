@@ -381,6 +381,36 @@ class ApplyDiscountSchema(BaseModel):
     percent_off: int = Field(ge=1, le=100)
 
 
+class CreateMembershipPlanSchema(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    stripe_price_id: str = Field(min_length=1, max_length=120)
+    amount_cents: int = Field(ge=0)
+    currency: str = Field(min_length=3, max_length=3)
+    billing_interval: Literal["month", "year"]
+
+
+class UpdateMembershipPlanSchema(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    active: bool | None = None
+
+
+class AssignMembershipPlanSchema(BaseModel):
+    plan_id: str = Field(min_length=1)
+
+
+class RecordManualPaymentSchema(BaseModel):
+    amount_cents: int = Field(gt=0)
+    currency: str = Field(min_length=3, max_length=3, default="usd")
+    method: Literal["cash", "check", "bank_transfer", "other"]
+    payment_date: date
+    note: str | None = Field(default=None, max_length=500)
+
+
+class RefundPaymentSchema(BaseModel):
+    amount_cents: int | None = Field(default=None, gt=0)
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class RegistrationConsentSchema(BaseModel):
     parent_consent: bool
     liability_waiver: bool

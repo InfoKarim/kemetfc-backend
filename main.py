@@ -295,6 +295,7 @@ HTML_PAGE_PATHS = {
     "/registrations-dashboard",
     "/create-player-from-registration",
     "/billing",
+    "/payment-control",
 }
 
 FEATURE_PAGE_PATHS = {
@@ -460,6 +461,10 @@ async def enforce_authentication(request: Request, call_next):
             or path.startswith("/billing/status/")
             or (request.method == "GET" and path.startswith("/billing/payments/"))
             or (
+                request.method == "GET"
+                and path.startswith("/billing/manual-payments/")
+            )
+            or (
                 request.method == "POST"
                 and path in {"/billing/checkout-session", "/billing/cancel"}
             )
@@ -505,6 +510,32 @@ async def enforce_authentication(request: Request, call_next):
         )
 
     if path == "/admin/users" and authenticated["role"] != "admin":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Admin access required"},
+        )
+
+    # Payment Control is an admin/finance surface — discounts, refunds,
+    # manual payments, plan pricing. Every handler behind it also calls
+    # require_admin itself, so this is defense-in-depth, not the sole gate.
+    payment_control_path = (
+        path == "/payment-control"
+        or path.startswith("/billing/admin/")
+        or path.startswith("/billing/membership-plans")
+        or (
+            path.startswith("/billing/subscriptions/")
+            and path.rsplit("/", 1)[-1] in {"pause", "resume", "membership", "discount"}
+        )
+        or (
+            path.startswith("/billing/payments/")
+            and path.endswith("/refund")
+        )
+        or (
+            request.method == "POST"
+            and path.startswith("/billing/manual-payments/")
+        )
+    )
+    if payment_control_path and authenticated["role"] != "admin":
         return JSONResponse(
             status_code=403,
             content={"detail": "Admin access required"},

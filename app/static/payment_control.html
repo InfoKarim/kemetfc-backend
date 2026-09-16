@@ -1,0 +1,594 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment Control | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --blue: #0866f5;
+      --green: #28b75f;
+      --orange: #ff9418;
+      --red: #c83b45;
+      --line: #dfe6ef;
+      --muted: #68778d;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; }
+
+    .layout { display: grid; min-height: 100vh; grid-template-columns: 240px 1fr; }
+
+    aside {
+      position: sticky; top: 0; height: 100vh; padding: 28px 16px;
+      color: white; background: linear-gradient(180deg, #071d39, #031226);
+    }
+    .brand { margin: 0 10px 30px; color: #f5c45d; font-size: 24px; font-weight: 900; }
+    .brand small { display: block; margin-top: 3px; color: #8ca1bb; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
+    nav { display: grid; gap: 7px; }
+    nav a { padding: 12px 14px; border-radius: 9px; color: #dce7f5; text-decoration: none; font-size: 14px; font-weight: 650; }
+    nav a:hover, nav a.active { color: white; background: var(--blue); }
+
+    main { min-width: 0; padding: 26px 30px 60px; }
+
+    h1 { margin: 0; font-size: 26px; letter-spacing: -.04em; }
+    header p { margin: 5px 0 0; }
+
+    .card { border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: 0 8px 24px #15304d0a; }
+
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px; margin: 20px 0; }
+    .stat-card span { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--muted); }
+    .stat-card strong { display: block; margin-top: 8px; font-size: 26px; }
+
+    .action-required { margin-bottom: 20px; }
+    .action-required h2 { margin: 0 0 12px; font-size: 16px; }
+    .action-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+    .action-item { text-align: center; padding: 14px; border-radius: 10px; background: #fff8e9; border: 1px solid #f6e3b8; }
+    .action-item strong { display: block; font-size: 22px; color: #b9790a !important; }
+    .action-item span { font-size: 12px; color: #8a6412 !important; }
+
+    .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .toolbar input, .toolbar select {
+      padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: white; color: inherit;
+    }
+    .toolbar input { flex: 1; min-width: 200px; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+    th { font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+    .badge.active { background: #e8f8ee; color: #1c8a4a !important; }
+    .badge.past_due, .badge.unpaid { background: #fff0f0; color: #c83b45 !important; }
+    .badge.none { background: #eef1f5; color: #4a5968 !important; }
+    .badge.paused { background: #fff8e9; color: #b9790a !important; }
+    .badge.canceled { background: #eef1f5; color: #4a5968 !important; }
+
+    button.link-button {
+      padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--blue) !important;
+      font-size: 12px; font-weight: 750; cursor: pointer;
+    }
+
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(4, 12, 24, .55); display: flex;
+      align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; z-index: 50;
+    }
+    .modal {
+      width: 100%; max-width: 640px; border-radius: 14px; padding: 22px; background: white;
+    }
+    .modal h2 { margin: 0 0 4px; font-size: 18px; color: #16233B !important; }
+    .modal p, .modal label { color: #4a5968 !important; }
+    .modal .muted { color: #68778d !important; font-size: 13px; }
+    .modal-close { float: right; border: 0; background: none; font-size: 18px; cursor: pointer; color: #68778d !important; }
+
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
+    .field input, .field select, .field textarea {
+      width: 100%; padding: 9px 10px; border: 1px solid #d7e0eb; border-radius: 8px; font: inherit;
+    }
+
+    .section-title { margin: 18px 0 8px; font-size: 13px; font-weight: 750; color: #16233B !important; }
+    .row-list { display: grid; gap: 8px; margin-bottom: 10px; }
+    .row-list .row { display: flex; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 12.5px; color: #2c3e58 !important; }
+
+    .btn { padding: 9px 14px; border: 0; border-radius: 8px; background: var(--blue); color: white; font-weight: 750; cursor: pointer; font-size: 13px; }
+    .btn.secondary { background: white; border: 1px solid var(--line); color: #2c3e58 !important; }
+    .btn.danger { background: #fff0f0; border: 1px solid #f3c9c9; color: #a21f2b !important; }
+    .btn:disabled { opacity: .6; cursor: default; }
+
+    .actions-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .state { padding: 40px; text-align: center; color: var(--muted); }
+    #page-message { min-height: 18px; font-size: 13px; margin-bottom: 8px; }
+
+    .family-note { font-size: 11px; color: var(--muted); }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC<small>Academy Development</small></div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a href="/registrations-dashboard">Assessment Registrations</a>
+        <a class="active" href="/payment-control">Payment Control</a>
+        <a href="/billing">Billing</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <h1>Payment Control</h1>
+        <p>Membership, invoices, and payments across every player — admin/finance only.</p>
+      </header>
+
+      <p id="page-message" role="status"></p>
+
+      <section class="stats-grid" id="stats-grid"></section>
+
+      <section class="card action-required" id="action-required-card">
+        <h2>Action Required</h2>
+        <div class="action-grid" id="action-grid"></div>
+      </section>
+
+      <section class="card">
+        <div class="toolbar">
+          <input id="search" type="search" placeholder="Search by player or guardian name">
+          <select id="status-filter">
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="past_due">Past due</option>
+            <option value="unpaid">Unpaid</option>
+            <option value="none">No membership</option>
+            <option value="paused">Paused</option>
+            <option value="canceled">Cancelled</option>
+          </select>
+        </div>
+
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Player</th>
+                <th>Guardian</th>
+                <th>Plan</th>
+                <th>Amount</th>
+                <th>Next Due</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="rows-body"></tbody>
+          </table>
+        </div>
+        <div id="empty-state" class="state" hidden>No players match this filter.</div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+
+  <script>
+    let rows = [];
+    let plans = [];
+
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function formatMoney(cents, currency) {
+      if (cents === null || cents === undefined) return "—";
+      return new Intl.NumberFormat(undefined, {
+        style: "currency",
+        currency: (currency || "usd").toUpperCase(),
+      }).format(cents / 100);
+    }
+
+    function formatDate(value) {
+      if (!value) return "—";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime())
+        ? value
+        : date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+    }
+
+    function formatCalendarDate(value) {
+      // A plain "YYYY-MM-DD" calendar date (e.g. payment_date) has no time
+      // component — parsing it with `new Date(string)` treats it as UTC
+      // midnight, which `toLocaleDateString` then renders in the viewer's
+      // local timezone and can shift it back a day. Build the Date from
+      // the local-timezone constructor instead so the calendar day never
+      // moves.
+      if (!value) return "—";
+      const [year, month, day] = value.split("-").map(Number);
+      if (!year || !month || !day) return value;
+      return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+        year: "numeric", month: "short", day: "numeric",
+      });
+    }
+
+    function statusOf(row) {
+      if (row.status === "active" && row.cancel_at_period_end) return "canceled";
+      return row.status;
+    }
+
+    async function fetchJSON(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = data.detail;
+        throw new Error((detail && detail.message) || detail || "Request failed.");
+      }
+      return data;
+    }
+
+    async function loadSummary() {
+      const summary = await fetchJSON("/billing/admin/summary");
+      const statsGrid = document.querySelector("#stats-grid");
+      statsGrid.replaceChildren();
+
+      const stats = [
+        ["Active Memberships", summary.active_memberships],
+        ["Payment Due Soon", summary.payment_due],
+        ["Past Due", summary.past_due],
+        ["Paid This Month", formatMoney(summary.paid_this_month_cents, "usd")],
+        ["Failed Payments", summary.failed_payments],
+        ["Processing", summary.processing],
+      ];
+      for (const [label, value] of stats) {
+        const card = make("article", "card stat-card");
+        card.append(make("span", "", label));
+        card.append(make("strong", "", String(value)));
+        statsGrid.append(card);
+      }
+
+      const actionGrid = document.querySelector("#action-grid");
+      actionGrid.replaceChildren();
+      const actionItems = [
+        ["Past Due", summary.past_due],
+        ["Failed Payments", summary.failed_payments],
+        ["Players Without Membership", summary.players_without_membership],
+        ["Registrations Awaiting Billing Setup", summary.registrations_awaiting_billing_setup],
+      ];
+      for (const [label, value] of actionItems) {
+        const item = make("div", "action-item");
+        item.append(make("strong", "", String(value)));
+        item.append(make("span", "", label));
+        actionGrid.append(item);
+      }
+    }
+
+    async function loadPlans() {
+      const data = await fetchJSON("/billing/membership-plans");
+      plans = data.plans;
+    }
+
+    async function loadRows() {
+      const data = await fetchJSON("/billing/admin/players");
+      rows = data.rows;
+      render();
+    }
+
+    function render() {
+      const query = document.querySelector("#search").value.toLowerCase().trim();
+      const statusValue = document.querySelector("#status-filter").value;
+      const body = document.querySelector("#rows-body");
+      body.replaceChildren();
+
+      const visible = rows.filter((row) => {
+        const haystack = `${row.player_name} ${row.guardian_name || ""}`.toLowerCase();
+        if (!haystack.includes(query)) return false;
+        if (statusValue === "all") return true;
+        return statusOf(row) === statusValue;
+      });
+
+      document.querySelector("#empty-state").hidden = visible.length > 0;
+
+      for (const row of visible) {
+        const tr = make("tr");
+        tr.append(make("td", "", row.player_name));
+        tr.append(make("td", "", row.guardian_name || "—"));
+        tr.append(make("td", "", row.plan_name || "No plan assigned"));
+        tr.append(make("td", "", formatMoney(row.amount_cents, row.currency)));
+        tr.append(make("td", "", formatDate(row.current_period_end)));
+
+        const statusCell = make("td");
+        statusCell.append(make("span", `badge ${statusOf(row)}`, statusOf(row).replace(/_/g, " ")));
+        tr.append(statusCell);
+
+        const actionCell = make("td");
+        const viewButton = make("button", "link-button", "View");
+        viewButton.type = "button";
+        viewButton.addEventListener("click", () => openDetail(row));
+        actionCell.append(viewButton);
+        tr.append(actionCell);
+
+        body.append(tr);
+      }
+    }
+
+    function closeModal() {
+      document.querySelector("#modal-root").replaceChildren();
+    }
+
+    async function openDetail(row) {
+      const [paymentsData, manualData] = await Promise.all([
+        fetchJSON(`/billing/payments/${encodeURIComponent(row.player_id)}`),
+        fetchJSON(`/billing/manual-payments/${encodeURIComponent(row.player_id)}`),
+      ]);
+
+      const backdrop = make("div", "modal-backdrop");
+      const modal = make("div", "modal");
+
+      const closeButton = make("button", "modal-close", "×");
+      closeButton.type = "button";
+      closeButton.addEventListener("click", closeModal);
+      modal.append(closeButton);
+
+      modal.append(make("h2", "", row.player_name));
+      modal.append(make("p", "muted", `Guardian: ${row.guardian_name || "—"}`));
+
+      const statusLine = make("p", "");
+      statusLine.append(make("span", `badge ${statusOf(row)}`, statusOf(row).replace(/_/g, " ")));
+      modal.append(statusLine);
+
+      modal.append(make("div", "section-title", "Membership"));
+      const membershipInfo = make("p", "muted",
+        row.plan_name
+          ? `${row.plan_name} — ${formatMoney(row.amount_cents, row.currency)} — next due ${formatDate(row.current_period_end)}`
+          : "No plan assigned yet."
+      );
+      modal.append(membershipInfo);
+
+      const planSelect = make("select");
+      const planPlaceholder = make("option", "", "Assign a plan...");
+      planPlaceholder.value = "";
+      planSelect.append(planPlaceholder);
+      for (const plan of plans.filter((p) => p.active)) {
+        const option = make("option", "", `${plan.name} — ${formatMoney(plan.amount_cents, plan.currency)}/${plan.billing_interval}`);
+        option.value = plan.plan_id;
+        planSelect.append(option);
+      }
+      modal.append(planSelect);
+
+      const assignButton = make("button", "btn secondary", "Assign Membership");
+      assignButton.type = "button";
+      assignButton.style.marginTop = "8px";
+      assignButton.addEventListener("click", async () => {
+        if (!planSelect.value) return;
+        assignButton.disabled = true;
+        try {
+          await fetchJSON(`/billing/subscriptions/${encodeURIComponent(row.player_id)}/membership`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ plan_id: planSelect.value }),
+          });
+          closeModal();
+          await loadRows();
+        } catch (error) {
+          alert(error.message);
+          assignButton.disabled = false;
+        }
+      });
+      modal.append(assignButton);
+
+      modal.append(make("div", "section-title", "Payments (Stripe)"));
+      const paymentsList = make("div", "row-list");
+      if (!paymentsData.payments.length) {
+        paymentsList.append(make("div", "muted", "No Stripe payments yet."));
+      }
+      for (const payment of paymentsData.payments) {
+        const row2 = make("div", "row");
+        row2.append(make("span", "", `${formatMoney(payment.amount, payment.currency)} — ${payment.status}`));
+        const refundButton = make("button", "link-button", "Refund");
+        refundButton.type = "button";
+        refundButton.hidden = payment.status !== "paid";
+        refundButton.addEventListener("click", async () => {
+          const confirmed = confirm(`Refund ${formatMoney(payment.amount, payment.currency)}?`);
+          if (!confirmed) return;
+          try {
+            await fetchJSON(`/billing/payments/${encodeURIComponent(payment.stripe_invoice_id)}/refund`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({}),
+            });
+            alert("Refund issued.");
+          } catch (error) {
+            alert(error.message);
+          }
+        });
+        row2.append(refundButton);
+        paymentsList.append(row2);
+      }
+      modal.append(paymentsList);
+
+      modal.append(make("div", "section-title", "Manual Payments"));
+      const manualList = make("div", "row-list");
+      if (!manualData.payments.length) {
+        manualList.append(make("div", "muted", "No manual payments recorded."));
+      }
+      for (const payment of manualData.payments) {
+        const row3 = make("div", "row");
+        row3.append(make(
+          "span",
+          "",
+          `${formatMoney(payment.amount_cents, payment.currency)} — ${payment.method} — ${formatCalendarDate(payment.payment_date)}`
+        ));
+        manualList.append(row3);
+      }
+      modal.append(manualList);
+
+      const actionsRow = make("div", "actions-row");
+
+      const recordPaymentButton = make("button", "btn", "Record Manual Payment");
+      recordPaymentButton.type = "button";
+      recordPaymentButton.addEventListener("click", () => openManualPaymentForm(row));
+      actionsRow.append(recordPaymentButton);
+
+      if (statusOf(row) === "active") {
+        const pauseButton = make("button", "btn secondary", "Pause Membership");
+        pauseButton.type = "button";
+        pauseButton.addEventListener("click", async () => {
+          if (!confirm("Pause this membership? Stripe will stop collecting payment until resumed.")) return;
+          try {
+            await fetchJSON(`/billing/subscriptions/${encodeURIComponent(row.player_id)}/pause`, { method: "POST" });
+            closeModal();
+            await loadRows();
+          } catch (error) {
+            alert(error.message);
+          }
+        });
+        actionsRow.append(pauseButton);
+
+        const cancelButton = make("button", "btn danger", "Cancel Membership");
+        cancelButton.type = "button";
+        cancelButton.addEventListener("click", async () => {
+          if (!confirm("Cancel this membership at the end of the current period?")) return;
+          try {
+            await fetchJSON("/billing/cancel", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ player_id: row.player_id }),
+            });
+            closeModal();
+            await loadRows();
+          } catch (error) {
+            alert(error.message);
+          }
+        });
+        actionsRow.append(cancelButton);
+      }
+
+      if (statusOf(row) === "paused") {
+        const resumeButton = make("button", "btn secondary", "Resume Membership");
+        resumeButton.type = "button";
+        resumeButton.addEventListener("click", async () => {
+          try {
+            await fetchJSON(`/billing/subscriptions/${encodeURIComponent(row.player_id)}/resume`, { method: "POST" });
+            closeModal();
+            await loadRows();
+          } catch (error) {
+            alert(error.message);
+          }
+        });
+        actionsRow.append(resumeButton);
+      }
+
+      modal.append(actionsRow);
+      backdrop.append(modal);
+      backdrop.addEventListener("click", (event) => {
+        if (event.target === backdrop) closeModal();
+      });
+
+      document.querySelector("#modal-root").replaceChildren(backdrop);
+    }
+
+    function openManualPaymentForm(row) {
+      const backdrop = make("div", "modal-backdrop");
+      const modal = make("div", "modal");
+
+      const closeButton = make("button", "modal-close", "×");
+      closeButton.type = "button";
+      closeButton.addEventListener("click", () => openDetail(row));
+      modal.append(closeButton);
+
+      modal.append(make("h2", "", "Record Manual Payment"));
+      modal.append(make("p", "muted", row.player_name));
+
+      const form = make("form");
+
+      const amountField = make("div", "field");
+      amountField.append(make("label", "", "Amount (in dollars)"));
+      const amountInput = make("input");
+      amountInput.type = "number";
+      amountInput.step = "0.01";
+      amountInput.min = "0.01";
+      amountInput.required = true;
+      amountField.append(amountInput);
+      form.append(amountField);
+
+      const methodField = make("div", "field");
+      methodField.append(make("label", "", "Payment Method"));
+      const methodSelect = make("select");
+      for (const [value, label] of [["cash", "Cash"], ["check", "Check"], ["bank_transfer", "Bank Transfer"], ["other", "Other"]]) {
+        const option = make("option", "", label);
+        option.value = value;
+        methodSelect.append(option);
+      }
+      methodField.append(methodSelect);
+      form.append(methodField);
+
+      const dateField = make("div", "field");
+      dateField.append(make("label", "", "Payment Date"));
+      const dateInput = make("input");
+      dateInput.type = "date";
+      dateInput.required = true;
+      dateInput.value = new Date().toISOString().slice(0, 10);
+      dateField.append(dateInput);
+      form.append(dateField);
+
+      const noteField = make("div", "field");
+      noteField.append(make("label", "", "Reference / Note (optional)"));
+      const noteInput = make("input");
+      noteField.append(noteInput);
+      form.append(noteField);
+
+      const messageEl = make("p", "", "");
+      form.append(messageEl);
+
+      const actionsRow = make("div", "actions-row");
+      const submitButton = make("button", "btn", "Confirm Payment");
+      submitButton.type = "submit";
+      actionsRow.append(submitButton);
+      form.append(actionsRow);
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        submitButton.disabled = true;
+        try {
+          await fetchJSON(`/billing/manual-payments/${encodeURIComponent(row.player_id)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              amount_cents: Math.round(Number(amountInput.value) * 100),
+              currency: "usd",
+              method: methodSelect.value,
+              payment_date: dateInput.value,
+              note: noteInput.value || null,
+            }),
+          });
+          closeModal();
+          await loadRows();
+        } catch (error) {
+          submitButton.disabled = false;
+          messageEl.textContent = error.message;
+        }
+      });
+
+      modal.append(form);
+      backdrop.append(modal);
+      document.querySelector("#modal-root").replaceChildren(backdrop);
+    }
+
+    async function init() {
+      const message = document.querySelector("#page-message");
+      try {
+        await Promise.all([loadSummary(), loadPlans(), loadRows()]);
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    }
+
+    document.querySelector("#search").addEventListener("input", render);
+    document.querySelector("#status-filter").addEventListener("change", render);
+
+    init();
+  </script>
+</body>
+</html>

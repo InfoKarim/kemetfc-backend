@@ -467,7 +467,89 @@ class SubscriptionDB(Base):
     # checkout, the discount endpoints, or any webhook refresh), never
     # computed or asserted locally. None means no discount is applied.
     discount_percent_off: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Best-effort link to the local plan catalog, resolved from
+    # subscription.items[0].price.id at webhook time — nullable because a
+    # subscription created before the plan catalog existed (or on a price
+    # not registered as a plan) simply has none.
+    plan_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("membership_plans.plan_id"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class MembershipPlanDB(Base):
+    """Admin-managed catalog of subscription plans, each backed by a real
+    Stripe Price the admin has already created. This is the local reference
+    Payment Control uses to assign/display plans — Stripe remains the
+    source of truth for the price itself; this table never invents pricing
+    of its own."""
+
+    __tablename__ = "membership_plans"
+
+    plan_id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    stripe_price_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String)
+    billing_interval: Mapped[str] = mapped_column(String)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ManualPaymentDB(Base):
+    """An offline payment (cash/check/bank transfer) recorded by staff —
+    kept clearly separate from Stripe-sourced PaymentDB rows (source is
+    implicit: a row here is always MANUAL, a PaymentDB row is always
+    STRIPE) rather than faking a Stripe transaction for it."""
+
+    __tablename__ = "manual_payments"
+
+    manual_payment_id: Mapped[str] = mapped_column(String, primary_key=True)
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String)
+    method: Mapped[str] = mapped_column(String)
+    payment_date: Mapped[date] = mapped_column(Date)
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    recorded_by_user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+    )
+    recorded_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class PlayerMembershipDB(Base):
+    """The player's current plan ASSIGNMENT — an admin decision ("this
+    player should be on plan X"), not a payment fact. Whether it's actually
+    paid/active/past-due always comes from SubscriptionDB, never
+    duplicated here, so there is exactly one place that tracks real
+    payment status."""
+
+    __tablename__ = "player_memberships"
+
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        primary_key=True,
+    )
+    plan_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("membership_plans.plan_id"),
+    )
+    assigned_by_user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+    )
+    assigned_at: Mapped[datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
