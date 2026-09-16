@@ -161,20 +161,130 @@
 
       try {
         const player = players.find((item) => item.player_id === playerId);
-        const [reportRes, assessmentsRes] = await Promise.all([
+        const [reportRes, assessmentsRes, billingRes, paymentsRes] = await Promise.all([
           fetch(`/players/${encodeURIComponent(playerId)}/development-report`),
           fetch(`/players/${encodeURIComponent(playerId)}/assessments`),
+          fetch(`/billing/status/${encodeURIComponent(playerId)}`),
+          fetch(`/billing/payments/${encodeURIComponent(playerId)}`),
         ]);
 
         if (!reportRes.ok) throw new Error("Could not load this player's development report.");
 
         const report = await reportRes.json();
         const assessments = assessmentsRes.ok ? (await assessmentsRes.json()).assessments : [];
+        const billing = billingRes.ok ? await billingRes.json() : { configured: false, subscription: null };
+        const payments = paymentsRes.ok ? (await paymentsRes.json()).payments : [];
 
-        content.replaceChildren(...buildReportCards(player, report, assessments));
+        content.replaceChildren(
+          ...buildReportCards(player, report, assessments),
+          buildMembershipCard(playerId, billing),
+          ...(payments.length ? [buildPaymentHistoryCard(payments)] : [])
+        );
       } catch (error) {
         renderError(error.message);
       }
+    }
+
+    function formatMoney(amount, currency) {
+      if (typeof amount !== "number") return "—";
+      return new Intl.NumberFormat("en-US", { style: "currency", currency: (currency || "usd").toUpperCase() }).format(amount / 100);
+    }
+
+    function formatDate(value) {
+      if (!value) return "—";
+      return new Date(value).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    }
+
+    function buildMembershipCard(playerId, billing) {
+      const card = make("div", "g-card");
+      card.append(make("div", "g-section-title", "Membership"));
+
+      if (!billing.configured) {
+        card.append(make("div", "g-item-detail", "Membership payments are not yet set up for this academy. Contact KEMET FC staff for details."));
+        return card;
+      }
+
+      const subscription = billing.subscription;
+      const row = make("div", "g-membership-row");
+
+      if (!subscription) {
+        row.append(make("div", "g-player-meta", "No membership on file."));
+        const link = make("a", "", "Set up membership →");
+        link.href = "/billing";
+        link.style.color = "var(--lime)";
+        link.style.fontWeight = "700";
+        row.append(link);
+        card.append(row);
+        return card;
+      }
+
+      const statusMap = {
+        active: { label: "✓ ACTIVE", cls: "active", note: `${player_first_name(playerId)}'s KEMET FC membership is currently active.` },
+        past_due: { label: "PAST DUE", cls: "due", note: "A payment is currently past due. Please review your membership." },
+        unpaid: { label: "PAYMENT DUE", cls: "due", note: "A membership payment is due." },
+        canceled: { label: "CANCELLED", cls: "", note: "This membership has been cancelled." },
+        trialing: { label: "✓ ACTIVE", cls: "active", note: "Membership is active (trial period)." },
+      };
+      const info = statusMap[subscription.status] || { label: subscription.status.toUpperCase(), cls: "", note: "" };
+      if (subscription.cancel_at_period_end) {
+        info.note = `Membership will end on ${formatDate(subscription.current_period_end)}.`;
+      }
+
+      row.append(make("span", `g-badge ${info.cls}`, info.label));
+      card.append(row);
+      if (info.note) card.append(make("div", "g-item-detail", info.note));
+
+      if (subscription.status === "active" && !subscription.cancel_at_period_end) {
+        const nextRow = make("div", "g-progress-row");
+        nextRow.append(make("div", "g-progress-label", "Next Payment"));
+        nextRow.append(make("div", "g-progress-change", formatDate(subscription.current_period_end)));
+        card.append(nextRow);
+      }
+
+      const link = make("a", "", subscription.status === "active" ? "View Membership →" : "Manage Membership →");
+      link.href = "/billing";
+      link.style.color = "var(--lime)";
+      link.style.fontWeight = "700";
+      link.style.display = "inline-block";
+      link.style.marginTop = "10px";
+      card.append(link);
+
+      return card;
+    }
+
+    function player_first_name(playerId) {
+      const player = players.find((item) => item.player_id === playerId);
+      return player ? player.name.split(" ")[0] : "Your child";
+    }
+
+    function buildPaymentHistoryCard(payments) {
+      const card = make("div", "g-card");
+      card.append(make("div", "g-section-title", "Payment History"));
+
+      payments.slice(0, 6).forEach((payment) => {
+        const row = make("div", "g-progress-row");
+        const left = make("div");
+        left.append(make("div", "g-progress-label", formatDate(payment.created_at)));
+        left.append(make("div", "g-player-meta", payment.status === "paid" ? "Membership — Paid" : "Membership — Payment failed"));
+        row.append(left);
+
+        const right = make("div");
+        right.style.textAlign = "right";
+        right.append(make("div", "g-progress-change up", formatMoney(payment.amount, payment.currency)));
+        if (payment.hosted_invoice_url) {
+          const link = make("a", "", "Receipt →");
+          link.href = payment.hosted_invoice_url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.style.color = "var(--muted)";
+          link.style.fontSize = "12px";
+          right.append(link);
+        }
+        row.append(right);
+        card.append(row);
+      });
+
+      return card;
     }
 
     function buildReportCards(player, report, assessments) {

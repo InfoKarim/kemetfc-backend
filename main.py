@@ -448,6 +448,7 @@ async def enforce_authentication(request: Request, call_next):
             or path.startswith("/notifications")
             or path == "/billing"
             or path.startswith("/billing/status/")
+            or (request.method == "GET" and path.startswith("/billing/payments/"))
             or (
                 request.method == "POST"
                 and path in {"/billing/checkout-session", "/billing/cancel"}

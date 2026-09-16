@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
-from app.db_models import PlayerDB, SubscriptionDB, UserDB
+from app.db_models import PaymentDB, PlayerDB, SubscriptionDB, UserDB
 from app.services import billing_service
 from app.services.billing_service import BillingError, BillingService
 
@@ -267,3 +267,104 @@ def test_construct_webhook_event_returns_event_on_success(monkeypatch):
     service = BillingService(db=db)
 
     assert service.construct_webhook_event(b"{}", "good-signature") == fake_event
+
+
+def _seed_subscription(service):
+    service.upsert_subscription_from_stripe_object({
+        "id": "sub_1",
+        "customer": "cus_1",
+        "status": "active",
+        "current_period_end": 1893456000,
+        "cancel_at_period_end": False,
+        "items": {"data": [{"price": {"id": "price_x"}}]},
+        "metadata": {"player_id": "P1", "paying_user_id": "U1"},
+    })
+
+
+def test_upsert_payment_skipped_when_subscription_unknown():
+    db = make_db()
+    service = BillingService(db=db)
+
+    result = service.upsert_payment_from_stripe_invoice(
+        {"id": "in_1", "subscription": "sub_unknown", "amount_paid": 1200, "currency": "usd"},
+        status="paid",
+    )
+
+    assert result is None
+    assert db.query(PaymentDB).count() == 0
+
+
+def test_upsert_payment_creates_row_resolved_via_our_subscription():
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_subscription(service)
+
+    payment = service.upsert_payment_from_stripe_invoice(
+        {
+            "id": "in_1",
+            "subscription": "sub_1",
+            "amount_paid": 1200,
+            "currency": "usd",
+            "hosted_invoice_url": "https://invoice.stripe.com/i/in_1",
+            "invoice_pdf": "https://invoice.stripe.com/i/in_1.pdf",
+            "period_end": 1893456000,
+        },
+        status="paid",
+    )
+
+    assert payment.player_id == "P1"
+    assert payment.amount == 1200
+    assert payment.currency == "usd"
+    assert payment.status == "paid"
+    assert payment.hosted_invoice_url == "https://invoice.stripe.com/i/in_1"
+
+
+def test_upsert_payment_uses_amount_due_for_failed_invoice():
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_subscription(service)
+
+    payment = service.upsert_payment_from_stripe_invoice(
+        {"id": "in_2", "subscription": "sub_1", "amount_due": 1200, "currency": "usd"},
+        status="failed",
+    )
+
+    assert payment.status == "failed"
+    assert payment.amount == 1200
+
+
+def test_upsert_payment_is_idempotent_on_redelivered_webhook():
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_subscription(service)
+
+    invoice = {
+        "id": "in_1",
+        "subscription": "sub_1",
+        "amount_paid": 1200,
+        "currency": "usd",
+    }
+    service.upsert_payment_from_stripe_invoice(invoice, status="paid")
+    service.upsert_payment_from_stripe_invoice(invoice, status="paid")
+
+    assert db.query(PaymentDB).count() == 1
+
+
+def test_list_payments_for_player_orders_newest_first():
+    db = make_db()
+    service = BillingService(db=db)
+    _seed_subscription(service)
+
+    service.upsert_payment_from_stripe_invoice(
+        {"id": "in_1", "subscription": "sub_1", "amount_paid": 1000, "currency": "usd"},
+        status="paid",
+    )
+    service.upsert_payment_from_stripe_invoice(
+        {"id": "in_2", "subscription": "sub_1", "amount_paid": 1000, "currency": "usd"},
+        status="paid",
+    )
+
+    payments = service.list_payments_for_player("P1")
+    assert [p.stripe_invoice_id for p in payments] == ["in_2", "in_1"]
+
+    assert service.list_payments_for_player("DOES_NOT_EXIST") == []

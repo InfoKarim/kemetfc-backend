@@ -9,7 +9,7 @@ from app.config import (
     get_stripe_secret_key,
     get_stripe_webhook_secret,
 )
-from app.db_models import SubscriptionDB
+from app.db_models import PaymentDB, SubscriptionDB
 
 
 class BillingError(ValueError):
@@ -128,3 +128,63 @@ class BillingService:
         self.db.commit()
         self.db.refresh(existing)
         return existing
+
+    def upsert_payment_from_stripe_invoice(
+        self,
+        invoice: dict,
+        status: str,
+    ) -> PaymentDB | None:
+        """Record a completed or failed invoice as a Guardian-visible
+        payment. Resolves player_id via our OWN subscription row (never
+        trusting invoice metadata alone) — if that subscription isn't
+        known yet, the invoice is skipped rather than guessed at; the
+        subscription.created/updated webhook that normally precedes or
+        accompanies it will let a retried/later invoice event resolve.
+        """
+        stripe_subscription_id = invoice.get("subscription")
+        if not stripe_subscription_id:
+            return None
+
+        subscription = self.db.get(SubscriptionDB, stripe_subscription_id)
+        if subscription is None:
+            return None
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+        stripe_invoice_id = invoice["id"]
+        existing = self.db.get(PaymentDB, stripe_invoice_id)
+
+        amount = invoice.get("amount_paid") if status == "paid" else invoice.get("amount_due")
+        period_end = _stripe_timestamp_to_datetime(invoice.get("period_end"))
+
+        if existing is None:
+            existing = PaymentDB(
+                stripe_invoice_id=stripe_invoice_id,
+                stripe_subscription_id=stripe_subscription_id,
+                player_id=subscription.player_id,
+                amount=amount or 0,
+                currency=invoice.get("currency", "usd"),
+                status=status,
+                hosted_invoice_url=invoice.get("hosted_invoice_url"),
+                invoice_pdf_url=invoice.get("invoice_pdf"),
+                period_end=period_end,
+                created_at=now,
+            )
+            self.db.add(existing)
+        else:
+            existing.status = status
+            existing.amount = amount or existing.amount
+            existing.hosted_invoice_url = invoice.get("hosted_invoice_url")
+            existing.invoice_pdf_url = invoice.get("invoice_pdf")
+            existing.period_end = period_end
+
+        self.db.commit()
+        self.db.refresh(existing)
+        return existing
+
+    def list_payments_for_player(self, player_id: str) -> list[PaymentDB]:
+        return (
+            self.db.query(PaymentDB)
+            .filter(PaymentDB.player_id == player_id)
+            .order_by(PaymentDB.created_at.desc())
+            .all()
+        )

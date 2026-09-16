@@ -4066,6 +4066,156 @@ def test_stripe_webhook_handles_real_stripe_object_without_get_method(monkeypatc
     assert status_response.json()["subscription"]["status"] == "active"
 
 
+def _push_subscription_webhook(monkeypatch, player_id, subscription_id):
+    from app.routers import billing as billing_router_module
+
+    fake_event = {
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": subscription_id,
+                "customer": f"cus_{subscription_id}",
+                "status": "active",
+                "current_period_end": 1893456000,
+                "cancel_at_period_end": False,
+                "items": {"data": [{"price": {"id": "price_x"}}]},
+                "metadata": {"player_id": player_id, "paying_user_id": "TEST_ADMIN"},
+            }
+        },
+    }
+    monkeypatch.setattr(
+        billing_router_module.BillingService,
+        "construct_webhook_event",
+        lambda self, payload, signature_header: fake_event,
+    )
+    response = client.post(
+        "/billing/webhook",
+        content=b"{}",
+        headers={"stripe-signature": "t=1,v1=whatever"},
+    )
+    assert response.status_code == 200
+
+
+def test_stripe_webhook_processes_paid_invoice_into_payment_history(monkeypatch):
+    from app.routers import billing as billing_router_module
+
+    create_test_player("P_BILLING_INVOICE")
+    _push_subscription_webhook(monkeypatch, "P_BILLING_INVOICE", "sub_invoice_test")
+
+    fake_invoice_event = {
+        "type": "invoice.paid",
+        "data": {
+            "object": {
+                "id": "in_invoice_test",
+                "subscription": "sub_invoice_test",
+                "amount_paid": 1500,
+                "currency": "usd",
+                "hosted_invoice_url": "https://invoice.stripe.com/i/in_invoice_test",
+                "invoice_pdf": "https://invoice.stripe.com/i/in_invoice_test.pdf",
+                "period_end": 1893456000,
+            }
+        },
+    }
+    monkeypatch.setattr(
+        billing_router_module.BillingService,
+        "construct_webhook_event",
+        lambda self, payload, signature_header: fake_invoice_event,
+    )
+
+    response = client.post(
+        "/billing/webhook",
+        content=b"{}",
+        headers={"stripe-signature": "t=1,v1=whatever"},
+    )
+    assert response.status_code == 200
+
+    history = client.get("/billing/payments/P_BILLING_INVOICE")
+    assert history.status_code == 200
+    payments = history.json()["payments"]
+    assert len(payments) == 1
+    assert payments[0]["amount"] == 1500
+    assert payments[0]["status"] == "paid"
+    assert payments[0]["hosted_invoice_url"] == "https://invoice.stripe.com/i/in_invoice_test"
+
+
+def test_stripe_webhook_redelivered_invoice_does_not_duplicate_payment(monkeypatch):
+    from app.routers import billing as billing_router_module
+
+    create_test_player("P_BILLING_DUPLICATE")
+    _push_subscription_webhook(monkeypatch, "P_BILLING_DUPLICATE", "sub_dup_test")
+
+    fake_invoice_event = {
+        "type": "invoice.paid",
+        "data": {
+            "object": {
+                "id": "in_dup_test",
+                "subscription": "sub_dup_test",
+                "amount_paid": 1500,
+                "currency": "usd",
+            }
+        },
+    }
+    monkeypatch.setattr(
+        billing_router_module.BillingService,
+        "construct_webhook_event",
+        lambda self, payload, signature_header: fake_invoice_event,
+    )
+
+    for _ in range(2):
+        response = client.post(
+            "/billing/webhook",
+            content=b"{}",
+            headers={"stripe-signature": "t=1,v1=whatever"},
+        )
+        assert response.status_code == 200
+
+    payments = client.get("/billing/payments/P_BILLING_DUPLICATE").json()["payments"]
+    assert len(payments) == 1
+
+
+def test_billing_payments_requires_authentication():
+    create_test_player("P_BILLING_PAYMENTS_AUTH")
+    anonymous = TestClient(app)
+
+    response = anonymous.get("/billing/payments/P_BILLING_PAYMENTS_AUTH")
+    assert response.status_code == 401
+
+
+def test_guardian_cannot_view_unrelated_players_payment_history():
+    create_test_player("P_BILLING_PAY_LINKED")
+    create_test_player("P_BILLING_PAY_UNRELATED")
+
+    user_response = client.post(
+        "/auth/users",
+        json={
+            "username": "billing.parent.pay",
+            "password": "GuardianPassword123!",
+            "role": "guardian",
+        },
+    )
+    guardian_user_id = user_response.json()["user_id"]
+    client.post(
+        "/guardian-player-links",
+        json={"guardian_user_id": guardian_user_id, "player_id": "P_BILLING_PAY_LINKED"},
+    )
+
+    guardian_client = TestClient(app)
+    login = guardian_client.post(
+        "/auth/login",
+        json={"username": "billing.parent.pay", "password": "GuardianPassword123!"},
+    )
+    assert login.status_code == 200
+    guardian_client.headers.update({
+        "X-CSRF-Token": guardian_client.cookies.get(CSRF_COOKIE_NAME),
+    })
+
+    own = guardian_client.get("/billing/payments/P_BILLING_PAY_LINKED")
+    unrelated = guardian_client.get("/billing/payments/P_BILLING_PAY_UNRELATED")
+
+    assert own.status_code == 200
+    assert unrelated.status_code == 404
+
+
 def test_guardian_with_video_access_uploads_only_for_linked_child(
     monkeypatch,
     tmp_path,

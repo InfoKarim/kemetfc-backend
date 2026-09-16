@@ -452,6 +452,39 @@ class SubscriptionDB(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class PaymentDB(Base):
+    """One completed or failed Stripe invoice for a subscription — the
+    Guardian-facing payment history/receipt record. Created only from
+    signature-verified webhook events (invoice.paid /
+    invoice.payment_failed), never from anything the client claims.
+    Stripe's own invoice id is the primary key, so a redelivered webhook
+    updates the same row instead of creating a duplicate payment.
+    Amount is the exact integer Stripe reports, in the currency's
+    smallest unit (e.g. cents) — never recomputed or rounded here.
+    """
+
+    __tablename__ = "payments"
+
+    stripe_invoice_id: Mapped[str] = mapped_column(String, primary_key=True)
+    stripe_subscription_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("subscriptions.stripe_subscription_id"),
+        index=True,
+    )
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    amount: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String)
+    hosted_invoice_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    invoice_pdf_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class GeneratedDrillDiagramDB(Base):
     """An AI-generated coaching diagram, created on demand by a workspace
     search that didn't already have a strong match in the hand-authored

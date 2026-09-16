@@ -139,5 +139,38 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
         subscription = stripe.Subscription.retrieve(data_object["subscription"])
         service.upsert_subscription_from_stripe_object(_as_plain_dict(subscription))
+    elif event_type == "invoice.paid":
+        service.upsert_payment_from_stripe_invoice(data_object, status="paid")
+    elif event_type == "invoice.payment_failed":
+        service.upsert_payment_from_stripe_invoice(data_object, status="failed")
 
     return {"received": True}
+
+
+def _payment_payload(payment) -> dict:
+    return {
+        "stripe_invoice_id": payment.stripe_invoice_id,
+        "player_id": payment.player_id,
+        "amount": payment.amount,
+        "currency": payment.currency,
+        "status": payment.status,
+        "hosted_invoice_url": payment.hosted_invoice_url,
+        "invoice_pdf_url": payment.invoice_pdf_url,
+        "period_end": payment.period_end,
+        "created_at": payment.created_at,
+    }
+
+
+@router.get("/billing/payments/{player_id}")
+def list_payments(
+    player_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_guardian_player_access(request, db, player_id)
+
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    payments = BillingService(db=db).list_payments_for_player(player_id)
+    return {"payments": [_payment_payload(payment) for payment in payments]}
