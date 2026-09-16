@@ -61,6 +61,9 @@
     }
     button:disabled { opacity: .6; cursor: default; }
     button.cancel { background: white; border: 1px solid #c83b45; color: #a21f2b !important; }
+    button.discount { background: #ffd36b; color: #16233B !important; margin-left: 10px; }
+    button.remove-discount { background: white; border: 1px solid #69768a; color: #16233B !important; margin-left: 10px; }
+    .discount-note { display: inline-block; margin-left: 10px; font-size: 13px; font-weight: 700; color: #b9790a; }
     .state { padding: 40px; text-align: center; color: #69768a; }
   </style>
   <script src="/auth-client.js"></script>
@@ -124,7 +127,7 @@
       return subscription.status;
     }
 
-    async function renderChild(child) {
+    async function renderChild(child, role) {
       const card = make("article", "child-card");
       card.append(make("h2", "", child.name));
       card.append(make("p", "muted", child.player_id));
@@ -191,6 +194,57 @@
       });
 
       card.append(actionButton);
+
+      if (role === "admin" && subscription) {
+        const hasDiscount = !!subscription.discount_percent_off;
+
+        if (hasDiscount) {
+          card.append(make(
+            "span",
+            "discount-note",
+            `${subscription.discount_percent_off}% discount applied`
+          ));
+        }
+
+        const discountButton = make(
+          "button",
+          hasDiscount ? "remove-discount" : "discount",
+          hasDiscount ? "Remove discount" : "Give 50% discount"
+        );
+
+        discountButton.addEventListener("click", async () => {
+          discountButton.disabled = true;
+          const originalText = discountButton.textContent;
+          discountButton.textContent = "Please wait...";
+
+          try {
+            const response = await fetch(
+              `/billing/subscriptions/${encodeURIComponent(child.player_id)}/discount`,
+              hasDiscount
+                ? { method: "DELETE" }
+                : {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ percent_off: 50 }),
+                  }
+            );
+            const data = await response.json();
+
+            if (!response.ok) {
+              throw new Error(data.detail || "Something went wrong.");
+            }
+
+            location.reload();
+          } catch (error) {
+            discountButton.disabled = false;
+            discountButton.textContent = originalText;
+            alert(error.message);
+          }
+        });
+
+        card.append(discountButton);
+      }
+
       return card;
     }
 
@@ -226,7 +280,7 @@
         }
 
         for (const child of normalized) {
-          const card = await renderChild(child);
+          const card = await renderChild(child, role);
           list.append(card);
         }
       } catch (error) {
