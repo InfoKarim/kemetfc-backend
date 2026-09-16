@@ -261,6 +261,7 @@ HTML_PAGE_PATHS = {
     "/players-dashboard",
     "/player-details",
     "/development-snapshot",
+    "/guardian-home",
     "/add-player",
     "/teams-dashboard",
     "/team-details",
@@ -338,6 +339,7 @@ GUARDIAN_ALLOWED_PLAYER_SUFFIXES = {
     "match-performance-assessment",
     "weak-foot-assessment",
     "assessments",
+    "development-report",
 }
 
 
@@ -440,6 +442,7 @@ async def enforce_authentication(request: Request, call_next):
             or path.startswith("/uploads/avatars/")
             or path == "/guardian/children"
             or path.startswith("/guardian/children/")
+            or (request.method == "GET" and path == "/guardian-home")
             or path == "/messages-page"
             or path.startswith("/messages")
             or path.startswith("/notifications")
@@ -2843,6 +2846,17 @@ def development_snapshot_page():
         / "app"
         / "static"
         / "development_snapshot.html"
+    )
+    return FileResponse(page)
+
+
+@app.get("/guardian-home")
+def guardian_home_page():
+    page = (
+        Path(__file__).parent
+        / "app"
+        / "static"
+        / "guardian_home.html"
     )
     return FileResponse(page)
 

@@ -492,3 +492,94 @@ def test_analyze_ball_mastery_video_surfaces_ai_error_as_502(client, monkeypatch
     )
 
     assert response.status_code == 502
+
+
+# --- Development report + coach message -----------------------------------
+
+
+def _seed_fresh_player(player_id: str) -> None:
+    """A dedicated, never-assessed player for report tests, so their
+    coverage/strengths reflect only what this test itself records —
+    unlike P001, which accumulates assessments across the whole module
+    (the `client` fixture's DB is shared for the module's lifetime).
+    """
+    db = TestingSessionLocal()
+    db.add(PlayerDB(
+        player_id=player_id,
+        first_name_ar="لاعب",
+        last_name_ar=player_id,
+        first_name_en="Fresh",
+        last_name_en=player_id,
+        date_of_birth=date(2016, 1, 1),
+        sex="male",
+        **PLAYER_PROFILE_KWARGS,
+    ))
+    db.commit()
+    db.close()
+
+
+def test_development_report_has_no_assessments_initially(client):
+    _seed_fresh_player("P_REPORT_EMPTY")
+
+    response = client.get("/players/P_REPORT_EMPTY/development-report")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_id"] == "P_REPORT_EMPTY"
+    assert body["coverage"]["coverage_percent"] == 0
+    assert body["strengths"] == []
+    assert body["priorities"] == []
+    assert body["coach_message"] == {
+        "message": None,
+        "next_focus": [],
+        "updated_at": None,
+    }
+    assert "score" not in body
+
+
+def test_development_report_reflects_recorded_assessments(client):
+    _seed_fresh_player("P_REPORT_FILLED")
+    client.post(
+        "/players/P_REPORT_FILLED/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(sole_rolls=5, l_turn=5),
+    )
+
+    response = client.get("/players/P_REPORT_FILLED/development-report")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["coverage"]["coverage_percent"] == 25
+    titles = {s["title"] for s in body["strengths"]}
+    assert "Sole Rolls" in titles
+
+
+def test_development_report_requires_authentication(anonymous_client):
+    response = anonymous_client.get("/players/P001/development-report")
+
+    assert response.status_code == 401
+
+
+def test_coach_message_can_be_set_via_api(client):
+    response = client.put(
+        "/players/P001/coach-message",
+        json={"message": "Great effort this week.", "next_focus": ["Scanning"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "Great effort this week."
+
+    report = client.get("/players/P001/development-report").json()
+    assert report["coach_message"]["message"] == "Great effort this week."
+    assert report["coach_message"]["next_focus"] == ["Scanning"]
+
+
+def test_coach_message_rejects_more_than_three_focus_items(client):
+    response = client.put(
+        "/players/P001/coach-message",
+        json={
+            "message": None,
+            "next_focus": ["A", "B", "C", "D"],
+        },
+    )
+
+    assert response.status_code == 422

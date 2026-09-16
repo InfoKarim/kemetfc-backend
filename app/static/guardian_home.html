@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guardian Portal | Kemet FC</title>
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    body { max-width: 640px; margin: 0 auto; padding: 0 0 60px; }
+
+    .g-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--line);
+    }
+    .g-brand { font-weight: 800; letter-spacing: .04em; color: var(--ink); }
+    .g-brand small { display: block; color: var(--muted); font-weight: 600; font-size: 11px; }
+    .g-signout { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 12.5px; }
+
+    .g-switcher { display: flex; gap: 8px; padding: 14px 20px 0; flex-wrap: wrap; }
+    .g-switcher button {
+      padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line);
+      background: var(--surface); color: var(--ink); font-weight: 700; font-size: 13px; cursor: pointer;
+    }
+    .g-switcher button.active { background: var(--lime); color: var(--navy); border-color: var(--lime); }
+
+    .g-card {
+      margin: 16px 20px; padding: 20px; border-radius: var(--radius-lg);
+      background: var(--surface); border: 1px solid var(--line);
+    }
+    .g-player-row { display: flex; align-items: center; gap: 14px; }
+    .g-avatar {
+      width: 52px; height: 52px; border-radius: 50%; background: var(--navy);
+      display: flex; align-items: center; justify-content: center; font-weight: 800; color: var(--lime);
+      flex: 0 0 auto; overflow: hidden;
+    }
+    .g-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .g-player-name { font-size: 19px; font-weight: 800; color: var(--ink); }
+    .g-player-meta { color: var(--muted); font-size: 13px; }
+
+    .g-coverage { text-align: center; padding: 22px 0 8px; }
+    .g-coverage-label { font-size: 12px; letter-spacing: .08em; color: var(--muted); font-weight: 800; text-transform: uppercase; }
+    .g-coverage-value { font-size: 30px; font-weight: 800; color: var(--lime); margin: 6px 0; }
+    .g-coverage-note { color: var(--muted); font-size: 13px; max-width: 46ch; margin: 0 auto; line-height: 1.5; }
+
+    .g-section-title {
+      font-size: 12px; letter-spacing: .08em; color: var(--muted); font-weight: 800;
+      text-transform: uppercase; margin: 0 0 12px;
+    }
+
+    .g-progress-row { display: flex; justify-content: space-between; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--line); }
+    .g-progress-row:first-of-type { border-top: none; }
+    .g-progress-label { color: var(--ink); font-size: 13.5px; }
+    .g-progress-change { font-weight: 800; font-size: 14px; }
+    .g-progress-change.up { color: var(--green); }
+    .g-progress-change.down { color: #ff8a8a; }
+
+    .g-item { padding: 12px 0; border-top: 1px solid var(--line); }
+    .g-item:first-of-type { border-top: none; }
+    .g-item-title { font-weight: 800; color: var(--ink); font-size: 14.5px; display: flex; align-items: center; gap: 6px; }
+    .g-item-detail { color: var(--muted); font-size: 13px; margin-top: 3px; line-height: 1.5; }
+    .g-priority-num { color: var(--lime); font-weight: 800; }
+
+    .g-coach-message { color: var(--ink); font-size: 14.5px; line-height: 1.6; font-style: italic; }
+    .g-next-focus { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .g-focus-chip { background: var(--navy); color: var(--lime); border-radius: 999px; padding: 6px 12px; font-size: 12.5px; font-weight: 700; }
+
+    .g-explore-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .g-explore-card {
+      background: var(--navy); border: 1px solid var(--line); border-radius: 12px; padding: 16px;
+      cursor: pointer; text-align: left; color: var(--ink); font: inherit;
+    }
+    .g-explore-card .name { font-weight: 800; font-size: 14px; }
+    .g-explore-card .arrow { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .g-explore-detail { margin-top: 14px; display: none; }
+    .g-explore-detail.open { display: block; }
+    .g-raw-item { padding: 10px 0; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+    .g-raw-item strong { color: var(--ink); }
+
+    .g-empty { text-align: center; color: var(--muted); padding: 60px 20px; }
+    .g-membership-row { display: flex; align-items: center; justify-content: space-between; }
+    .g-badge { padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 800; }
+    .g-badge.active { background: rgba(22,166,106,.18); color: var(--green); }
+    .g-badge.due { background: rgba(245,196,93,.18); color: var(--lime); }
+  </style>
+</head>
+<body class="dashboard-home">
+  <div class="g-header">
+    <div class="g-brand">KEMET FC<small>GUARDIAN PORTAL</small></div>
+    <button class="g-signout" id="signout-btn" type="button">Sign out</button>
+  </div>
+
+  <div id="g-switcher" class="g-switcher" hidden></div>
+  <div id="g-content"></div>
+
+  <script src="/auth_client.js"></script>
+  <script>
+    let players = [];
+    let currentPlayerId = null;
+
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    document.querySelector("#signout-btn").addEventListener("click", async () => {
+      await fetch("/auth/logout", { method: "POST" });
+      window.location.assign("/login");
+    });
+
+    function renderSwitcher() {
+      const wrap = document.querySelector("#g-switcher");
+      wrap.replaceChildren();
+      if (players.length < 2) {
+        wrap.hidden = true;
+        return;
+      }
+      wrap.hidden = false;
+      players.forEach((player) => {
+        const btn = make("button", player.player_id === currentPlayerId ? "active" : "", player.name);
+        btn.type = "button";
+        btn.addEventListener("click", () => {
+          currentPlayerId = player.player_id;
+          renderSwitcher();
+          loadPlayerReport(currentPlayerId);
+        });
+        wrap.append(btn);
+      });
+    }
+
+    function renderEmptyState() {
+      document.querySelector("#g-content").replaceChildren(
+        make("div", "g-empty", "No player is linked to your account yet. Please contact KEMET FC staff to link your child's profile.")
+      );
+    }
+
+    function renderError(message) {
+      document.querySelector("#g-content").replaceChildren(
+        make("div", "g-empty", message)
+      );
+    }
+
+    const PILLAR_LABELS = {
+      physical: "Physical",
+      technical: "Technical",
+      tactical: "Tactical",
+      coach: "Coach Assessment",
+    };
+
+    function formatValue(value) {
+      return Number.isInteger(value) ? String(value) : value.toFixed(2);
+    }
+
+    async function loadPlayerReport(playerId) {
+      const content = document.querySelector("#g-content");
+      content.replaceChildren(make("div", "g-card", "Loading..."));
+
+      try {
+        const player = players.find((item) => item.player_id === playerId);
+        const [reportRes, assessmentsRes] = await Promise.all([
+          fetch(`/players/${encodeURIComponent(playerId)}/development-report`),
+          fetch(`/players/${encodeURIComponent(playerId)}/assessments`),
+        ]);
+
+        if (!reportRes.ok) throw new Error("Could not load this player's development report.");
+
+        const report = await reportRes.json();
+        const assessments = assessmentsRes.ok ? (await assessmentsRes.json()).assessments : [];
+
+        content.replaceChildren(...buildReportCards(player, report, assessments));
+      } catch (error) {
+        renderError(error.message);
+      }
+    }
+
+    function buildReportCards(player, report, assessments) {
+      const cards = [];
+
+      // --- Player + coverage ---
+      const headCard = make("div", "g-card");
+      const row = make("div", "g-player-row");
+      const avatar = make("div", "g-avatar", (player.name || "?").slice(0, 2).toUpperCase());
+      row.append(avatar);
+      const nameWrap = make("div");
+      nameWrap.append(make("div", "g-player-name", player.name));
+      nameWrap.append(make("div", "g-player-meta", player.team_id ? `Team ${player.team_id}` : "No team assigned"));
+      row.append(nameWrap);
+      headCard.append(row);
+
+      const coverage = report.coverage;
+      const coverageWrap = make("div", "g-coverage");
+      coverageWrap.append(make("div", "g-coverage-label", "Player Development Score"));
+      if (coverage.coverage_percent >= 100) {
+        // Methodology not yet configured even at full coverage — never
+        // fabricate a number; this branch is here for when it exists.
+        coverageWrap.append(make("div", "g-coverage-value", "—"));
+      } else {
+        coverageWrap.append(make("div", "g-coverage-value", "Assessment in progress"));
+      }
+      coverageWrap.append(make(
+        "div",
+        "g-coverage-note",
+        `We're building a complete picture of ${player.name.split(" ")[0]}'s development. ` +
+          `Assessment coverage: ${coverage.coverage_percent}% ` +
+          `(${coverage.covered_pillars.length} of ${coverage.pillars.length} areas assessed so far).`
+      ));
+      headCard.append(coverageWrap);
+      cards.push(headCard);
+
+      // --- Progress ---
+      if (report.progress.length) {
+        const progressCard = make("div", "g-card");
+        progressCard.append(make("div", "g-section-title", "Progress Since Last Assessment"));
+        report.progress.forEach((item) => {
+          const progressRow = make("div", "g-progress-row");
+          progressRow.append(make("div", "g-progress-label", item.label));
+          const changeText = `${item.change > 0 ? "↑" : item.change < 0 ? "↓" : "→"} ${item.change > 0 ? "+" : ""}${formatValue(item.change)}`;
+          progressRow.append(make("div", `g-progress-change ${item.change >= 0 ? "up" : "down"}`, changeText));
+          progressCard.append(progressRow);
+        });
+        cards.push(progressCard);
+      }
+
+      // --- Strengths ---
+      const strengthsCard = make("div", "g-card");
+      strengthsCard.append(make("div", "g-section-title", "Current Strengths"));
+      if (report.strengths.length) {
+        report.strengths.forEach((item) => {
+          const el = make("div", "g-item");
+          el.append(make("div", "g-item-title", `★ ${item.title.toUpperCase()}`));
+          el.append(make("div", "g-item-detail", item.detail));
+          strengthsCard.append(el);
+        });
+      } else {
+        strengthsCard.append(make("div", "g-item-detail", "Strengths will appear here once assessment results are recorded."));
+      }
+      cards.push(strengthsCard);
+
+      // --- Priorities ---
+      const prioritiesCard = make("div", "g-card");
+      prioritiesCard.append(make("div", "g-section-title", "Current Development Priorities"));
+      if (report.priorities.length) {
+        report.priorities.forEach((item, index) => {
+          const el = make("div", "g-item");
+          const title = make("div", "g-item-title");
+          title.append(make("span", "g-priority-num", `0${index + 1} — `));
+          title.append(document.createTextNode(item.title.toUpperCase()));
+          el.append(title);
+          el.append(make("div", "g-item-detail", item.detail));
+          prioritiesCard.append(el);
+        });
+      } else {
+        prioritiesCard.append(make("div", "g-item-detail", "Development priorities will appear here once assessment results are recorded."));
+      }
+      cards.push(prioritiesCard);
+
+      // --- Coach message ---
+      const messageCard = make("div", "g-card");
+      messageCard.append(make("div", "g-section-title", "Message From Your Coach"));
+      const coachMessage = report.coach_message;
+      if (coachMessage.message) {
+        messageCard.append(make("p", "g-coach-message", `"${coachMessage.message}"`));
+      } else {
+        messageCard.append(make("div", "g-item-detail", "No message from the coaching staff yet."));
+      }
+      if (coachMessage.next_focus && coachMessage.next_focus.length) {
+        messageCard.append(make("div", "g-section-title", "Next Development Focus"));
+        const chips = make("div", "g-next-focus");
+        coachMessage.next_focus.forEach((focus) => chips.append(make("span", "g-focus-chip", focus)));
+        messageCard.append(chips);
+      }
+      cards.push(messageCard);
+
+      // --- Explore assessment (drill-down) ---
+      const exploreCard = make("div", "g-card");
+      exploreCard.append(make("div", "g-section-title", "Explore The Assessment"));
+      const grid = make("div", "g-explore-grid");
+      const detailWrap = make("div", "g-explore-detail");
+
+      Object.entries(PILLAR_LABELS).forEach(([pillar, label]) => {
+        const btn = make("button", "g-explore-card");
+        btn.type = "button";
+        btn.append(make("div", "name", label));
+        btn.append(make("div", "arrow", "View Details →"));
+        btn.addEventListener("click", () => {
+          const matching = assessments.filter((a) => a.pillar === pillar);
+          detailWrap.replaceChildren();
+          detailWrap.classList.add("open");
+          detailWrap.append(make("div", "g-section-title", `${label} — Assessment History`));
+          if (!matching.length) {
+            detailWrap.append(make("div", "g-item-detail", "No assessments recorded yet for this area."));
+          } else {
+            matching.forEach((a) => {
+              const item = make("div", "g-raw-item");
+              const summary = Object.entries(a.raw_data)
+                .map(([key, value]) => `${key}: ${value}`)
+                .join(" · ");
+              item.innerHTML = "";
+              item.append(make("strong", "", `${a.test_type} — ${a.test_date}`));
+              item.append(document.createElement("br"));
+              item.append(document.createTextNode(summary));
+              detailWrap.append(item);
+            });
+          }
+        });
+        grid.append(btn);
+      });
+
+      exploreCard.append(grid);
+      exploreCard.append(detailWrap);
+      cards.push(exploreCard);
+
+      return cards;
+    }
+
+    async function init() {
+      try {
+        const response = await fetch("/guardian/children");
+        if (!response.ok) throw new Error("Could not load your linked players.");
+        players = await response.json();
+      } catch (error) {
+        renderError(error.message);
+        return;
+      }
+
+      if (!players.length) {
+        renderEmptyState();
+        return;
+      }
+
+      currentPlayerId = players[0].player_id;
+      renderSwitcher();
+      loadPlayerReport(currentPlayerId);
+    }
+
+    init();
+  </script>
+</body>
+</html>

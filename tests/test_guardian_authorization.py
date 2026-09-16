@@ -286,6 +286,7 @@ def test_guardian_b_can_access_own_player_and_no_other(seeded):
     "/players/P_GUARD_B/coaching-insights",
     "/players/P_GUARD_B/recommended-drill",
     "/players/P_GUARD_B/assessments",
+    "/players/P_GUARD_B/development-report",
 ])
 def test_guardian_cannot_reach_unrelated_player_subresources(seeded, path):
     response = seeded["guardian_a"].get(path)
@@ -464,3 +465,39 @@ def test_guardian_search_is_scoped_to_own_children_at_the_handler_level(seeded):
     assert "P_GUARD_C" not in player_ids
 
     db.close()
+
+
+# Development report: guardian can read their own child's, never
+# another's, and can never write the coach message regardless of
+# ownership (it's a staff-authored field, guardian is read-only).
+def test_guardian_can_view_own_linked_development_report(seeded):
+    response = seeded["guardian_a"].get("/players/P_GUARD_A/development-report")
+    assert response.status_code == 200
+    assert response.json()["player_id"] == "P_GUARD_A"
+    assert "score" not in response.json()
+
+
+def test_guardian_cannot_set_coach_message_for_own_or_other_child(seeded):
+    own = seeded["guardian_a"].put(
+        "/players/P_GUARD_A/coach-message",
+        json={"message": "I am not staff", "next_focus": []},
+    )
+    other = seeded["guardian_a"].put(
+        "/players/P_GUARD_B/coach-message",
+        json={"message": "IDOR attempt", "next_focus": []},
+    )
+    assert own.status_code == 403
+    assert other.status_code == 403
+
+
+def test_admin_can_set_coach_message_and_guardian_sees_it(seeded):
+    update = seeded["admin"].put(
+        "/players/P_GUARD_A/coach-message",
+        json={"message": "Great week!", "next_focus": ["Scanning"]},
+    )
+    assert update.status_code == 200
+
+    report = seeded["guardian_a"].get(
+        "/players/P_GUARD_A/development-report"
+    ).json()
+    assert report["coach_message"]["message"] == "Great week!"

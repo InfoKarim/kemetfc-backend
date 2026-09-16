@@ -491,3 +491,16 @@ class RecordBallMasterySchema(BaseModel):
         if value > date.today():
             raise ValueError("Test date cannot be in the future")
         return value
+
+
+class UpdateCoachMessageSchema(BaseModel):
+    message: str | None = Field(default=None, max_length=2000)
+    next_focus: list[str] = Field(default_factory=list, max_length=3)
+
+    @field_validator("next_focus")
+    @classmethod
+    def _limit_item_length(cls, items: list[str]) -> list[str]:
+        for item in items:
+            if len(item) > 200:
+                raise ValueError("Each next-focus item must be 200 characters or fewer")
+        return items

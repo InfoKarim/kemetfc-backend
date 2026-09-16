@@ -5,11 +5,19 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api_schemas import RecordBallMasterySchema, RecordYoYoKidsSchema
+from app.api_schemas import (
+    RecordBallMasterySchema,
+    RecordYoYoKidsSchema,
+    UpdateCoachMessageSchema,
+)
 from app.database import get_db
 from app.db_models import PlayerAssessmentDB
 from app.dependencies import require_guardian_player_access
 from app.player_video_upload import SUPPORTED_VIDEO_TYPES
+from app.services.development_report_service import (
+    build_development_report,
+    set_coach_message,
+)
 from app.services.player_assessment_service import PlayerAssessmentService
 from app.services.player_service import PlayerService
 from app.services.smart_recommendation_service import (
@@ -201,3 +209,47 @@ def delete_player_assessment(
     PlayerAssessmentService(db=db).delete_assessment(assessment_id)
 
     return {"message": "Assessment deleted"}
+
+
+@router.get("/players/{player_id}/development-report")
+def get_player_development_report(
+    player_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """The Guardian-facing summary: assessment coverage, latest-vs-
+    previous progress, coach-observed strengths/priorities, and the
+    coach's current message — never a fabricated overall score. See
+    build_development_report() for exactly what evidence backs each
+    field.
+    """
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
+
+    return build_development_report(db, player_id)
+
+
+@router.put("/players/{player_id}/coach-message")
+def update_player_coach_message(
+    player_id: str,
+    payload: UpdateCoachMessageSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    _require_staff(request)
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    return set_coach_message(
+        db,
+        player_id=player_id,
+        message=payload.message,
+        next_focus=payload.next_focus,
+        updated_by_user_id=request.state.current_user["user_id"],
+    )

@@ -742,3 +742,29 @@ class PlayerAssessmentDB(Base):
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class CoachMessageDB(Base):
+    """The coach's current personal note + next-focus list for one player,
+    shown on that player's Guardian development report. One row per
+    player (overwritten on each edit, unlike PlayerAssessmentDB) — this
+    is a live "here's where things stand" message, not a historical
+    record, and is never internal-only: it is guardian-visible by
+    design, so no private staff notes belong here.
+    """
+
+    __tablename__ = "coach_messages"
+
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        primary_key=True,
+    )
+    message: Mapped[str | None] = mapped_column(String, nullable=True)
+    next_focus: Mapped[list] = mapped_column(JSON, default=list)
+    updated_by_user_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
