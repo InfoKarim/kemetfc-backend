@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create Player from Registration | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --navy: #061a33;
+      --blue: #0866f5;
+      --green: #28b75f;
+      --orange: #ff9418;
+      --line: #dfe6ef;
+      --muted: #68778d;
+      --page: #f5f7fb;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: #10213b;
+      background: var(--page);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+    }
+
+    .layout { display: grid; min-height: 100vh; grid-template-columns: 240px 1fr; }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 16px;
+      color: white;
+      background: linear-gradient(180deg, #071d39, #031226);
+    }
+
+    .brand { margin: 0 10px 30px; color: #f5c45d; font-size: 24px; font-weight: 900; }
+    .brand small {
+      display: block; margin-top: 3px; color: #8ca1bb;
+      font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    }
+
+    nav { display: grid; gap: 7px; }
+    nav a { padding: 12px 14px; border-radius: 9px; color: #dce7f5; text-decoration: none; font-size: 14px; font-weight: 650; }
+    nav a:hover, nav a.active { color: white; background: var(--blue); }
+
+    main { min-width: 0; padding: 26px 30px 60px; max-width: 900px; }
+
+    h1 { margin: 0; font-size: 26px; letter-spacing: -.04em; }
+    header p { margin: 5px 0 0; color: var(--muted); }
+
+    .card {
+      margin-bottom: 18px;
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 8px 24px #15304d0a;
+    }
+
+    .card h2 { margin: 0 0 14px; font-size: 16px; }
+
+    .from-registration-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .field-readout span { display: block; }
+    .field-readout .label { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .field-readout .value { margin-top: 3px; font-size: 14px; color: var(--ink, #16233B); }
+    .field-readout .badge {
+      display: inline-block; margin-top: 4px; padding: 2px 7px; border-radius: 6px;
+      background: #e8f8ee; color: #1c8a4a; font-size: 10px; font-weight: 800;
+    }
+
+    .banner {
+      padding: 14px 16px;
+      border-radius: 10px;
+      margin-bottom: 18px;
+      border-left: 4px solid var(--orange);
+      background: #fff8e9;
+    }
+    .banner.success { border-left-color: var(--green); background: #eefbf3; }
+    .banner.info { border-left-color: var(--blue); background: #eef5ff; }
+    .banner h3 { margin: 0 0 6px; font-size: 14px; color: #16233B !important; }
+    .banner p { margin: 0 0 8px; font-size: 13px; color: #2c3e58 !important; }
+    .banner a.button, .actions a.button, .actions button {
+      display: inline-block;
+      padding: 9px 14px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--blue);
+      color: white;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 750;
+      cursor: pointer;
+      margin-right: 8px;
+    }
+    .banner a.button.secondary, .actions a.secondary, .actions button.secondary {
+      background: white; border: 1px solid var(--line); color: #2c3e58;
+    }
+
+    label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 5px; }
+    input, select {
+      width: 100%;
+      padding: 9px 10px;
+      border: 1px solid #d7e0eb;
+      border-radius: 8px;
+      font: inherit;
+      background: white;
+      color: inherit;
+    }
+
+    .field { margin-bottom: 12px; }
+    .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+
+    .duplicate-check { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
+    .duplicate-check a { color: var(--blue); }
+
+    .confirm-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+    .confirm-row input { width: auto; }
+
+    .actions { margin-top: 6px; }
+    #form-message { min-height: 18px; color: var(--alarm, #E1685C); font-size: 13px; margin-bottom: 10px; }
+
+    .state { padding: 40px; text-align: center; color: var(--muted); }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC<small>Academy Development</small></div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a class="active" href="/players-dashboard">Players</a>
+        <a href="/registrations-dashboard">Assessment Registrations</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <h1>Create Player from Registration</h1>
+        <p>Review the registration, then complete only what it didn't already give us.</p>
+      </header>
+
+      <div id="root">
+        <div class="state">Loading registration...</div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const registrationId = params.get("registration_id");
+    const root = document.querySelector("#root");
+
+    const PROFILE_SECTIONS = [
+      { key: "physical_profile", title: "Physical", fields: [
+        ["height_cm", "Height (cm)"], ["weight_kg", "Weight (kg)"],
+        ["speed", "Speed"], ["acceleration", "Acceleration"], ["agility", "Agility"],
+        ["stamina", "Stamina"], ["strength", "Strength"],
+      ]},
+      { key: "technical_profile", title: "Technical", fields: [
+        ["ball_control", "Ball control"], ["dribbling", "Dribbling"],
+        ["passing", "Passing"], ["shooting", "Shooting"], ["finishing", "Finishing"],
+      ]},
+      { key: "mental_profile", title: "Mental", fields: [
+        ["decision_making", "Decision making"], ["concentration", "Concentration"],
+        ["composure", "Composure"], ["positioning", "Positioning"], ["vision", "Vision"],
+        ["awareness", "Awareness"], ["game_reading", "Game reading"], ["coachability", "Coachability"],
+      ]},
+      { key: "match_performance", title: "Match Performance", fields: [
+        ["minutes_played", "Minutes played"], ["goals", "Goals"], ["assists", "Assists"],
+        ["shots", "Shots"], ["shots_on_target", "Shots on target"],
+        ["passes_attempted", "Passes attempted"], ["passes_completed", "Passes completed"],
+        ["tackles", "Tackles"], ["interceptions", "Interceptions"], ["rating", "Rating"],
+      ]},
+      { key: "tactical_profile", title: "Tactical", fields: [
+        ["positioning_spatial_intelligence", "Spatial intelligence"],
+        ["attacking_contribution_in_possession", "Attacking (in possession)"],
+        ["attacking_contribution_off_ball", "Attacking (off ball)"],
+        ["defensive_tactical_contribution", "Defensive contribution"],
+        ["transitions", "Transitions"], ["decision_quality", "Decision quality"],
+        ["collective_coordination", "Collective coordination"], ["set_piece_contribution", "Set pieces"],
+      ]},
+      { key: "weak_foot_profile", title: "Weak Foot", fields: [
+        ["weak_foot_usage_pct", "Usage %"], ["weak_foot_passing", "Passing"],
+        ["weak_foot_receiving", "Receiving"], ["weak_foot_dribbling", "Dribbling"],
+        ["weak_foot_finishing", "Finishing"],
+      ]},
+    ];
+
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    function readout(label, value) {
+      const wrap = make("div", "field-readout");
+      wrap.append(make("span", "label", label));
+      wrap.append(make("span", "value", value || "—"));
+      return wrap;
+    }
+
+    async function fetchTeams() {
+      try {
+        const response = await fetch("/teams");
+        if (!response.ok) return [];
+        return await response.json();
+      } catch (error) {
+        return [];
+      }
+    }
+
+    function buildDuplicateBanner(candidates) {
+      const banner = make("div", "banner");
+      banner.append(make("h3", "", "Possible existing player found"));
+      banner.append(make(
+        "p",
+        "",
+        "A player with the same name and date of birth already exists. Review before creating a new record."
+      ));
+      for (const candidate of candidates) {
+        const row = make("div", "duplicate-check");
+        const link = make("a", "", `${candidate.first_name_en} ${candidate.last_name_en} — born ${candidate.date_of_birth}`);
+        link.href = `/player-details?player_id=${encodeURIComponent(candidate.player_id)}`;
+        link.target = "_blank";
+        row.append(link);
+        banner.append(row);
+      }
+      return banner;
+    }
+
+    function buildMissingInfoForm(registration, teams, duplicates) {
+      const form = make("form");
+
+      if (duplicates.length) {
+        form.append(buildDuplicateBanner(duplicates));
+      }
+
+      const identityCard = make("div", "card");
+      identityCard.append(make("h2", "", "Additional Information"));
+
+      const nameGrid = make("div", "field-grid");
+      const arFirst = make("div", "field");
+      arFirst.append(make("label", "", "First name (Arabic)"));
+      const arFirstInput = make("input");
+      arFirstInput.name = "first_name_ar";
+      arFirstInput.required = true;
+      arFirst.append(arFirstInput);
+      nameGrid.append(arFirst);
+
+      const arLast = make("div", "field");
+      arLast.append(make("label", "", "Last name (Arabic)"));
+      const arLastInput = make("input");
+      arLastInput.name = "last_name_ar";
+      arLastInput.required = true;
+      arLast.append(arLastInput);
+      nameGrid.append(arLast);
+
+      const sexField = make("div", "field");
+      sexField.append(make("label", "", "Gender"));
+      const sexSelect = make("select");
+      sexSelect.name = "sex";
+      sexSelect.required = true;
+      const sexPlaceholder = make("option", "", "Select...");
+      sexPlaceholder.value = "";
+      sexSelect.append(sexPlaceholder);
+      for (const [value, label] of [["male", "Male"], ["female", "Female"]]) {
+        const option = make("option", "", label);
+        option.value = value;
+        sexSelect.append(option);
+      }
+      sexField.append(sexSelect);
+      nameGrid.append(sexField);
+
+      const teamField = make("div", "field");
+      teamField.append(make("label", "", "Team (optional)"));
+      const teamSelect = make("select");
+      teamSelect.name = "team_id";
+      const teamPlaceholder = make("option", "", "No team yet");
+      teamPlaceholder.value = "";
+      teamSelect.append(teamPlaceholder);
+      for (const team of teams) {
+        const option = make("option", "", team.name || team.team_id);
+        option.value = team.team_id;
+        teamSelect.append(option);
+      }
+      teamField.append(teamSelect);
+      nameGrid.append(teamField);
+
+      const dominantFootField = make("div", "field");
+      dominantFootField.append(make("label", "", "Dominant foot"));
+      const dominantFootSelect = make("select");
+      dominantFootSelect.name = "dominant_foot";
+      for (const [value, label] of [["right", "Right"], ["left", "Left"], ["both", "Both"]]) {
+        const option = make("option", "", label);
+        option.value = value;
+        dominantFootSelect.append(option);
+      }
+      dominantFootField.append(dominantFootSelect);
+      nameGrid.append(dominantFootField);
+
+      identityCard.append(nameGrid);
+      form.append(identityCard);
+
+      const assessmentCard = make("div", "card");
+      assessmentCard.append(make("h2", "", "Baseline Profile"));
+      assessmentCard.append(make(
+        "p",
+        "",
+        "None of this comes from registration — it defaults to 0 (not yet assessed). Update it now if you have real numbers, or leave it and record the player's first real assessment later from the Assessments page."
+      ));
+
+      for (const section of PROFILE_SECTIONS) {
+        const sectionWrap = make("div");
+        sectionWrap.style.marginTop = "14px";
+        sectionWrap.append(make("h3", "", section.title));
+        const grid = make("div", "field-grid");
+        for (const [fieldName, label] of section.fields) {
+          const field = make("div", "field");
+          field.append(make("label", "", label));
+          const input = make("input");
+          input.type = "number";
+          input.step = "any";
+          input.value = "0";
+          input.required = true;
+          input.dataset.section = section.key;
+          input.dataset.field = fieldName;
+          field.append(input);
+          grid.append(field);
+        }
+        sectionWrap.append(grid);
+        assessmentCard.append(sectionWrap);
+      }
+
+      form.append(assessmentCard);
+
+      if (duplicates.length) {
+        const confirmCard = make("div", "card");
+        const confirmRow = make("label", "confirm-row");
+        const checkbox = make("input");
+        checkbox.type = "checkbox";
+        checkbox.name = "confirm_duplicate";
+        confirmRow.append(checkbox);
+        confirmRow.append(document.createTextNode(
+          "I've reviewed the possible duplicate above and want to create a new player anyway."
+        ));
+        confirmCard.append(confirmRow);
+        form.append(confirmCard);
+      }
+
+      const messageEl = make("p", "", "");
+      messageEl.id = "form-message";
+      form.append(messageEl);
+
+      const actions = make("div", "actions");
+      const submitButton = make("button", "", "Create Player");
+      submitButton.type = "submit";
+      actions.append(submitButton);
+      form.append(actions);
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        messageEl.textContent = "";
+
+        if (duplicates.length && !form.querySelector('[name="confirm_duplicate"]').checked) {
+          messageEl.textContent = "Confirm you've reviewed the possible duplicate before continuing.";
+          return;
+        }
+
+        const payload = {
+          first_name_ar: arFirstInput.value.trim(),
+          last_name_ar: arLastInput.value.trim(),
+          sex: sexSelect.value,
+          team_id: teamSelect.value || null,
+          confirm_duplicate: duplicates.length
+            ? form.querySelector('[name="confirm_duplicate"]').checked
+            : false,
+          physical_profile: { dominant_foot: dominantFootSelect.value },
+          technical_profile: {},
+          mental_profile: {},
+          match_performance: {},
+          tactical_profile: {},
+          weak_foot_profile: {},
+        };
+
+        for (const input of form.querySelectorAll("input[data-section]")) {
+          const isInteger = ["minutes_played", "goals", "assists", "shots", "shots_on_target",
+            "passes_attempted", "passes_completed", "tackles", "interceptions"].includes(input.dataset.field);
+          const value = Number(input.value);
+          payload[input.dataset.section][input.dataset.field] = isInteger ? Math.trunc(value) : value;
+        }
+
+        submitButton.disabled = true;
+        submitButton.textContent = "Creating...";
+
+        try {
+          const response = await fetch(
+            `/registrations/${encodeURIComponent(registrationId)}/create-player`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(payload),
+            }
+          );
+          const data = await response.json();
+
+          if (!response.ok) {
+            const detail = data.detail;
+            if (detail && detail.possible_duplicate_players) {
+              renderDuplicateThenRetry(registration, teams, detail.possible_duplicate_players);
+              return;
+            }
+            throw new Error((detail && detail.message) || detail || "Could not create player.");
+          }
+
+          renderSuccess(data);
+        } catch (error) {
+          submitButton.disabled = false;
+          submitButton.textContent = "Create Player";
+          messageEl.textContent = error.message;
+        }
+      });
+
+      return form;
+    }
+
+    function renderDuplicateThenRetry(registration, teams, duplicates) {
+      root.replaceChildren();
+      root.append(buildRegistrationSummary(registration));
+      root.append(buildMissingInfoForm(registration, teams, duplicates));
+    }
+
+    function renderSuccess(result) {
+      root.replaceChildren();
+      const banner = make("div", "banner success");
+      banner.append(make("h3", "", "Player created"));
+      banner.append(make("p", "", "The registration is now linked to this player."));
+      const actions = make("div", "actions");
+      const openProfile = make("a", "button", "Open Player Profile");
+      openProfile.href = `/player-details?player_id=${encodeURIComponent(result.player_id)}`;
+      actions.append(openProfile);
+      const backToRegistrations = make("a", "button secondary", "Back to Registrations");
+      backToRegistrations.href = "/registrations-dashboard";
+      actions.append(backToRegistrations);
+      banner.append(actions);
+      root.append(banner);
+    }
+
+    function buildRegistrationSummary(registration) {
+      const card = make("div", "card");
+      card.append(make("h2", "", "From Registration"));
+      const grid = make("div", "from-registration-grid");
+
+      const rows = [
+        ["Player Name", registration.player_name],
+        ["Date of Birth", registration.player_date_of_birth],
+        ["Age", registration.player_age],
+        ["Preferred Position", registration.preferred_position],
+        ["Experience", registration.experience_level],
+        ["Current Team", registration.current_team],
+        ["Guardian", registration.parent_name],
+        ["Guardian Email", registration.parent_email],
+        ["Guardian Phone", registration.parent_phone],
+        ["Emergency Contact", registration.emergency_contact],
+      ];
+      for (const [label, value] of rows) {
+        grid.append(readout(label, value));
+      }
+      card.append(grid);
+      return card;
+    }
+
+    async function init() {
+      if (!registrationId) {
+        root.replaceChildren(make("div", "state", "No registration selected."));
+        return;
+      }
+
+      try {
+        const [registrationResponse, teams] = await Promise.all([
+          fetch(`/registrations/${encodeURIComponent(registrationId)}`),
+          fetchTeams(),
+        ]);
+
+        if (!registrationResponse.ok) {
+          throw new Error("Could not load this registration.");
+        }
+
+        const registration = await registrationResponse.json();
+        root.replaceChildren();
+        root.append(buildRegistrationSummary(registration));
+
+        if (registration.player_id) {
+          const banner = make("div", "banner info");
+          banner.append(make("h3", "", "Player already created"));
+          banner.append(make("p", "", "This registration is already linked to a player."));
+          const actions = make("div", "actions");
+          const openProfile = make("a", "button", "Open Player Profile");
+          openProfile.href = `/player-details?player_id=${encodeURIComponent(registration.player_id)}`;
+          actions.append(openProfile);
+          banner.append(actions);
+          root.append(banner);
+          return;
+        }
+
+        root.append(buildMissingInfoForm(
+          registration,
+          teams,
+          registration.possible_duplicate_players || []
+        ));
+      } catch (error) {
+        root.replaceChildren(make("div", "state", error.message));
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -107,6 +107,20 @@ def registration_payload(registration) -> dict:
         "current_team": registration.current_team,
         "consents": registration.consents,
         "submitted_at": _isoformat_utc(registration.submitted_at),
+        "status": registration.status,
+        "player_id": registration.player_id,
+        "linked_by_user_id": registration.linked_by_user_id,
+        "linked_at": _isoformat_utc(registration.linked_at),
+    }
+
+
+def duplicate_player_candidate_payload(player) -> dict:
+    return {
+        "player_id": player.player_id,
+        "first_name_en": player.first_name_en,
+        "last_name_en": player.last_name_en,
+        "date_of_birth": player.date_of_birth.isoformat(),
+        "team_id": player.team_id,
     }
 
 

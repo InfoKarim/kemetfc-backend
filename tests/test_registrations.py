@@ -199,3 +199,353 @@ def test_delete_unknown_registration_returns_404(client):
     response = client.delete("/registrations/REG999999")
 
     assert response.status_code == 404
+
+
+def additional_player_payload(**overrides):
+    payload = {
+        "first_name_ar": "ليلى",
+        "last_name_ar": "يوسف",
+        "sex": "female",
+        "team_id": None,
+        "physical_profile": {
+            "height_cm": 130.0,
+            "weight_kg": 28.0,
+            "dominant_foot": "right",
+            "speed": 60.0,
+            "acceleration": 62.0,
+            "agility": 58.0,
+            "stamina": 65.0,
+            "strength": 50.0,
+        },
+        "technical_profile": {
+            "ball_control": 50.0,
+            "dribbling": 52.0,
+            "passing": 48.0,
+            "shooting": 45.0,
+            "finishing": 47.0,
+        },
+        "mental_profile": {
+            "decision_making": 50.0,
+            "concentration": 52.0,
+            "composure": 48.0,
+            "positioning": 51.0,
+            "vision": 54.0,
+            "awareness": 50.0,
+            "game_reading": 50.0,
+            "coachability": 50.0,
+        },
+        "match_performance": {
+            "minutes_played": 0,
+            "goals": 0,
+            "assists": 0,
+            "shots": 0,
+            "shots_on_target": 0,
+            "passes_attempted": 0,
+            "passes_completed": 0,
+            "tackles": 0,
+            "interceptions": 0,
+            "rating": 0.0,
+        },
+        "tactical_profile": {
+            "positioning_spatial_intelligence": 50.0,
+            "attacking_contribution_in_possession": 48.0,
+            "attacking_contribution_off_ball": 52.0,
+            "defensive_tactical_contribution": 49.0,
+            "transitions": 51.0,
+            "decision_quality": 50.0,
+            "collective_coordination": 48.0,
+            "set_piece_contribution": 45.0,
+        },
+        "weak_foot_profile": {
+            "weak_foot_usage_pct": 15.0,
+            "weak_foot_passing": 40.0,
+            "weak_foot_receiving": 42.0,
+            "weak_foot_dribbling": 38.0,
+            "weak_foot_finishing": 35.0,
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def submit_registration(anonymous_client, **overrides):
+    response = anonymous_client.post(
+        "/public/registrations",
+        json=registration_payload(**overrides),
+    )
+    assert response.status_code == 201
+    return response.json()["registration_id"]
+
+
+def test_create_player_from_registration_populates_fields_and_links_guardian(
+    client, anonymous_client
+):
+    registration_id = submit_registration(
+        anonymous_client,
+        parent_name="Sara Youssef",
+        parent_email="sara.fields@example.com",
+        player_name="Layla Youssef",
+    )
+
+    response = client.post(
+        f"/registrations/{registration_id}/create-player",
+        json=additional_player_payload(),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    player_id = body["player_id"]
+    assert body["guardian_account_created"] is True
+    assert body["registration"]["status"] == "player_created"
+    assert body["registration"]["player_id"] == player_id
+
+    player = client.get(f"/players/{player_id}").json()
+    assert player["first_name_en"] == "Layla"
+    assert player["last_name_en"] == "Youssef"
+    assert player["date_of_birth"] == "2017-03-12"
+    assert player["source"] == "registration"
+    assert player["created_by_user_id"] == "TEST_ADMIN"
+
+    guardian_user_id = body["guardian_user_id"]
+
+    # Prove the guardian<->player link actually works end-to-end by
+    # logging in AS the newly created guardian (admin resets their unknown
+    # random password first) and confirming they see the linked child.
+    reset_response = client.patch(
+        f"/auth/users/{guardian_user_id}",
+        json={"password": "GuardianResetPassword123!"},
+    )
+    assert reset_response.status_code == 200
+
+    guardian_client = TestClient(app)
+    guardian_login = guardian_client.post(
+        "/auth/login",
+        json={
+            "username": reset_response.json()["username"],
+            "password": "GuardianResetPassword123!",
+        },
+    )
+    assert guardian_login.status_code == 200
+    guardian_client.headers.update({
+        "X-CSRF-Token": guardian_client.cookies.get(CSRF_COOKIE_NAME),
+    })
+
+    children = guardian_client.get("/guardian/children").json()
+    assert any(child["player_id"] == player_id for child in children)
+
+
+def test_create_player_from_registration_reuses_existing_guardian_by_email(
+    client, anonymous_client
+):
+    create_user_response = client.post(
+        "/auth/users",
+        json={
+            "username": "existing.guardian.reuse",
+            "password": "GuardianPassword123!",
+            "role": "guardian",
+            "email": "MoHamed.Reuse@Example.com",
+        },
+    )
+    assert create_user_response.status_code == 201
+    guardian_user_id = create_user_response.json()["user_id"]
+
+    registration_id = submit_registration(
+        anonymous_client,
+        parent_name="Mohamed Reuse",
+        parent_email="mohamed.reuse@example.com",
+        player_name="Adam Reuse",
+    )
+
+    response = client.post(
+        f"/registrations/{registration_id}/create-player",
+        json=additional_player_payload(),
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["guardian_account_created"] is False
+    assert body["guardian_user_id"] == guardian_user_id
+
+
+def test_create_player_from_registration_detects_possible_duplicate(
+    client, anonymous_client
+):
+    create_test_player_response = client.post(
+        "/players",
+        json={
+            **_MANUAL_PLAYER_TEMPLATE,
+            "player_id": "P_DUP_CHECK",
+            "first_name_en": "Duplicate",
+            "last_name_en": "Check",
+            "date_of_birth": "2016-01-01",
+        },
+    )
+    assert create_test_player_response.status_code == 201
+
+    registration_id = submit_registration(
+        anonymous_client,
+        parent_name="Some Parent",
+        parent_email="dup-check-parent@example.com",
+        player_name="Duplicate Check",
+        player_date_of_birth="2016-01-01",
+    )
+
+    response = client.post(
+        f"/registrations/{registration_id}/create-player",
+        json=additional_player_payload(),
+    )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["possible_duplicate_players"][0]["player_id"] == "P_DUP_CHECK"
+
+    confirmed_response = client.post(
+        f"/registrations/{registration_id}/create-player",
+        json=additional_player_payload(confirm_duplicate=True),
+    )
+    assert confirmed_response.status_code == 201
+
+
+def test_create_player_from_registration_rejects_already_linked_registration(
+    client, anonymous_client
+):
+    registration_id = submit_registration(
+        anonymous_client,
+        parent_name="Once Only",
+        parent_email="once-only@example.com",
+        player_name="Once Only Kid",
+    )
+
+    first_response = client.post(
+        f"/registrations/{registration_id}/create-player",
+        json=additional_player_payload(),
+    )
+    assert first_response.status_code == 201
+
+    second_response = client.post(
+        f"/registrations/{registration_id}/create-player",
+        json=additional_player_payload(confirm_duplicate=True),
+    )
+    assert second_response.status_code == 409
+    assert "player_id" in second_response.json()["detail"]
+
+
+def test_create_player_from_registration_requires_admin(client, anonymous_client):
+    registration_id = submit_registration(
+        anonymous_client,
+        parent_name="No Access",
+        parent_email="no-access@example.com",
+        player_name="No Access Kid",
+    )
+
+    coach_client = TestClient(app)
+    coach_created = client.post(
+        "/auth/users",
+        json={
+            "username": "registrations.coach",
+            "password": "CoachPassword123!",
+            "role": "coach",
+        },
+    )
+    assert coach_created.status_code == 201
+    login_response = coach_client.post(
+        "/auth/login",
+        json={"username": "registrations.coach", "password": "CoachPassword123!"},
+    )
+    assert login_response.status_code == 200
+    coach_client.headers.update({
+        "X-CSRF-Token": coach_client.cookies.get(CSRF_COOKIE_NAME),
+    })
+
+    response = coach_client.post(
+        f"/registrations/{registration_id}/create-player",
+        json=additional_player_payload(),
+    )
+    assert response.status_code == 403
+
+    anon_response = anonymous_client.post(
+        f"/registrations/{registration_id}/create-player",
+        json=additional_player_payload(),
+    )
+    assert anon_response.status_code == 401
+
+
+def test_manual_player_creation_still_works_independent_of_registrations(client):
+    response = client.post(
+        "/players",
+        json={
+            **_MANUAL_PLAYER_TEMPLATE,
+            "player_id": "P_MANUAL_STILL_WORKS",
+        },
+    )
+    assert response.status_code == 201
+
+    player = client.get("/players/P_MANUAL_STILL_WORKS").json()
+    assert player["source"] == "manual"
+    assert player["created_by_user_id"] == "TEST_ADMIN"
+
+
+_MANUAL_PLAYER_TEMPLATE = {
+    "first_name_ar": "لاعب",
+    "last_name_ar": "يدوي",
+    "first_name_en": "Manual",
+    "last_name_en": "Entry",
+    "date_of_birth": "2015-06-01",
+    "sex": "male",
+    "physical_profile": {
+        "height_cm": 140.0,
+        "weight_kg": 35.0,
+        "dominant_foot": "right",
+        "speed": 70.0,
+        "acceleration": 72.0,
+        "agility": 68.0,
+        "stamina": 75.0,
+        "strength": 60.0,
+    },
+    "technical_profile": {
+        "ball_control": 70.0,
+        "dribbling": 72.0,
+        "passing": 68.0,
+        "shooting": 65.0,
+        "finishing": 67.0,
+    },
+    "mental_profile": {
+        "decision_making": 70.0,
+        "concentration": 72.0,
+        "composure": 68.0,
+        "positioning": 71.0,
+        "vision": 74.0,
+        "awareness": 70.0,
+        "game_reading": 70.0,
+        "coachability": 70.0,
+    },
+    "match_performance": {
+        "minutes_played": 90,
+        "goals": 1,
+        "assists": 1,
+        "shots": 3,
+        "shots_on_target": 2,
+        "passes_attempted": 40,
+        "passes_completed": 34,
+        "tackles": 3,
+        "interceptions": 2,
+        "rating": 8.2,
+    },
+    "tactical_profile": {
+        "positioning_spatial_intelligence": 70.0,
+        "attacking_contribution_in_possession": 68.0,
+        "attacking_contribution_off_ball": 72.0,
+        "defensive_tactical_contribution": 69.0,
+        "transitions": 71.0,
+        "decision_quality": 70.0,
+        "collective_coordination": 68.0,
+        "set_piece_contribution": 65.0,
+    },
+    "weak_foot_profile": {
+        "weak_foot_usage_pct": 20.0,
+        "weak_foot_passing": 60.0,
+        "weak_foot_receiving": 62.0,
+        "weak_foot_dribbling": 58.0,
+        "weak_foot_finishing": 55.0,
+    },
+}

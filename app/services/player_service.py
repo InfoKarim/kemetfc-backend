@@ -74,6 +74,8 @@ class PlayerService:
             weak_foot_profile=player.weak_foot_profile.__dict__,
             created_at=player.created_at,
             photo_filename=player.photo_filename,
+            source=player.source,
+            created_by_user_id=player.created_by_user_id,
         )
 
     def _mental_profile(self, db_player: PlayerDB) -> MentalProfile:
@@ -118,6 +120,8 @@ class PlayerService:
             weak_foot_profile=self._weak_foot_profile(db_player),
             created_at=db_player.created_at,
             photo_filename=db_player.photo_filename,
+            source=db_player.source,
+            created_by_user_id=db_player.created_by_user_id,
         )
 
     def add_player(self, player: Player) -> None:
@@ -134,6 +138,28 @@ class PlayerService:
 
     def get_all_players(self) -> list[Player]:
         db_players = self.db.query(PlayerDB).all()
+        return [self._to_domain(player) for player in db_players]
+
+    def find_by_name_and_dob(
+        self,
+        first_name_en: str,
+        last_name_en: str,
+        date_of_birth,
+    ) -> list[Player]:
+        """Strong-identifier duplicate check (exact name + DOB match) — used
+        before creating a player from a registration so staff aren't
+        silently offered a second record for a child already in the
+        system. Deliberately NOT fuzzy: a near-miss name is not treated as
+        a match."""
+        db_players = (
+            self.db.query(PlayerDB)
+            .filter(
+                PlayerDB.first_name_en.ilike(first_name_en),
+                PlayerDB.last_name_en.ilike(last_name_en),
+                PlayerDB.date_of_birth == date_of_birth,
+            )
+            .all()
+        )
         return [self._to_domain(player) for player in db_players]
 
     def delete_player(self, player_id: str) -> bool:

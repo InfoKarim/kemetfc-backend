@@ -29,6 +29,7 @@ from app.api_schemas import (
     ChangeOwnPasswordSchema,
     ChildDeletionRequestSchema,
     ConfirmPasswordResetSchema,
+    CreatePlayerFromRegistrationSchema,
     CreateUserSchema,
     CreateTrainingPlanSchema,
     DevelopmentForecastSchema,
@@ -60,6 +61,7 @@ from app.database import SessionLocal, get_db
 from app.dependencies import (
     consent_payload,
     contact_message_payload,
+    duplicate_player_candidate_payload,
     is_minor,
     notify_coaching_staff,
     registration_payload,
@@ -77,6 +79,7 @@ from app.data_models import (
     TrainingPlanData,
 )
 from app.db_models import (
+    AssessmentRegistrationDB,
     DrillDiagramAnnotationDB,
     GeneratedDrillDiagramDB,
     PlayerDB,
@@ -121,7 +124,12 @@ from app.services.id_service import next_entity_id
 from app.services.player_service import PlayerService
 from app.services.privacy_service import PrivacyService
 from app.services.contact_message_service import ContactMessageService
-from app.services.registration_service import RegistrationService
+from app.services.registration_service import (
+    PossibleDuplicatePlayerError,
+    RegistrationAlreadyLinkedError,
+    RegistrationNotFoundError,
+    RegistrationService,
+)
 from app.services.training_plan_service import TrainingPlanService
 from app.services.team_service import TeamService
 from app.technical_profile import TechnicalProfile, TECHNICAL_FIELD_HINTS
@@ -285,6 +293,7 @@ HTML_PAGE_PATHS = {
     "/ml-dataset-registry",
     "/messages-page",
     "/registrations-dashboard",
+    "/create-player-from-registration",
     "/billing",
 }
 
@@ -315,6 +324,7 @@ FEATURE_PAGE_PATHS = {
     "/messages-page": "messaging",
     "/registrations-dashboard": "assessments",
     "/registrations": "assessments",
+    "/create-player-from-registration": "players",
 }
 
 # Read-only /players/{player_id}/<suffix> sub-resources a guardian may view
@@ -1311,6 +1321,7 @@ def readiness_check(db: Session = Depends(get_db)):
 @app.post("/players", status_code=201)
 def create_player(
     player_data: PlayerSchema,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     service = PlayerService(db=db)
@@ -1353,6 +1364,8 @@ def create_player(
             **player_data.weak_foot_profile.model_dump()
         ),
         created_at=utcnow(),
+        source="manual",
+        created_by_user_id=request.state.current_user["user_id"],
     )
 
     service.add_player(player)
@@ -1410,6 +1423,81 @@ def delete_registration(
     return {"message": "Registration deleted"}
 
 
+@app.get("/registrations/{registration_id}")
+def get_registration(
+    registration_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    service = RegistrationService(db=db)
+    registration = db.get(AssessmentRegistrationDB, registration_id)
+
+    if registration is None:
+        raise HTTPException(status_code=404, detail="Registration not found")
+
+    payload = registration_payload(registration)
+    payload["possible_duplicate_players"] = [
+        duplicate_player_candidate_payload(player)
+        for player in service.find_duplicate_players(registration)
+    ]
+    return payload
+
+
+@app.post("/registrations/{registration_id}/create-player", status_code=201)
+def create_player_from_registration(
+    registration_id: str,
+    payload: CreatePlayerFromRegistrationSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    # Creating a player from a registration can create a new guardian
+    # account and link it — a bigger consequence than a plain manual
+    # player add, so this is admin-only rather than shared with the
+    # broader "assessments"/"players" feature permission.
+    require_admin(request)
+
+    if payload.team_id is not None:
+        if TeamService(db=db).get_team(payload.team_id) is None:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+    try:
+        result = RegistrationService(db=db).create_player_from_registration(
+            registration_id=registration_id,
+            payload=payload,
+            actor_user_id=request.state.current_user["user_id"],
+        )
+    except RegistrationNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except RegistrationAlreadyLinkedError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(error),
+                "player_id": error.player_id,
+            },
+        )
+    except PossibleDuplicatePlayerError as error:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(error),
+                "possible_duplicate_players": [
+                    duplicate_player_candidate_payload(player)
+                    for player in error.candidates
+                ],
+            },
+        )
+
+    return {
+        "player_id": result["player"].player_id,
+        "guardian_user_id": result["guardian"].user_id,
+        "guardian_account_created": result["guardian_created"],
+        "registration": registration_payload(result["registration"]),
+    }
+
+
 @app.post("/public/contact-messages", status_code=201)
 def submit_public_contact_message(
     payload: PublicContactMessageSchema,
@@ -1460,6 +1548,15 @@ def get_player(
         )
 
     require_guardian_player_access(request, db, player_id)
+
+    if request.state.current_user["role"] == "guardian":
+        # Provenance (source/registration_id/created_by_user_id) is
+        # staff-only bookkeeping — never expose an internal user id or
+        # registration reference to a guardian.
+        payload = asdict(player)
+        payload.pop("source", None)
+        payload.pop("created_by_user_id", None)
+        return payload
 
     return player
 
@@ -2880,6 +2977,17 @@ def registrations_dashboard():
         / "app"
         / "static"
         / "registrations.html"
+    )
+    return FileResponse(page)
+
+
+@app.get("/create-player-from-registration")
+def create_player_from_registration_page():
+    page = (
+        Path(__file__).parent
+        / "app"
+        / "static"
+        / "create_player_from_registration.html"
     )
     return FileResponse(page)
 

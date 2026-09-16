@@ -99,6 +99,11 @@
       color: var(--muted);
     }
 
+    .add-player-group {
+      display: flex;
+      gap: 10px;
+    }
+
     .add-player {
       padding: 11px 16px;
       border-radius: 9px;
@@ -106,6 +111,12 @@
       background: var(--blue);
       text-decoration: none;
       font-weight: 750;
+    }
+
+    .add-player.secondary {
+      color: #2c3e58;
+      background: white;
+      border: 1px solid var(--line);
     }
 
     .stats {
@@ -348,7 +359,10 @@
           <h1>Players</h1>
           <p>Track player profiles, assessments, and development plans.</p>
         </div>
-        <a class="add-player" href="/add-player">+ Add player</a>
+        <div class="add-player-group">
+          <a class="add-player" href="/registrations-dashboard">Create from Registration</a>
+          <a class="add-player secondary" href="/add-player">Manual Entry</a>
+        </div>
       </header>
 
       <p id="page-message" role="status"></p>

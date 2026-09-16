@@ -132,10 +132,15 @@
     .toolbar {
       margin-bottom: 18px;
       padding: 14px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
     }
 
-    input {
-      width: 100%;
+    .toolbar input { flex: 1; min-width: 220px; }
+
+    input, select {
       padding: 12px 13px;
       border: 1px solid #d7e0eb;
       border-radius: 9px;
@@ -143,6 +148,21 @@
       color: inherit;
       font: inherit;
     }
+
+    input { width: 100%; }
+
+    .status-badge {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      margin-bottom: 15px;
+    }
+    .status-badge.submitted { background: #eef5ff; color: #0866f5; }
+    .status-badge.player_created { background: #e8f8ee; color: #1c8a4a; }
+    .status-badge.archived { background: #eef1f5; color: #4a5968; }
 
     #registrations-list {
       display: grid;
@@ -361,6 +381,11 @@
       <section class="toolbar">
         <input id="registration-search" type="search"
           placeholder="Search by parent or player name, or email">
+        <select id="status-filter">
+          <option value="submitted">Awaiting review</option>
+          <option value="all">All statuses</option>
+          <option value="player_created">Player created</option>
+        </select>
       </section>
 
       <section id="registrations-list">
@@ -372,6 +397,7 @@
   <script>
     const registrationsList = document.querySelector("#registrations-list");
     const search = document.querySelector("#registration-search");
+    const statusFilter = document.querySelector("#status-filter");
     const message = document.querySelector("#page-message");
 
     let registrations = [];
@@ -414,23 +440,14 @@
         Object.values(consents).every((value) => value === true);
     }
 
-    function buildAddPlayerUrl(registration) {
-      const nameParts = (registration.player_name || "").trim().split(/\s+/);
-      const firstName = nameParts.shift() || "";
-      const lastName = nameParts.join(" ");
-
-      const params = new URLSearchParams();
-      if (firstName) params.set("first_name", firstName);
-      if (lastName) params.set("last_name", lastName);
-      if (registration.player_date_of_birth) {
-        params.set("dob", registration.player_date_of_birth);
-      }
-
-      return `/add-player?${params.toString()}`;
+    function statusLabel(status) {
+      return { submitted: "Awaiting review", player_created: "Player created", archived: "Archived" }[status]
+        || status || "Awaiting review";
     }
 
     function render() {
       const query = search.value.toLowerCase().trim();
+      const statusValue = statusFilter.value;
 
       const visible = registrations.filter((registration) => {
         const haystack = [
@@ -439,7 +456,9 @@
           registration.player_name,
         ].join(" ").toLowerCase();
 
-        return haystack.includes(query);
+        if (!haystack.includes(query)) return false;
+        if (statusValue === "all") return true;
+        return (registration.status || "submitted") === statusValue;
       });
 
       registrationsList.replaceChildren();
@@ -453,6 +472,13 @@
 
       for (const registration of visible) {
         const card = make("article", "registration");
+        const status = registration.status || "submitted";
+        card.append(make(
+          "span",
+          `status-badge ${status}`,
+          statusLabel(status)
+        ));
+
         const head = make("div", "registration-head");
         const initials = (registration.player_name || "")
           .split(" ")
@@ -519,8 +545,14 @@
           consentsOk ? "All consents confirmed" : "Consent incomplete"
         ));
 
-        const convertLink = make("a", "convert-registration", "Add as player");
-        convertLink.href = buildAddPlayerUrl(registration);
+        const convertLink = make(
+          "a",
+          "convert-registration",
+          status === "player_created" ? "Open Player Profile" : "Review & Create Player"
+        );
+        convertLink.href = status === "player_created" && registration.player_id
+          ? `/player-details?player_id=${encodeURIComponent(registration.player_id)}`
+          : `/create-player-from-registration?registration_id=${encodeURIComponent(registration.registration_id)}`;
         footerActions.append(convertLink);
 
         const deleteButton = make("button", "delete-registration", "Delete");
@@ -604,6 +636,7 @@
     }
 
     search.addEventListener("input", render);
+    statusFilter.addEventListener("change", render);
     loadRegistrations();
   </script>
 </body>

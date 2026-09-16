@@ -405,6 +405,28 @@ class PublicRegistrationSchema(BaseModel):
     consents: RegistrationConsentSchema
 
 
+class CreatePlayerFromRegistrationSchema(BaseModel):
+    """Fields the registration does not already provide — everything the
+    registration DOES provide (name, DOB) is read server-side from the
+    authoritative registration record itself, never re-submitted by the
+    client, so it can't drift from what the parent actually typed."""
+
+    first_name_ar: str = Field(min_length=1, max_length=120)
+    last_name_ar: str = Field(min_length=1, max_length=120)
+    sex: str = Field(min_length=1, max_length=20)
+    team_id: str | None = None
+    physical_profile: PhysicalProfileSchema
+    technical_profile: TechnicalProfileSchema
+    mental_profile: MentalProfileSchema
+    match_performance: MatchPerformanceSchema
+    tactical_profile: TacticalProfileSchema
+    weak_foot_profile: WeakFootProfileSchema
+    # Set only after the staff member has already seen a possible-duplicate
+    # warning from GET /registrations/{id}/duplicate-check and chosen to
+    # proceed anyway — never implied by simply resubmitting the form.
+    confirm_duplicate: bool = False
+
+
 class PublicContactMessageSchema(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: str = Field(min_length=3, max_length=320)

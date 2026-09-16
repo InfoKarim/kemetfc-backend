@@ -42,6 +42,20 @@ class PlayerDB(Base):
     weak_foot_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     photo_filename: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Staff-only provenance — where this player record originated. Never
+    # overwritten after creation; a later registration edit does not
+    # silently update the operational player record (see
+    # RegistrationService.find_duplicate_player / create_player_from_registration).
+    # The originating registration, if any, is looked up in the other
+    # direction (assessment_registrations.player_id) rather than stored
+    # again here — storing the same relationship on both sides would create
+    # a circular foreign key between these two tables.
+    source: Mapped[str] = mapped_column(String, default="manual")
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
 
 
 class MatchDB(Base):
@@ -726,6 +740,21 @@ class AssessmentRegistrationDB(Base):
     current_team: Mapped[str | None] = mapped_column(String, nullable=True)
     consents: Mapped[dict] = mapped_column(JSON)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    # "submitted" -> "player_created" (or "archived"). Never reverts once a
+    # player is created — see RegistrationService.create_player_from_registration.
+    status: Mapped[str] = mapped_column(String, default="submitted")
+    player_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        nullable=True,
+        index=True,
+    )
+    linked_by_user_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
+    linked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ContactMessageDB(Base):

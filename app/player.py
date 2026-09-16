@@ -24,3 +24,5 @@ class Player:
     team_id: str | None = None
     created_at: datetime | None = None
     photo_filename: str | None = None
+    source: str = "manual"
+    created_by_user_id: str | None = None
