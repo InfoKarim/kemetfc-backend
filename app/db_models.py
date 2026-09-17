@@ -746,6 +746,59 @@ class PaymentDB(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
+class RefundDB(Base):
+    """An admin-initiated refund against a completed payment — append-only,
+    never edited or deleted. Exactly one of payment_id / manual_payment_id
+    is set. The original PaymentDB/ManualPaymentDB row this refers to is
+    NEVER modified: the refunded amount for a payment is always derived by
+    summing this table's succeeded rows for it, not stored redundantly.
+
+    refund_source distinguishes three origins:
+    - "stripe": created through this app, which called Stripe's refund API.
+    - "manual": a cash/check/other payment refunded outside Stripe — an
+      internal bookkeeping record only, no payment provider is called.
+    - "external": KEMET FC does process a refund directly in the Stripe
+      Dashboard (bypassing this app) — reconciled here from Stripe's own
+      charge.refunded webhook purely as an informational record for
+      accounting accuracy. This app never initiates or executes that
+      refund; created_by_user_id is None since no local admin acted.
+    """
+
+    __tablename__ = "refunds"
+
+    refund_id: Mapped[str] = mapped_column(String, primary_key=True)
+    payment_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("payments.stripe_invoice_id"),
+        nullable=True,
+        index=True,
+    )
+    manual_payment_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("manual_payments.manual_payment_id"),
+        nullable=True,
+        index=True,
+    )
+    stripe_refund_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+    # A caller-supplied (or server-generated, for external reconciliation)
+    # token that makes retries/double-clicks safe: a second request with
+    # the same key returns the already-created refund instead of a new one.
+    idempotency_key: Mapped[str] = mapped_column(String, unique=True, index=True)
+    refund_source: Mapped[str] = mapped_column(String)
+    refund_type: Mapped[str] = mapped_column(String)
+    amount_cents: Mapped[int] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(String)
+    internal_note: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String)
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class GeneratedDrillDiagramDB(Base):
     """An AI-generated coaching diagram, created on demand by a workspace
     search that didn't already have a strong match in the hand-authored

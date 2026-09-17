@@ -522,12 +522,11 @@ async def enforce_authentication(request: Request, call_next):
         )
 
     # Payment Control is an admin/finance surface — discounts, manual
-    # payments, plan pricing. No refund functionality exists anywhere in
-    # this app (KEMET FC has a strict no-refunds policy) — a completed
-    # payment stays recorded as paid; admins may only cancel future
-    # renewals, pause a membership, or record a manual payment. Every
-    # handler behind it also calls require_admin itself, so this is
-    # defense-in-depth, not the sole gate.
+    # payments, plan pricing, and refunds. Refunds are the most sensitive
+    # action here (this app has no separate "payments.refund" grant, since
+    # its only privileged role is admin — the equivalent of Admin/Super
+    # Admin here). Every handler behind it also calls require_admin
+    # itself, so this is defense-in-depth, not the sole gate.
     payment_control_path = (
         path == "/payment-control"
         or path == "/payment-settings"
@@ -546,6 +545,11 @@ async def enforce_authentication(request: Request, call_next):
         or (
             request.method == "POST"
             and path.startswith("/billing/manual-payments/")
+        )
+        or (
+            request.method == "POST"
+            and path.startswith("/billing/payments/")
+            and path.endswith("/refund")
         )
     )
     if payment_control_path and authenticated["role"] != "admin":

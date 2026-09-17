@@ -60,11 +60,11 @@
     th { font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 700; }
 
     .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
-    .badge.active, .badge.complimentary, .badge.training_eligible { background: #e8f8ee; color: #1c8a4a !important; }
-    .badge.past_due, .badge.expired, .badge.membership_expired { background: #fff0f0; color: #c83b45 !important; }
-    .badge.pending_payment, .badge.paused, .badge.cancelling, .badge.payment_attention_required { background: #fff8e9; color: #b9790a !important; }
+    .badge.active, .badge.complimentary, .badge.training_eligible, .badge.paid { background: #e8f8ee; color: #1c8a4a !important; }
+    .badge.past_due, .badge.expired, .badge.membership_expired, .badge.failed { background: #fff0f0; color: #c83b45 !important; }
+    .badge.pending_payment, .badge.paused, .badge.cancelling, .badge.payment_attention_required, .badge.partially_refunded { background: #fff8e9; color: #b9790a !important; }
     .badge.unassigned, .badge.cancelled, .badge.none { background: #eef1f5; color: #4a5968 !important; }
-    .badge.admin_override { background: #eef2ff; color: #3348c7 !important; }
+    .badge.admin_override, .badge.refunded { background: #eef2ff; color: #3348c7 !important; }
 
     button.link-button {
       padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: white !important; color: var(--blue) !important;
@@ -158,7 +158,8 @@
 
       <section class="card" id="report-card" style="margin-bottom:20px;">
         <h2 style="margin:0 0 14px;">Financial Reporting</h2>
-        <div class="section-title" style="margin-top:0;">Revenue by Plan</div>
+        <div id="report-net-summary" class="stats-grid" style="margin:0 0 6px;"></div>
+        <div class="section-title">Revenue by Plan</div>
         <div id="report-by-plan" class="row-list"></div>
         <div class="section-title">Revenue by Team</div>
         <div id="report-by-team" class="row-list"></div>
@@ -166,6 +167,36 @@
         <div id="report-manual-vs-online" class="row-list"></div>
         <div class="section-title">Upcoming Renewals (next 14 days)</div>
         <div id="report-upcoming-renewals" class="row-list"></div>
+      </section>
+
+      <section class="card" id="transactions-card" style="margin-bottom:20px;">
+        <div class="toolbar">
+          <h2 style="margin:0; flex:1;">Transactions</h2>
+          <select id="transaction-status-filter">
+            <option value="all">All statuses</option>
+            <option value="paid">Paid</option>
+            <option value="partially_refunded">Partially refunded</option>
+            <option value="refunded">Refunded</option>
+            <option value="failed">Failed</option>
+          </select>
+        </div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th>Player</th>
+                <th>Guardian</th>
+                <th>Amount</th>
+                <th>Method</th>
+                <th>Date</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="transactions-body"></tbody>
+          </table>
+        </div>
+        <div id="transactions-empty-state" class="state" hidden>No transactions match this filter.</div>
       </section>
 
       <section class="card">
@@ -540,6 +571,19 @@
     async function loadReport() {
       const report = await fetchJSON("/billing/admin/report");
 
+      const netSummary = document.querySelector("#report-net-summary");
+      netSummary.replaceChildren();
+      for (const [label, cents] of [
+        ["Gross Payments", report.gross_payments_cents],
+        ["Refunds", report.refunds_cents],
+        ["Net Collected Revenue", report.net_collected_revenue_cents],
+      ]) {
+        const card = make("article", "card stat-card");
+        card.append(make("span", "", label));
+        card.append(make("strong", "", formatMoney(cents, "usd")));
+        netSummary.append(card);
+      }
+
       const byPlan = document.querySelector("#report-by-plan");
       byPlan.replaceChildren();
       if (!report.revenue_by_plan.length) {
@@ -597,7 +641,216 @@
     }
 
     async function refreshAll() {
-      await Promise.all([loadSummary(), loadRows(), loadReport()]);
+      await Promise.all([loadSummary(), loadRows(), loadReport(), loadTransactions()]);
+    }
+
+    const TRANSACTION_STATUS_LABELS = {
+      PAID: "Paid",
+      PARTIALLY_REFUNDED: "Partially refunded",
+      REFUNDED: "Refunded",
+      FAILED: "Failed",
+      PENDING: "Pending",
+      PAST_DUE: "Past due",
+      VOID: "Void",
+    };
+
+    function transactionDateLabel(transaction) {
+      return transaction.source === "manual"
+        ? formatCalendarDate(transaction.payment_date)
+        : formatDate(transaction.payment_date);
+    }
+
+    let transactions = [];
+
+    async function loadTransactions() {
+      const statusValue = document.querySelector("#transaction-status-filter").value;
+      const query = statusValue === "all" ? "" : `?status=${encodeURIComponent(statusValue)}`;
+      const data = await fetchJSON(`/billing/admin/transactions${query}`);
+      transactions = data.transactions;
+      renderTransactions();
+    }
+
+    function renderTransactions() {
+      const body = document.querySelector("#transactions-body");
+      body.replaceChildren();
+      document.querySelector("#transactions-empty-state").hidden = transactions.length > 0;
+
+      for (const transaction of transactions) {
+        const tr = make("tr");
+        tr.append(make("td", "", transaction.player_name));
+        tr.append(make("td", "", transaction.guardian_name || "—"));
+        tr.append(make("td", "", formatMoney(transaction.amount_cents, transaction.currency)));
+        tr.append(make(
+          "td", "",
+          transaction.source === "stripe" ? "Stripe" : transaction.method.replace(/_/g, " ")
+        ));
+        tr.append(make("td", "", transactionDateLabel(transaction)));
+
+        const statusCell = make("td");
+        const statusClass = transaction.status.toLowerCase();
+        statusCell.append(make(
+          "span", `badge ${statusClass}`,
+          TRANSACTION_STATUS_LABELS[transaction.status] || transaction.status
+        ));
+        if (transaction.refunded_amount_cents > 0) {
+          statusCell.append(document.createElement("br"));
+          statusCell.append(make(
+            "span", "muted",
+            `${formatMoney(transaction.refunded_amount_cents, transaction.currency)} refunded`
+          ));
+        }
+        tr.append(statusCell);
+
+        const actionCell = make("td");
+        if (transaction.status === "PAID" || transaction.status === "PARTIALLY_REFUNDED") {
+          const refundButton = make("button", "link-button", "Refund");
+          refundButton.type = "button";
+          refundButton.addEventListener("click", () => openRefundModal(transaction));
+          actionCell.append(refundButton);
+        }
+        tr.append(actionCell);
+
+        body.append(tr);
+      }
+    }
+
+    function openRefundModal(transaction) {
+      const idempotencyKey = window.crypto && window.crypto.randomUUID
+        ? window.crypto.randomUUID()
+        : `idem-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+      const backdrop = make("div", "modal-backdrop");
+      const modal = make("div", "modal");
+
+      const closeButton = make("button", "modal-close", "×");
+      closeButton.type = "button";
+      closeButton.addEventListener("click", closeModal);
+      modal.append(closeButton);
+
+      modal.append(make("h2", "", "Refund Payment"));
+      modal.append(make(
+        "p", "muted",
+        transaction.source === "stripe"
+          ? "This calls Stripe's own refund API server-side — no card details ever pass through this page."
+          : "This records an internal refund only — no payment provider is contacted for a cash/check/other payment."
+      ));
+
+      const factsList = make("div", "row-list");
+      for (const [label, value] of [
+        ["Player Name", transaction.player_name],
+        ["Parent/Guardian Name", transaction.guardian_name || "—"],
+        ["Original Payment Amount", formatMoney(transaction.amount_cents, transaction.currency)],
+        ["Payment Date", transactionDateLabel(transaction)],
+        ["Payment Method", transaction.source === "stripe" ? "Stripe" : transaction.method.replace(/_/g, " ")],
+        ["Transaction / Invoice ID", transaction.transaction_id],
+        ["Maximum Refundable Amount", formatMoney(transaction.remaining_refundable_cents, transaction.currency)],
+      ]) {
+        const row = make("div", "row");
+        row.append(make("span", "", label));
+        row.append(make("span", "", String(value)));
+        factsList.append(row);
+      }
+      modal.append(factsList);
+
+      const form = make("form");
+
+      const typeField = make("div", "field");
+      typeField.append(make("label", "", "Refund Type"));
+      const typeSelect = make("select");
+      for (const [value, label] of [["full", "Full Refund"], ["partial", "Partial Refund"]]) {
+        const option = make("option", "", label);
+        option.value = value;
+        typeSelect.append(option);
+      }
+      typeField.append(typeSelect);
+      form.append(typeField);
+
+      const maxDollars = (transaction.remaining_refundable_cents / 100).toFixed(2);
+      const amountField = make("div", "field");
+      amountField.append(make("label", "", `Refund Amount — max ${formatMoney(transaction.remaining_refundable_cents, transaction.currency)}`));
+      const amountInput = make("input");
+      amountInput.type = "number";
+      amountInput.step = "0.01";
+      amountInput.min = "0.01";
+      amountInput.max = maxDollars;
+      amountInput.value = maxDollars;
+      amountInput.disabled = true;
+      amountField.append(amountInput);
+      form.append(amountField);
+
+      typeSelect.addEventListener("change", () => {
+        const isPartial = typeSelect.value === "partial";
+        amountInput.disabled = !isPartial;
+        if (!isPartial) amountInput.value = maxDollars;
+      });
+
+      const reasonField = make("div", "field");
+      reasonField.append(make("label", "", "Refund Reason"));
+      const reasonInput = make("textarea");
+      reasonInput.required = true;
+      reasonInput.rows = 2;
+      reasonField.append(reasonInput);
+      form.append(reasonField);
+
+      const noteField = make("div", "field");
+      noteField.append(make("label", "", "Internal Note (optional)"));
+      const noteInput = make("textarea");
+      noteInput.rows = 2;
+      noteField.append(noteInput);
+      form.append(noteField);
+
+      const messageEl = make("p", "", "");
+      form.append(messageEl);
+
+      const actionsRow = make("div", "actions-row");
+      const submitButton = make("button", "btn danger", "Confirm Refund");
+      submitButton.type = "submit";
+      actionsRow.append(submitButton);
+      form.append(actionsRow);
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+
+        const refundType = typeSelect.value;
+        const amountCents = refundType === "partial" ? Math.round(Number(amountInput.value) * 100) : null;
+        const confirmAmount = refundType === "full"
+          ? formatMoney(transaction.remaining_refundable_cents, transaction.currency)
+          : formatMoney(amountCents || 0, transaction.currency);
+
+        // Second, explicit confirmation — the form's own submit is step
+        // one; this is the deliberate "are you sure" step so a refund is
+        // never processed from a single accidental click.
+        if (!confirm(`Confirm ${refundType} refund of ${confirmAmount} for ${transaction.player_name}? This cannot be undone from this app.`)) {
+          return;
+        }
+
+        submitButton.disabled = true;
+        try {
+          const endpoint = transaction.source === "stripe"
+            ? `/billing/payments/${encodeURIComponent(transaction.transaction_id)}/refund`
+            : `/billing/manual-payments/${encodeURIComponent(transaction.transaction_id)}/refund`;
+          await fetchJSON(endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              refund_type: refundType,
+              amount_cents: amountCents,
+              reason: reasonInput.value.trim(),
+              internal_note: noteInput.value.trim() || null,
+              idempotency_key: idempotencyKey,
+            }),
+          });
+          closeModal();
+          await Promise.all([loadTransactions(), loadReport(), loadRows()]);
+        } catch (error) {
+          submitButton.disabled = false;
+          messageEl.textContent = error.message;
+        }
+      });
+
+      modal.append(form);
+      backdrop.append(modal);
+      document.querySelector("#modal-root").replaceChildren(backdrop);
     }
 
     function render() {
@@ -882,8 +1135,33 @@
       }
       for (const payment of paymentsData.payments) {
         const row2 = make("div", "row");
-        row2.append(make("span", "", `${formatMoney(payment.amount, payment.currency)} — ${payment.status}`));
+        row2.append(make(
+          "span", "",
+          `${formatMoney(payment.amount, payment.currency)} — ${TRANSACTION_STATUS_LABELS[payment.status] || payment.status}`
+        ));
+        if (payment.status === "PAID" || payment.status === "PARTIALLY_REFUNDED") {
+          const refundButton = make("button", "link-button", "Refund");
+          refundButton.type = "button";
+          refundButton.addEventListener("click", () => openRefundModal({
+            transaction_id: payment.stripe_invoice_id,
+            source: "stripe",
+            player_name: row.player_name,
+            guardian_name: row.guardian_name,
+            amount_cents: payment.amount,
+            currency: payment.currency,
+            payment_date: payment.created_at,
+            method: "stripe",
+            remaining_refundable_cents: payment.remaining_refundable_cents,
+          }));
+          row2.append(refundButton);
+        }
         paymentsList.append(row2);
+        for (const refund of payment.refund_history) {
+          const refundRow = make("div", "row family-note");
+          refundRow.append(make("span", "", `↳ Refunded ${formatMoney(refund.amount_cents, refund.currency)} — ${refund.reason}`));
+          refundRow.append(make("span", "", formatDate(refund.created_at)));
+          paymentsList.append(refundRow);
+        }
       }
       modal.append(paymentsList);
 
@@ -897,9 +1175,31 @@
         row3.append(make(
           "span",
           "",
-          `${formatMoney(payment.amount_cents, payment.currency)} — ${payment.method} — ${formatCalendarDate(payment.payment_date)}`
+          `${formatMoney(payment.amount_cents, payment.currency)} — ${payment.method} — ${formatCalendarDate(payment.payment_date)} — ${TRANSACTION_STATUS_LABELS[payment.status] || payment.status}`
         ));
+        if (payment.status === "PAID" || payment.status === "PARTIALLY_REFUNDED") {
+          const refundButton = make("button", "link-button", "Refund");
+          refundButton.type = "button";
+          refundButton.addEventListener("click", () => openRefundModal({
+            transaction_id: payment.manual_payment_id,
+            source: "manual",
+            player_name: row.player_name,
+            guardian_name: row.guardian_name,
+            amount_cents: payment.amount_cents,
+            currency: payment.currency,
+            payment_date: payment.payment_date,
+            method: payment.method,
+            remaining_refundable_cents: payment.remaining_refundable_cents,
+          }));
+          row3.append(refundButton);
+        }
         manualList.append(row3);
+        for (const refund of payment.refund_history) {
+          const refundRow = make("div", "row family-note");
+          refundRow.append(make("span", "", `↳ Refunded ${formatMoney(refund.amount_cents, refund.currency)} — ${refund.reason}`));
+          refundRow.append(make("span", "", formatDate(refund.created_at)));
+          manualList.append(refundRow);
+        }
       }
       modal.append(manualList);
 
@@ -1058,7 +1358,7 @@
     async function init() {
       const message = document.querySelector("#page-message");
       try {
-        await Promise.all([loadSummary(), loadPlans(), loadRows(), loadReport()]);
+        await Promise.all([loadSummary(), loadPlans(), loadRows(), loadReport(), loadTransactions()]);
 
         const requestedPlayerId = new URLSearchParams(location.search).get("player_id");
         if (requestedPlayerId) {
@@ -1072,6 +1372,7 @@
 
     document.querySelector("#search").addEventListener("input", render);
     document.querySelector("#status-filter").addEventListener("change", render);
+    document.querySelector("#transaction-status-filter").addEventListener("change", loadTransactions);
     document.querySelector("#create-plan-btn").addEventListener("click", openCreatePlanModal);
 
     init();

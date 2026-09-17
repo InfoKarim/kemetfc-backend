@@ -382,6 +382,25 @@ class ApplyDiscountSchema(BaseModel):
     percent_off: int = Field(ge=1, le=100)
 
 
+class RefundPaymentSchema(BaseModel):
+    refund_type: Literal["full", "partial"]
+    amount_cents: int | None = Field(default=None, gt=0)
+    reason: str = Field(min_length=1, max_length=500)
+    internal_note: str | None = Field(default=None, max_length=1000)
+    # Client-generated once per confirmation-modal submission and reused
+    # on any automatic retry of that SAME submission — never regenerated
+    # on click — so a double-click or network retry is a safe no-op
+    # instead of a second refund. See RefundService for the server side.
+    idempotency_key: str = Field(min_length=8, max_length=100)
+
+    @field_validator("amount_cents")
+    @classmethod
+    def _partial_requires_amount(cls, value, info):
+        if info.data.get("refund_type") == "partial" and value is None:
+            raise ValueError("amount_cents is required for a partial refund")
+        return value
+
+
 class CreateMembershipPlanSchema(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     amount_cents: int = Field(ge=1)

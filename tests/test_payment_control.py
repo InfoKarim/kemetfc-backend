@@ -597,25 +597,6 @@ def test_non_admin_cannot_pause_a_subscription(client):
 
 
 # ---------------------------------------------------------------------------
-# No-refunds policy — KEMET FC does not offer refunds through this
-# platform. A completed payment stays recorded as paid; admins may only
-# cancel future renewals, pause a membership, or record a manual payment.
-# These tests are a regression guard: refund functionality must never
-# reappear in the API surface.
-# ---------------------------------------------------------------------------
-
-def test_no_refund_endpoint_exists(client):
-    response = client.post("/billing/payments/in_norefund_test/refund", json={})
-    assert response.status_code in (404, 405)
-
-
-def test_billing_service_has_no_refund_method():
-    from app.services.billing_service import BillingService
-
-    assert not hasattr(BillingService, "refund_payment")
-
-
-# ---------------------------------------------------------------------------
 # Promo codes
 # ---------------------------------------------------------------------------
 

@@ -1,4 +1,5 @@
 from datetime import datetime, UTC
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -14,6 +15,7 @@ from app.api_schemas import (
     CreatePromoCodeSchema,
     GrantComplimentaryMembershipSchema,
     RecordManualPaymentSchema,
+    RefundPaymentSchema,
     SetEligibilityOverrideSchema,
     UpdateBillingSettingsSchema,
     UpdateFamilyDiscountRuleSchema,
@@ -21,7 +23,15 @@ from app.api_schemas import (
     UpdatePromoCodeSchema,
 )
 from app.database import get_db
-from app.db_models import FamilyDiscountRuleDB, PaymentDB, SubscriptionDB, UserDB
+from app.db_models import (
+    FamilyDiscountRuleDB,
+    GuardianPlayerLinkDB,
+    ManualPaymentDB,
+    PaymentDB,
+    PlayerDB,
+    SubscriptionDB,
+    UserDB,
+)
 from app.dependencies import require_admin, require_guardian_player_access
 from app.services.billing_service import BillingError, BillingService, is_configured
 from app.services.eligibility_service import derive_eligibility, derive_membership_status
@@ -29,8 +39,10 @@ from app.services.id_service import next_entity_id
 from app.services.notification_service import NotificationService
 from app.services.player_service import PlayerService
 from app.services.promo_code_service import PromoCodeError, PromoCodeService
+from app.services.refund_service import RefundError, RefundService, derive_payment_status
 
 router = APIRouter()
+logger = logging.getLogger("trainingbuddy.http")
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -66,7 +78,10 @@ def _plan_payload(plan) -> dict:
     }
 
 
-def _manual_payment_payload(payment) -> dict:
+def _manual_payment_payload(
+    payment, *, refunded_amount_cents: int = 0, refund_history: list | None = None
+) -> dict:
+    status = derive_payment_status("paid", payment.amount_cents, refunded_amount_cents)
     return {
         "manual_payment_id": payment.manual_payment_id,
         "player_id": payment.player_id,
@@ -78,7 +93,32 @@ def _manual_payment_payload(payment) -> dict:
         "recorded_by_user_id": payment.recorded_by_user_id,
         "recorded_at": payment.recorded_at,
         "source": "manual",
+        "status": status,
+        "refunded_amount_cents": refunded_amount_cents,
+        "net_amount_cents": payment.amount_cents - refunded_amount_cents,
+        "remaining_refundable_cents": max(payment.amount_cents - refunded_amount_cents, 0),
+        "refund_history": refund_history or [],
     }
+
+
+def _refund_payload(refund, *, include_internal: bool) -> dict:
+    payload = {
+        "refund_id": refund.refund_id,
+        "payment_id": refund.payment_id,
+        "manual_payment_id": refund.manual_payment_id,
+        "stripe_refund_id": refund.stripe_refund_id,
+        "refund_source": refund.refund_source,
+        "refund_type": refund.refund_type,
+        "amount_cents": refund.amount_cents,
+        "currency": refund.currency,
+        "reason": refund.reason,
+        "status": refund.status,
+        "created_at": refund.created_at,
+    }
+    if include_internal:
+        payload["internal_note"] = refund.internal_note
+        payload["created_by_user_id"] = refund.created_by_user_id
+    return payload
 
 
 @router.get("/billing")
@@ -279,6 +319,24 @@ def notify_payment_result(db: Session, payment: PaymentDB | None, succeeded: boo
         )
 
 
+def notify_refund_result(
+    db: Session, *, guardian_user_id: str, player_name: str, refund, reference: str
+) -> None:
+    amount = f"{refund.amount_cents / 100:.2f} {refund.currency.upper()}"
+    refund_date = refund.created_at.strftime("%Y-%m-%d")
+    NotificationService(db=db).create_notification(
+        user_id=guardian_user_id,
+        type="refund_issued",
+        title="Refund confirmation",
+        body=(
+            f"A refund of {amount} for {player_name} has been initiated successfully "
+            f"on {refund_date}, against payment {reference}. Your bank or card issuer "
+            "determines exactly when it posts to your account."
+        ),
+        link="/billing",
+    )
+
+
 @router.post("/billing/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()
@@ -323,22 +381,36 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     elif event_type == "invoice.payment_failed":
         payment = service.upsert_payment_from_stripe_invoice(data_object, status="failed")
         notify_payment_result(db, payment, succeeded=False)
+    elif event_type == "charge.refunded":
+        # A refund made directly in the Stripe Dashboard, bypassing this
+        # app — reconciled here as an informational record only. This
+        # never initiates or executes a refund (see RefundService), and
+        # is a no-op for a charge.refunded delivery caused by OUR OWN
+        # create_stripe_refund call (its stripe_refund_id is already known).
+        RefundService(db=db).reconcile_external_stripe_refunds(data_object)
 
     service.mark_stripe_event_processed(event_id, event_type)
     return {"received": True}
 
 
-def _payment_payload(payment) -> dict:
+def _payment_payload(
+    payment, *, refunded_amount_cents: int = 0, refund_history: list | None = None
+) -> dict:
+    status = derive_payment_status(payment.status, payment.amount, refunded_amount_cents)
     return {
         "stripe_invoice_id": payment.stripe_invoice_id,
         "player_id": payment.player_id,
         "amount": payment.amount,
         "currency": payment.currency,
-        "status": payment.status,
+        "status": status,
         "hosted_invoice_url": payment.hosted_invoice_url,
         "invoice_pdf_url": payment.invoice_pdf_url,
         "period_end": payment.period_end,
         "created_at": payment.created_at,
+        "refunded_amount_cents": refunded_amount_cents,
+        "net_amount_cents": payment.amount - refunded_amount_cents,
+        "remaining_refundable_cents": max(payment.amount - refunded_amount_cents, 0),
+        "refund_history": refund_history or [],
     }
 
 
@@ -354,7 +426,20 @@ def list_payments(
         raise HTTPException(status_code=404, detail="Player not found")
 
     payments = BillingService(db=db).list_payments_for_player(player_id)
-    return {"payments": [_payment_payload(payment) for payment in payments]}
+    refund_service = RefundService(db=db)
+    # Guardians may VIEW refund information for their own payments, but
+    # never the admin's internal note or which admin acted — only the
+    # admin-facing transactions endpoint includes those.
+    payloads = []
+    for payment in payments:
+        refunds = refund_service.list_refunds_for_payment(payment.stripe_invoice_id)
+        refunded_amount_cents = sum(r.amount_cents for r in refunds if r.status == "succeeded")
+        payloads.append(_payment_payload(
+            payment,
+            refunded_amount_cents=refunded_amount_cents,
+            refund_history=[_refund_payload(r, include_internal=False) for r in refunds],
+        ))
+    return {"payments": payloads}
 
 
 @router.post("/billing/subscriptions/{player_id}/pause")
@@ -423,7 +508,137 @@ def list_manual_payments(player_id: str, request: Request, db: Session = Depends
         raise HTTPException(status_code=404, detail="Player not found")
 
     payments = BillingService(db=db).list_manual_payments_for_player(player_id)
-    return {"payments": [_manual_payment_payload(payment) for payment in payments]}
+    refund_service = RefundService(db=db)
+    payloads = []
+    for payment in payments:
+        refunds = refund_service.list_refunds_for_manual_payment(payment.manual_payment_id)
+        refunded_amount_cents = sum(r.amount_cents for r in refunds if r.status == "succeeded")
+        payloads.append(_manual_payment_payload(
+            payment,
+            refunded_amount_cents=refunded_amount_cents,
+            refund_history=[_refund_payload(r, include_internal=False) for r in refunds],
+        ))
+    return {"payments": payloads}
+
+
+@router.post("/billing/payments/{stripe_invoice_id}/refund")
+def refund_payment(
+    stripe_invoice_id: str,
+    payload: RefundPaymentSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    # Refunds are a sensitive financial operation — admin-only, matching
+    # every other Payment Control action in this app (the closest
+    # equivalent this app has to a dedicated "payments.refund" permission,
+    # since it has no separate super-admin role to grant it to instead).
+    require_admin(request)
+
+    payment = db.get(PaymentDB, stripe_invoice_id)
+    if payment is None:
+        raise HTTPException(status_code=404, detail="Payment not found")
+
+    try:
+        refund = RefundService(db=db).create_stripe_refund(
+            stripe_invoice_id,
+            actor_user_id=request.state.current_user["user_id"],
+            refund_type=payload.refund_type,
+            amount_cents=payload.amount_cents,
+            reason=payload.reason,
+            internal_note=payload.internal_note,
+            idempotency_key=payload.idempotency_key,
+        )
+    except RefundError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    # The refund itself is already committed at this point — notifying the
+    # guardian is best-effort and must never turn an already-successful
+    # refund into a reported failure, so any lookup trouble here is
+    # swallowed rather than raised. A direct PlayerDB query (not
+    # PlayerService.get_player, which reconstructs the full assessment
+    # domain object) is also deliberately used, matching every other
+    # billing admin view's player-name lookup.
+    try:
+        subscription = db.get(SubscriptionDB, payment.stripe_subscription_id)
+        player = db.get(PlayerDB, payment.player_id)
+        player_name = (
+            f"{player.first_name_en} {player.last_name_en}"
+            if player is not None
+            else payment.player_id
+        )
+        if subscription is not None:
+            notify_refund_result(
+                db,
+                guardian_user_id=subscription.paying_user_id,
+                player_name=player_name,
+                refund=refund,
+                reference=stripe_invoice_id,
+            )
+    except Exception:
+        logger.exception("refund_guardian_notification_failed")
+
+    return _refund_payload(refund, include_internal=True)
+
+
+@router.post("/billing/manual-payments/{manual_payment_id}/refund")
+def refund_manual_payment(
+    manual_payment_id: str,
+    payload: RefundPaymentSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    manual_payment = db.get(ManualPaymentDB, manual_payment_id)
+    if manual_payment is None:
+        raise HTTPException(status_code=404, detail="Manual payment not found")
+
+    try:
+        refund = RefundService(db=db).create_manual_refund(
+            manual_payment_id,
+            actor_user_id=request.state.current_user["user_id"],
+            refund_type=payload.refund_type,
+            amount_cents=payload.amount_cents,
+            reason=payload.reason,
+            internal_note=payload.internal_note,
+            idempotency_key=payload.idempotency_key,
+        )
+    except RefundError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    # Same best-effort rule as the Stripe refund endpoint above: the
+    # refund is already committed, so a notification lookup problem is
+    # logged, never allowed to turn a successful refund into an error.
+    try:
+        guardian_link = (
+            db.query(GuardianPlayerLinkDB)
+            .filter(GuardianPlayerLinkDB.player_id == manual_payment.player_id)
+            .first()
+        )
+        player = db.get(PlayerDB, manual_payment.player_id)
+        player_name = (
+            f"{player.first_name_en} {player.last_name_en}"
+            if player is not None
+            else manual_payment.player_id
+        )
+        if guardian_link is not None:
+            notify_refund_result(
+                db,
+                guardian_user_id=guardian_link.guardian_user_id,
+                player_name=player_name,
+                refund=refund,
+                reference=manual_payment_id,
+            )
+    except Exception:
+        logger.exception("refund_guardian_notification_failed")
+
+    return _refund_payload(refund, include_internal=True)
+
+
+@router.get("/billing/admin/transactions")
+def list_transactions(request: Request, db: Session = Depends(get_db), status: str | None = None):
+    require_admin(request)
+    return {"transactions": BillingService(db=db).list_transactions(status_filter=status)}
 
 
 @router.get("/billing/membership-plans")

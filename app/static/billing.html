@@ -85,6 +85,14 @@
     button.remove-discount { background: white; border: 1px solid #69768a; color: #16233B !important; margin-left: 10px; }
     .discount-note { display: inline-block; margin-left: 10px; font-size: 13px; font-weight: 700; color: #b9790a; }
     .state { padding: 40px; text-align: center; color: #69768a; }
+    .payment-history { margin-top: 16px; }
+    .payment-history summary { cursor: pointer; font-size: 13px; font-weight: 700; color: #1265ed; }
+    .payment-history-row {
+      display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+      padding: 8px 0; border-bottom: 1px solid #eef1f5; font-size: 13px;
+    }
+    .payment-history-row:last-child { border-bottom: none; }
+    .refund-note { font-size: 12px; color: #b9790a; margin-left: 14px; }
   </style>
   <script src="/auth-client.js"></script>
 </head>
@@ -163,6 +171,13 @@
       return (statusData.membership_status || "unassigned").toLowerCase();
     }
 
+    const TRANSACTION_STATUS_LABELS = {
+      PAID: "Paid",
+      PARTIALLY_REFUNDED: "Partially refunded",
+      REFUNDED: "Refunded",
+      FAILED: "Failed",
+    };
+
     function formatMoney(cents, currency) {
       if (cents === null || cents === undefined) return "—";
       return new Intl.NumberFormat(undefined, {
@@ -195,6 +210,7 @@
 
       if (isComplimentary) {
         card.append(make("p", "muted", "This player has a complimentary membership — no payment is needed."));
+        await appendPaymentHistory(card, child.player_id);
         return card;
       }
 
@@ -337,7 +353,53 @@
         card.append(discountButton);
       }
 
+      await appendPaymentHistory(card, child.player_id);
+
       return card;
+    }
+
+    async function appendPaymentHistory(card, playerId) {
+      let stripePayments = [];
+      let manualPayments = [];
+      try {
+        const [stripeResponse, manualResponse] = await Promise.all([
+          fetch(`/billing/payments/${encodeURIComponent(playerId)}`),
+          fetch(`/billing/manual-payments/${encodeURIComponent(playerId)}`),
+        ]);
+        if (stripeResponse.ok) stripePayments = (await stripeResponse.json()).payments;
+        if (manualResponse.ok) manualPayments = (await manualResponse.json()).payments;
+      } catch (error) {
+        return;
+      }
+
+      const allPayments = [
+        ...stripePayments.map((p) => ({ ...p, _date: p.created_at, _method: "Stripe" })),
+        ...manualPayments.map((p) => ({ ...p, _date: p.payment_date, _method: p.method.replace(/_/g, " ") })),
+      ];
+      if (!allPayments.length) return;
+
+      allPayments.sort((a, b) => new Date(b._date) - new Date(a._date));
+
+      const details = make("details", "payment-history");
+      const summary = make("summary", "", `Payment History (${allPayments.length})`);
+      details.append(summary);
+
+      for (const payment of allPayments) {
+        const amount = payment.amount !== undefined ? payment.amount : payment.amount_cents;
+        const row = make("div", "payment-history-row");
+        row.append(make("span", "", `${formatMoney(amount, payment.currency)} — ${payment._method}`));
+        row.append(make("span", "", TRANSACTION_STATUS_LABELS[payment.status] || payment.status));
+        details.append(row);
+
+        for (const refund of payment.refund_history || []) {
+          const refundRow = make("div", "refund-note");
+          refundRow.textContent = `Refunded ${formatMoney(refund.amount_cents, refund.currency)} on ` +
+            new Date(refund.created_at).toLocaleDateString();
+          details.append(refundRow);
+        }
+      }
+
+      card.append(details);
     }
 
     async function init() {

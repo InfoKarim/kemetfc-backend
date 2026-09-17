@@ -4139,7 +4139,7 @@ def test_stripe_webhook_processes_paid_invoice_into_payment_history(monkeypatch)
     payments = history.json()["payments"]
     assert len(payments) == 1
     assert payments[0]["amount"] == 1500
-    assert payments[0]["status"] == "paid"
+    assert payments[0]["status"] == "PAID"
     assert payments[0]["hosted_invoice_url"] == "https://invoice.stripe.com/i/in_invoice_test"
 
 

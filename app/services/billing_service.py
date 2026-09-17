@@ -23,6 +23,7 @@ from app.db_models import (
     PlayerDB,
     PlayerMembershipDB,
     PromoCodeDB,
+    RefundDB,
     StripeCustomerMappingDB,
     StripeEventDB,
     SubscriptionDB,
@@ -1097,20 +1098,57 @@ class BillingService:
         renewal_cutoff = now + timedelta(days=14)
 
         online_payments = (
-            self.db.query(PaymentDB.player_id, PaymentDB.amount, PaymentDB.currency)
+            self.db.query(
+                PaymentDB.stripe_invoice_id,
+                PaymentDB.player_id,
+                PaymentDB.amount,
+                PaymentDB.currency,
+            )
             .filter(PaymentDB.status == "paid")
             .all()
         )
         manual_payments = (
             self.db.query(
+                ManualPaymentDB.manual_payment_id,
                 ManualPaymentDB.player_id,
                 ManualPaymentDB.amount_cents,
                 ManualPaymentDB.currency,
             ).all()
         )
 
-        online_total_cents = sum(amount for _, amount, _ in online_payments)
-        manual_total_cents = sum(amount for _, amount, _ in manual_payments)
+        # Refunds attributed to the payment they were issued against, so
+        # every figure below is NET (money actually kept), never gross —
+        # a refunded payment must never count as collected revenue.
+        refunded_by_payment_id = dict(
+            self.db.query(RefundDB.payment_id, func.coalesce(func.sum(RefundDB.amount_cents), 0))
+            .filter(RefundDB.status == "succeeded", RefundDB.payment_id.isnot(None))
+            .group_by(RefundDB.payment_id)
+            .all()
+        )
+        refunded_by_manual_payment_id = dict(
+            self.db.query(
+                RefundDB.manual_payment_id, func.coalesce(func.sum(RefundDB.amount_cents), 0)
+            )
+            .filter(RefundDB.status == "succeeded", RefundDB.manual_payment_id.isnot(None))
+            .group_by(RefundDB.manual_payment_id)
+            .all()
+        )
+
+        gross_payments_cents = sum(amount for _, _, amount, _ in online_payments) + sum(
+            amount for _, _, amount, _ in manual_payments
+        )
+        refunds_cents = sum(refunded_by_payment_id.values()) + sum(
+            refunded_by_manual_payment_id.values()
+        )
+
+        online_total_cents = sum(
+            amount - refunded_by_payment_id.get(invoice_id, 0)
+            for invoice_id, _, amount, _ in online_payments
+        )
+        manual_total_cents = sum(
+            amount - refunded_by_manual_payment_id.get(manual_id, 0)
+            for manual_id, _, amount, _ in manual_payments
+        )
 
         membership_by_player = {
             m.player_id: m for m in self.db.query(PlayerMembershipDB).all()
@@ -1157,10 +1195,12 @@ class BillingService:
             )
             team_bucket["total_cents"] += amount
 
-        for player_id, amount, currency in online_payments:
-            add_revenue(player_id, amount, currency)
-        for player_id, amount_cents, currency in manual_payments:
-            add_revenue(player_id, amount_cents, currency)
+        for invoice_id, player_id, amount, currency in online_payments:
+            net_amount = amount - refunded_by_payment_id.get(invoice_id, 0)
+            add_revenue(player_id, net_amount, currency)
+        for manual_id, player_id, amount_cents, currency in manual_payments:
+            net_amount = amount_cents - refunded_by_manual_payment_id.get(manual_id, 0)
+            add_revenue(player_id, net_amount, currency)
 
         upcoming = (
             self.db.query(SubscriptionDB)
@@ -1196,6 +1236,9 @@ class BillingService:
             })
 
         return {
+            "gross_payments_cents": gross_payments_cents,
+            "refunds_cents": refunds_cents,
+            "net_collected_revenue_cents": gross_payments_cents - refunds_cents,
             "revenue_by_plan": list(plan_totals.values()),
             "revenue_by_team": list(team_totals.values()),
             "manual_vs_online_cents": {
@@ -1204,6 +1247,111 @@ class BillingService:
             },
             "upcoming_renewals": upcoming_renewals,
         }
+
+    def list_transactions(self, status_filter: str | None = None) -> list[dict]:
+        """Every completed payment — Stripe and manual alike — as one flat,
+        refund-aware list for the admin Transactions view. Status is always
+        derived fresh from each payment's own refund ledger, never stored."""
+        from app.services.refund_service import derive_payment_status
+
+        players_by_id = {p.player_id: p for p in self.db.query(PlayerDB).all()}
+        guardian_by_player = {
+            link.player_id: link.guardian_user_id
+            for link in self.db.query(GuardianPlayerLinkDB).all()
+        }
+        guardians_by_id = {u.user_id: u for u in self.db.query(UserDB).all()}
+
+        def guardian_info(player_id: str) -> tuple[str | None, str | None]:
+            guardian_user_id = guardian_by_player.get(player_id)
+            guardian = guardians_by_id.get(guardian_user_id) if guardian_user_id else None
+            if guardian is None:
+                return None, None
+            name = (
+                f"{guardian.first_name or ''} {guardian.last_name or ''}".strip()
+                or guardian.username
+            )
+            return guardian_user_id, name
+
+        refunded_by_payment_id = dict(
+            self.db.query(RefundDB.payment_id, func.coalesce(func.sum(RefundDB.amount_cents), 0))
+            .filter(RefundDB.status == "succeeded", RefundDB.payment_id.isnot(None))
+            .group_by(RefundDB.payment_id)
+            .all()
+        )
+        refunded_by_manual_payment_id = dict(
+            self.db.query(
+                RefundDB.manual_payment_id, func.coalesce(func.sum(RefundDB.amount_cents), 0)
+            )
+            .filter(RefundDB.status == "succeeded", RefundDB.manual_payment_id.isnot(None))
+            .group_by(RefundDB.manual_payment_id)
+            .all()
+        )
+
+        transactions = []
+
+        for payment in self.db.query(PaymentDB).all():
+            refunded = refunded_by_payment_id.get(payment.stripe_invoice_id, 0)
+            player = players_by_id.get(payment.player_id)
+            guardian_user_id, guardian_name = guardian_info(payment.player_id)
+            transactions.append({
+                "transaction_id": payment.stripe_invoice_id,
+                "source": "stripe",
+                "player_id": payment.player_id,
+                "player_name": (
+                    f"{player.first_name_en} {player.last_name_en}"
+                    if player is not None
+                    else payment.player_id
+                ),
+                "guardian_user_id": guardian_user_id,
+                "guardian_name": guardian_name,
+                "amount_cents": payment.amount,
+                "currency": payment.currency,
+                "refunded_amount_cents": refunded,
+                "net_amount_cents": payment.amount - refunded,
+                "remaining_refundable_cents": max(payment.amount - refunded, 0),
+                "status": derive_payment_status(payment.status, payment.amount, refunded),
+                "method": "stripe",
+                "payment_date": payment.created_at,
+                "hosted_invoice_url": payment.hosted_invoice_url,
+                "_sort_key": payment.created_at,
+            })
+
+        for manual in self.db.query(ManualPaymentDB).all():
+            refunded = refunded_by_manual_payment_id.get(manual.manual_payment_id, 0)
+            player = players_by_id.get(manual.player_id)
+            guardian_user_id, guardian_name = guardian_info(manual.player_id)
+            transactions.append({
+                "transaction_id": manual.manual_payment_id,
+                "source": "manual",
+                "player_id": manual.player_id,
+                "player_name": (
+                    f"{player.first_name_en} {player.last_name_en}"
+                    if player is not None
+                    else manual.player_id
+                ),
+                "guardian_user_id": guardian_user_id,
+                "guardian_name": guardian_name,
+                "amount_cents": manual.amount_cents,
+                "currency": manual.currency,
+                "refunded_amount_cents": refunded,
+                "net_amount_cents": manual.amount_cents - refunded,
+                "remaining_refundable_cents": max(manual.amount_cents - refunded, 0),
+                "status": derive_payment_status("paid", manual.amount_cents, refunded),
+                "method": manual.method,
+                "payment_date": manual.payment_date,
+                "hosted_invoice_url": None,
+                "_sort_key": manual.recorded_at,
+            })
+
+        transactions.sort(key=lambda t: t["_sort_key"] or datetime.min, reverse=True)
+        for transaction in transactions:
+            del transaction["_sort_key"]
+
+        if status_filter:
+            wanted = status_filter.strip().upper()
+            transactions = [t for t in transactions if t["status"] == wanted]
+
+        return transactions
 
     def list_admin_billing_rows(self) -> list[dict]:
         players = self.db.query(PlayerDB).order_by(PlayerDB.first_name_en.asc()).all()

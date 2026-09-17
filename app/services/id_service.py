@@ -19,6 +19,7 @@ from app.db_models import (
     PrivacyRequestDB,
     PromoCodeDB,
     PromoCodeRedemptionDB,
+    RefundDB,
     SeasonDB,
     TeamDB,
     TrainingPlanDB,
@@ -50,6 +51,7 @@ ENTITY_CONFIG = {
     "promo_code": ("PROMO", PromoCodeDB),
     "promo_code_redemption": ("PROMORED", PromoCodeRedemptionDB),
     "family_discount_rule": ("FAMDISC", FamilyDiscountRuleDB),
+    "refund": ("REF", RefundDB),
 }
 
 
