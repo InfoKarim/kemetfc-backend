@@ -360,6 +360,7 @@
       ["/calendar-dashboard", "calendar"],
       ["/messages-page", "messaging"],
       ["/registrations-dashboard", "assessments"],
+      ["/tracking-analysis", "assessments"],
     ]);
 
     originalFetch("/auth/me", { credentials: "same-origin" })

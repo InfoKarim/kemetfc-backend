@@ -1103,6 +1103,15 @@ class PlayerAssessmentDB(Base):
         ForeignKey("users.user_id"),
         nullable=True,
     )
+    # Set only when this row was published FROM a Smart Soccer Camera
+    # tracking session's computed metrics/skill inference — traces an
+    # AI-assisted result back to its raw telemetry without every other
+    # (non-tracking) assessment row needing to know this feature exists.
+    tracking_session_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("tracking_sessions.session_id"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
@@ -1130,3 +1139,179 @@ class CoachMessageDB(Base):
         nullable=True,
     )
     updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class TrackingSessionDB(Base):
+    """One camera-tracking recording run from the iOS Smart Soccer Camera
+    app — the player is selected by the coach BEFORE this row exists
+    (see player_id: never null, never inferred), and tracking/gimbal
+    control is scoped to this single session only. Linked to a
+    PlayerAssessmentDB row (via tracking_session_id on that table) only
+    once the session's derived metrics are published — this row alone
+    represents the raw capture, independent of whether analysis ever
+    completes."""
+
+    __tablename__ = "tracking_sessions"
+
+    session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    coach_user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        index=True,
+    )
+    video_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("videos.video_id"),
+        nullable=True,
+        index=True,
+    )
+    tracking_mode: Mapped[str] = mapped_column(String)
+    gimbal_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    calibration_status: Mapped[str] = mapped_column(String, default="uncalibrated")
+    # A single linear scale factor (real-world meters per one normalized
+    # image-space unit of movement at the calibration plane), set only
+    # when a coach has measured two known reference points on the field
+    # before/after the session. Deliberately NOT a full homography —
+    # accurate only near the calibration plane, which is an explicit,
+    # documented limitation rather than a silently wrong "precise GPS"
+    # claim. None means every distance/speed metric for this session
+    # must be reported in image-space units, never meters.
+    calibration_scale_m_per_unit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String, default="recording", index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class TrackingSampleDB(Base):
+    """A single downsampled telemetry point (NOT one row per raw camera
+    frame — the iOS client batches at a bounded rate, see
+    TRACKING_SAMPLE_HZ) from a tracking session. Deliberately a plain
+    autoincrement integer primary key rather than a minted entity ID:
+    these rows are high-volume internal telemetry, never referenced
+    individually by a human or a URL, so the ID-minting machinery
+    (app/services/id_service.py) — built for human/UI-facing entities —
+    would be pure overhead here."""
+
+    __tablename__ = "tracking_samples"
+
+    sample_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tracking_sessions.session_id"),
+        index=True,
+    )
+    t_seconds: Mapped[float] = mapped_column(Float)
+    player_bbox: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    player_center: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    player_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    player_track_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ball_bbox: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    ball_center: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    ball_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ball_track_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Compact pose keypoints, sampled at a lower rate than bbox samples
+    # (see TRACKING_POSE_SAMPLE_HZ) — [{name, x, y, confidence}, ...] in
+    # normalized image-space coordinates, never a full body-pose tensor.
+    pose_keypoints: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    gimbal_state: Mapped[str] = mapped_column(String)
+    tracking_mode: Mapped[str] = mapped_column(String)
+    tracking_status: Mapped[str] = mapped_column(String)
+
+
+class TrackingEventDB(Base):
+    """A discrete diagnostic event during a tracking session (player
+    lost/reacquired, ball lost/reacquired, gimbal disconnected, thermal
+    warning, recording interrupted, ...) — the audit trail for point-in-
+    time failures that the continuous TrackingSampleDB stream is too
+    fine-grained to make easy to query."""
+
+    __tablename__ = "tracking_events"
+
+    event_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tracking_sessions.session_id"),
+        index=True,
+    )
+    occurred_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    event_type: Mapped[str] = mapped_column(String, index=True)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class TrackingFeatureSetDB(Base):
+    """The computed derived-feature series for one session — speed,
+    acceleration, direction-change events, player-ball distance, touch
+    events, pose angles — computed ONCE from TrackingSampleDB and cached
+    here so re-running metrics/skill inference never has to re-decode
+    raw samples. This is the "feature store" for this app: a clean,
+    versioned, structured representation, not raw video re-analysis."""
+
+    __tablename__ = "tracking_feature_sets"
+
+    session_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tracking_sessions.session_id"),
+        primary_key=True,
+    )
+    feature_schema_version: Mapped[str] = mapped_column(String)
+    features: Mapped[list] = mapped_column(JSON)
+    computed_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class MLModelRegistryDB(Base):
+    """Registry of every model (on-device Core ML, backend, or rule-based)
+    this platform can produce results with — the single source of truth
+    for which model_version produced a given assessment, so results stay
+    reproducible/comparable and a bad model can be safely rolled back by
+    flipping active/inactive rather than deleting anything."""
+
+    __tablename__ = "ml_model_registry"
+
+    model_id: Mapped[str] = mapped_column(String, primary_key=True)
+    model_name: Mapped[str] = mapped_column(String, index=True)
+    model_version: Mapped[str] = mapped_column(String)
+    model_type: Mapped[str] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, default="experimental", index=True)
+    deployment_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    training_dataset_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    evaluation_metrics: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    coreml_artifact_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    backend_artifact_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_by_user_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class CoachValidationLabelDB(Base):
+    """A qualified coach's own rating/flag on a tracking session or
+    assessment — kept structurally separate from AI-generated values
+    (PlayerAssessmentDB.raw_data / calculated_metrics) so the model never
+    learns only from its own previous outputs, and so a future training
+    pipeline can use this table as ground truth."""
+
+    __tablename__ = "coach_validation_labels"
+
+    label_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("tracking_sessions.session_id"),
+        index=True,
+    )
+    label_type: Mapped[str] = mapped_column(String, index=True)
+    value: Mapped[dict] = mapped_column(JSON)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    coach_user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime)

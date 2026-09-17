@@ -157,6 +157,7 @@ from app.routers import messaging as messaging_router
 from app.routers import player_assessments as player_assessments_router
 from app.routers import seasons as seasons_router
 from app.routers import teams as teams_router
+from app.routers import tracking as tracking_router
 from app.routers import training_plans as training_plans_router
 from app.routers import videos as videos_router
 
@@ -167,6 +168,7 @@ app.include_router(messaging_router.router)
 app.include_router(player_assessments_router.router)
 app.include_router(seasons_router.router)
 app.include_router(teams_router.router)
+app.include_router(tracking_router.router)
 app.include_router(training_plans_router.router)
 app.include_router(videos_router.router)
 
@@ -298,6 +300,7 @@ HTML_PAGE_PATHS = {
     "/billing",
     "/payment-control",
     "/payment-settings",
+    "/tracking-analysis",
 }
 
 FEATURE_PAGE_PATHS = {
@@ -328,6 +331,7 @@ FEATURE_PAGE_PATHS = {
     "/registrations-dashboard": "assessments",
     "/registrations": "assessments",
     "/create-player-from-registration": "players",
+    "/tracking-analysis": "assessments",
 }
 
 # Read-only /players/{player_id}/<suffix> sub-resources a guardian may view
@@ -368,6 +372,15 @@ def required_feature_for_path(path: str) -> str | None:
         return "training"
     if path.startswith("/analysis-jobs") or path.startswith("/videos"):
         return "videos"
+    if path.startswith("/tracking") or (
+        path.startswith("/players/") and path.endswith("/tracking-sessions")
+    ):
+        # "assessments", not "videos" — tracking sessions are an
+        # assessment artifact a guardian must be able to view for their
+        # own child (guardians get "assessments" by default, not
+        # "videos"); write actions are separately gated per-route via
+        # _require_coach_or_admin / require_admin regardless of this.
+        return "assessments"
     if path.startswith("/uploads/avatars"):
         return None
     if path.startswith("/uploads/drills"):
@@ -500,6 +513,12 @@ async def enforce_authentication(request: Request, call_next):
                 request.method == "GET"
                 and path.startswith("/analyses/")
                 and path.count("/") == 2
+            )
+            or (request.method == "GET" and path.startswith("/tracking/"))
+            or (
+                request.method == "GET"
+                and path.startswith("/players/")
+                and path.endswith("/tracking-sessions")
             )
         )
 

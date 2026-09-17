@@ -626,3 +626,88 @@ class UpdateCoachMessageSchema(BaseModel):
             if len(item) > 200:
                 raise ValueError("Each next-focus item must be 200 characters or fewer")
         return items
+
+
+# --- Smart Soccer Camera tracking -------------------------------------
+
+class CreateTrackingSessionSchema(BaseModel):
+    player_id: str = Field(min_length=1)
+    tracking_mode: Literal["player_lock", "ball_track", "smart_soccer"]
+    gimbal_model: str | None = Field(default=None, max_length=120)
+    calibration_scale_m_per_unit: float | None = Field(default=None, gt=0, le=1000)
+
+
+class TrackingSampleSchema(BaseModel):
+    t_seconds: float = Field(ge=0)
+    player_bbox: list[float] | None = None
+    player_center: list[float] | None = None
+    player_confidence: float | None = Field(default=None, ge=0, le=1)
+    player_track_id: int | None = None
+    ball_bbox: list[float] | None = None
+    ball_center: list[float] | None = None
+    ball_confidence: float | None = Field(default=None, ge=0, le=1)
+    ball_track_id: int | None = None
+    pose_keypoints: list[dict] | None = None
+    gimbal_state: str = Field(default="unknown", max_length=40)
+    tracking_mode: str = Field(default="smart_soccer", max_length=40)
+    tracking_status: str = Field(default="unknown", max_length=40)
+
+    @field_validator("player_bbox", "ball_bbox")
+    @classmethod
+    def _bbox_has_four_values(cls, value):
+        if value is not None and len(value) != 4:
+            raise ValueError("A bounding box must have exactly 4 values: [x, y, w, h]")
+        return value
+
+    @field_validator("player_center", "ball_center")
+    @classmethod
+    def _center_has_two_values(cls, value):
+        if value is not None and len(value) != 2:
+            raise ValueError("A center point must have exactly 2 values: [x, y]")
+        return value
+
+
+class IngestTrackingSamplesSchema(BaseModel):
+    samples: list[TrackingSampleSchema] = Field(min_length=1, max_length=500)
+
+
+class IngestTrackingEventSchema(BaseModel):
+    event_type: str = Field(min_length=1, max_length=60)
+    details: dict = Field(default_factory=dict)
+
+
+class CompleteTrackingSessionSchema(BaseModel):
+    video_id: str | None = Field(default=None, max_length=64)
+
+
+class PublishTrackingAssessmentSchema(BaseModel):
+    assessment_date: date | None = None
+
+
+class RecordCoachValidationLabelSchema(BaseModel):
+    label_type: Literal[
+        "ball_control_rating",
+        "agility_rating",
+        "dribbling_rating",
+        "assessment_quality",
+        "tracking_quality",
+        "incorrect_ai_metric_flag",
+    ]
+    value: dict
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class RegisterMLModelSchema(BaseModel):
+    model_name: str = Field(min_length=1, max_length=120)
+    model_version: str = Field(min_length=1, max_length=60)
+    model_type: Literal["on_device_vision", "on_device_coreml", "on_device_classical_cv", "backend", "rule_based"]
+    status: Literal["experimental", "active", "inactive", "deprecated"] = "experimental"
+    training_dataset_version: str | None = Field(default=None, max_length=120)
+    evaluation_metrics: dict | None = None
+    coreml_artifact_version: str | None = Field(default=None, max_length=120)
+    backend_artifact_version: str | None = Field(default=None, max_length=120)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class UpdateMLModelStatusSchema(BaseModel):
+    status: Literal["experimental", "active", "inactive", "deprecated"]

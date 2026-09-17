@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.db_models import (
     AnalysisDB,
     AssessmentRegistrationDB,
+    CoachValidationLabelDB,
     ContactMessageDB,
     DataRecordDB,
     DrillDB,
@@ -14,6 +15,7 @@ from app.db_models import (
     MatchDB,
     MembershipPlanDB,
     MLDatasetEntryDB,
+    MLModelRegistryDB,
     PlayerAssessmentDB,
     PlayerDB,
     PrivacyRequestDB,
@@ -22,6 +24,8 @@ from app.db_models import (
     RefundDB,
     SeasonDB,
     TeamDB,
+    TrackingEventDB,
+    TrackingSessionDB,
     TrainingPlanDB,
     VideoAnalysisJobDB,
     VideoDB,
@@ -52,6 +56,10 @@ ENTITY_CONFIG = {
     "promo_code_redemption": ("PROMORED", PromoCodeRedemptionDB),
     "family_discount_rule": ("FAMDISC", FamilyDiscountRuleDB),
     "refund": ("REF", RefundDB),
+    "tracking_session": ("TRK", TrackingSessionDB),
+    "tracking_event": ("TRKE", TrackingEventDB),
+    "ml_model": ("MODEL", MLModelRegistryDB),
+    "coach_validation_label": ("CVL", CoachValidationLabelDB),
 }
 
 
