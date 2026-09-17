@@ -39,6 +39,15 @@ import Foundation
 import Spatial
 import os.log
 
+public enum DockKitTestError: Error, LocalizedError {
+    case noAccessoryAttached
+    public var errorDescription: String? {
+        switch self {
+        case .noAccessoryAttached: return "No dock accessory is attached"
+        }
+    }
+}
+
 @MainActor
 public final class GimbalController: ObservableObject {
     private let log = Logger(subsystem: "com.kemetfc.tracker", category: "GimbalController")
@@ -51,6 +60,17 @@ public final class GimbalController: ObservableObject {
     public var speedProfile: TrackingSpeedProfile = .sport {
         didSet { applySpeedProfileLimits() }
     }
+
+    /// Failsafe (spec section: gimbal failure during an active
+    /// assessment must NEVER stop recording, and must NEVER silently
+    /// resume on its own): set once `track(_:cameraInformation:)` fails
+    /// this many times in a row, at which point updateTarget(...) stops
+    /// attempting further sends until resumeControlAfterFailsafe() is
+    /// called explicitly (a coach tap), even if the accessory reconnects
+    /// on its own in the meantime.
+    public var maxConsecutiveTrackFailuresBeforeFailsafe = 3
+    @Published public private(set) var isControlLost = false
+    private var consecutiveTrackFailures = 0
 
     private var accessory: DockAccessory?
     private var lastSendTime: CFTimeInterval = 0
@@ -129,6 +149,11 @@ public final class GimbalController: ObservableObject {
         cameraIntrinsics: matrix_float3x3?,
         referenceDimensions: CGSize
     ) {
+        // Failsafe engaged: recording continues regardless (this
+        // controller has no say over CameraCaptureManager), but gimbal
+        // motion attempts stop until a coach explicitly acknowledges and
+        // resumes — never silently, even if the accessory reconnects.
+        guard !isControlLost else { return }
         guard let accessory else { return }
 
         let now = CACurrentMediaTime()
@@ -158,10 +183,27 @@ public final class GimbalController: ObservableObject {
             defer { self.isSending = false }
             do {
                 try await accessory.track([observation], cameraInformation: cameraInfo)
+                self.consecutiveTrackFailures = 0
             } catch {
                 self.log.error("track(_:cameraInformation:) failed: \(error.localizedDescription)")
+                self.consecutiveTrackFailures += 1
+                if self.consecutiveTrackFailures >= self.maxConsecutiveTrackFailuresBeforeFailsafe {
+                    self.isControlLost = true
+                    self.log.error("Gimbal failsafe engaged after \(self.consecutiveTrackFailures) consecutive track() failures — recording continues; gimbal motion stopped until explicit resume.")
+                }
             }
         }
+    }
+
+    /// Explicit-only resume (spec: never automatic) — a coach
+    /// acknowledging the "GIMBAL CONTROL LOST" banner and choosing to
+    /// try again, typically after confirming the accessory is docked
+    /// again. Re-applies speed-profile limits since a fresh `attach(
+    /// accessory:)` may have occurred while control was lost.
+    public func resumeControlAfterFailsafe() {
+        consecutiveTrackFailures = 0
+        isControlLost = false
+        applySpeedProfileLimits()
     }
 
     /// "Center Gimbal" manual override (spec section 25) — an absolute
@@ -178,6 +220,32 @@ public final class GimbalController: ObservableObject {
         } catch {
             log.error("centerGimbal failed: \(error.localizedDescription)")
         }
+    }
+
+    /// DockKit Test Mode's manual single-shot send — deliberately NOT
+    /// rate-limited or failsafe-gated like updateTarget(...) (a coach
+    /// running Test Mode wants each tap's exact result, including its
+    /// exact error, not a silently-dropped call) and throws instead of
+    /// only logging, so the Test Mode UI can display the real error
+    /// text (spec: "inspect errors").
+    public func sendTestObservation(rect: NormalizedRect, captureDevice: AVCaptureDevice) async throws {
+        guard let accessory else {
+            throw DockKitTestError.noAccessoryAttached
+        }
+        let cameraInfo = DockAccessory.CameraInformation(
+            captureDevice: captureDevice.deviceType,
+            cameraPosition: captureDevice.position,
+            orientation: .landscapeRight,
+            cameraIntrinsics: nil,
+            referenceDimensions: CGSize(width: 1920, height: 1080)
+        )
+        let observation = DockAccessory.Observation(
+            identifier: 0,
+            type: .humanBody,
+            rect: CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height),
+            faceYawAngle: nil
+        )
+        try await accessory.track([observation], cameraInformation: cameraInfo)
     }
 
     /// Pauses active gimbal motor correction WITHOUT tearing down the

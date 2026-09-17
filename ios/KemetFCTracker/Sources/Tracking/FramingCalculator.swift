@@ -2,15 +2,15 @@
 //  FramingCalculator.swift
 //  KemetFCTracker
 //
-//  STATUS: Source implementation, unverified — see TrackTypes.swift
-//  header for the module-wide caveat. UNLIKE most of this module, the
-//  pure functions in this file take no Vision/DockKit/AVFoundation
-//  types at all and are exercised by
-//  Tests/FramingMathTests.swift — this file's *logic* has been checked
-//  by running those tests with `swift test` in a scratch SwiftPM
-//  package (not this app target, which needs Xcode/iOS SDK); see
-//  ios/KemetFCTracker/README.md for exactly what that proves and
-//  doesn't prove.
+//  STATUS: Compiled AND run with the real Swift 6.3.3 compiler on this
+//  machine (`swiftc`, standalone executable, NOT `swift test` — SwiftPM
+//  itself is broken in this Command-Line-Tools-only environment, its
+//  manifest fails to link; see ios/KemetFCTracker/README.md for exactly
+//  what this proves and doesn't prove and why the standalone-executable
+//  technique is used everywhere in this module instead). UNLIKE most of
+//  this module, the pure functions in this file take no Vision/DockKit/
+//  AVFoundation types at all, so this is possible outside Xcode. See
+//  Tests/FramingMathTests.swift's header for the exact pass count.
 //
 //  Pure math for: combining player+ball bounding boxes into one framing
 //  target (spec section 9), lead-room offset in the player's direction
@@ -21,6 +21,10 @@
 import Foundation
 
 public enum FramingCalculator {
+    /// Reported as `framing_algorithm_version` at tracking-session-create
+    /// time (spec section 14).
+    public static let algorithmVersion = "framing-calculator-v1"
+
     /// The combined player+ball region with configurable padding — the
     /// SMART SOCCER mode target (spec section 9). Returns nil only when
     /// neither box is available (nothing to frame).

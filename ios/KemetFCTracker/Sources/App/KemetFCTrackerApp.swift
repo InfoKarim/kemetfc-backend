@@ -54,28 +54,57 @@ struct RootView: View {
                 capture: session.cameraCaptureManager,
                 dockKit: session.dockKitManager,
                 coordinator: coordinator,
-                onTapToLock: { _ in },
+                onTapToLock: { point in
+                    // Phase 2 fix: this was a literal no-op — tap-to-lock
+                    // was completely disconnected end to end, not merely
+                    // hardcoded to frame-center. AssessmentTrackingView
+                    // has already converted the raw view tap into a
+                    // normalized camera-space point; the coordinator
+                    // supplies the matching detections/pixel buffer from
+                    // that same moment (see TrackingCoordinator
+                    // .latestDetections/.latestPixelBuffer) so the tap
+                    // handler never needs its own stale copy of either.
+                    guard let pixelBuffer = coordinator.latestPixelBuffer else { return }
+                    session.handlePlayerTap(point, detections: coordinator.latestDetections, pixelBuffer: pixelBuffer)
+                },
                 onStartAssessment: {
                     Task { await session.startAssessment(mode: .smartSoccer, speedProfile: .sport) }
                 },
                 onStopAssessment: {
                     Task { await session.stopAssessment() }
+                },
+                onConfirmPlayerTracked: { answer in
+                    Task { await session.confirmPlayerTracked(answer) }
                 }
             )
         } else {
             // Player confirmed, but startAssessment(...) (and therefore
             // trackingCoordinator) hasn't run yet — a real app shows a
             // "Connect Flow 2 Pro / press Start Assessment" screen here;
-            // kept as a plain button since that screen's design is a
-            // product decision, not a tracking-engineering one.
-            VStack(spacing: 16) {
-                Text("Player confirmed. Connect the Flow 2 Pro, then start the assessment.")
-                    .multilineTextAlignment(.center)
-                    .padding()
-                Button("Start Assessment") {
-                    Task { await session.startAssessment(mode: .smartSoccer, speedProfile: .sport) }
+            // kept minimal since that screen's design is a product
+            // decision, not a tracking-engineering one. This is also
+            // the natural place to reach Gimbal Diagnostics / DockKit
+            // Test Mode — exactly when a coach would want to sanity
+            // -check the gimbal BEFORE trusting it during a real
+            // assessment (spec: these screens must be reachable, not
+            // just written).
+            NavigationStack {
+                VStack(spacing: 16) {
+                    Text("Player confirmed. Connect the Flow 2 Pro, then start the assessment.")
+                        .multilineTextAlignment(.center)
+                        .padding()
+                    Button("Start Assessment") {
+                        Task { await session.startAssessment(mode: .smartSoccer, speedProfile: .sport) }
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    NavigationLink("Gimbal Diagnostics") {
+                        GimbalDiagnosticsView(dockKit: session.dockKitManager)
+                    }
+                    NavigationLink("DockKit Test Mode") {
+                        DockKitTestModeView(dockKit: session.dockKitManager, capture: session.cameraCaptureManager)
+                    }
                 }
-                .buttonStyle(.borderedProminent)
             }
         }
     }

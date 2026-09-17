@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api_schemas import (
     CompleteTrackingSessionSchema,
+    ConfirmPlayerTrackedSchema,
     CreateTrackingSessionSchema,
     IngestTrackingEventSchema,
     IngestTrackingSamplesSchema,
@@ -54,6 +55,13 @@ def _session_payload(session) -> dict:
         "status": session.status,
         "started_at": session.started_at,
         "ended_at": session.ended_at,
+        "player_detector_version": session.player_detector_version,
+        "ball_detector_version": session.ball_detector_version,
+        "ball_model_status": session.ball_model_status,
+        "pose_model_version": session.pose_model_version,
+        "tracker_algorithm_version": session.tracker_algorithm_version,
+        "framing_algorithm_version": session.framing_algorithm_version,
+        "ios_app_version": session.ios_app_version,
     }
 
 
@@ -126,6 +134,13 @@ def create_tracking_session(
             tracking_mode=payload.tracking_mode,
             gimbal_model=payload.gimbal_model,
             calibration_scale_m_per_unit=payload.calibration_scale_m_per_unit,
+            player_detector_version=payload.player_detector_version,
+            ball_detector_version=payload.ball_detector_version,
+            ball_model_status=payload.ball_model_status,
+            pose_model_version=payload.pose_model_version,
+            tracker_algorithm_version=payload.tracker_algorithm_version,
+            framing_algorithm_version=payload.framing_algorithm_version,
+            ios_app_version=payload.ios_app_version,
         )
     except TrackingError as error:
         raise HTTPException(status_code=400, detail=str(error))
@@ -318,6 +333,41 @@ def record_coach_validation_label(
         session_id=session_id,
         label_type=payload.label_type,
         value=payload.value,
+        notes=payload.notes,
+        coach_user_id=request.state.current_user["user_id"],
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    db.add(label)
+    db.commit()
+    db.refresh(label)
+    return _label_payload(label)
+
+
+@router.post("/tracking/sessions/{session_id}/confirm-player", status_code=201)
+def confirm_player_tracked(
+    session_id: str,
+    payload: ConfirmPlayerTrackedSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """The coach review step (spec section 29): after seeing the
+    session's Tracking Quality / Player Lock Coverage / Ball Coverage /
+    warnings, the coach explicitly confirms whether the RIGHT child was
+    tracked. A thin, purpose-built wrapper around the generic
+    coach-labels endpoint (same underlying CoachValidationLabelDB row,
+    label_type="correct_player_tracked") — this is real, valuable future
+    training-label ground truth, never inferred automatically."""
+    _require_coach_or_admin(request)
+    service = TrackingService(db=db)
+    session = service.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Tracking session not found")
+
+    label = CoachValidationLabelDB(
+        label_id=next_entity_id(db, "coach_validation_label"),
+        session_id=session_id,
+        label_type="correct_player_tracked",
+        value={"answer": payload.answer},
         notes=payload.notes,
         coach_user_id=request.state.current_user["user_id"],
         created_at=datetime.now(UTC).replace(tzinfo=None),

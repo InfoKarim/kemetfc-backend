@@ -635,6 +635,18 @@ class CreateTrackingSessionSchema(BaseModel):
     tracking_mode: Literal["player_lock", "ball_track", "smart_soccer"]
     gimbal_model: str | None = Field(default=None, max_length=120)
     calibration_scale_m_per_unit: float | None = Field(default=None, gt=0, le=1000)
+    # Model-version traceability (Phase 2) — the iOS client reports
+    # exactly what ran, never left for the backend to guess. Omitting
+    # ball_detector_version defaults ball_model_status to "missing"
+    # server-side (see TrackingService.create_session) rather than
+    # silently implying a ball model was present.
+    player_detector_version: str | None = Field(default=None, max_length=60)
+    ball_detector_version: str | None = Field(default=None, max_length=60)
+    ball_model_status: Literal["missing", "fallback_classical", "installed"] = "missing"
+    pose_model_version: str | None = Field(default=None, max_length=60)
+    tracker_algorithm_version: str | None = Field(default=None, max_length=60)
+    framing_algorithm_version: str | None = Field(default=None, max_length=60)
+    ios_app_version: str | None = Field(default=None, max_length=60)
 
 
 class TrackingSampleSchema(BaseModel):
@@ -692,8 +704,17 @@ class RecordCoachValidationLabelSchema(BaseModel):
         "assessment_quality",
         "tracking_quality",
         "incorrect_ai_metric_flag",
+        # Phase 2: the coach's own YES/NO/UNSURE confirmation that the
+        # session tracked the right child — future training-label ground
+        # truth for wrong-player-lock detection (see spec section 29).
+        "correct_player_tracked",
     ]
     value: dict
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class ConfirmPlayerTrackedSchema(BaseModel):
+    answer: Literal["yes", "no", "unsure"]
     notes: str | None = Field(default=None, max_length=1000)
 
 

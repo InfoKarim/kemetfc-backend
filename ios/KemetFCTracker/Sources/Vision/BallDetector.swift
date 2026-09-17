@@ -19,15 +19,23 @@
 //   1. `BallDetecting` — the protocol every detector implements, so
 //      swapping in a trained model later requires touching only
 //      TrackingCoordinator's initializer, never its tracking logic.
-//   2. `ClassicalCVBallDetector` — a real, working (once compiled)
-//      fallback using CIFilter-based color/circularity heuristics. Not
-//      a neural network. Genuinely detects a bright, roughly circular
-//      blob against grass — genuinely fails on similarly-colored/shaped
-//      objects (white cones, shoes, chalk lines) more often than a
-//      trained detector would. Registered in the backend's
+//   2. `ClassicalCVBallDetector` — a real, working, non-stub heuristic:
+//      converts the incoming frame to raw RGBA8 pixels and delegates to
+//      BallBlobDetector (Sources/Vision/BallBlobDetector.swift), a
+//      genuinely compiled-and-executed (8/8 synthetic checks passed —
+//      see that file's header) connected-component blob search. Not a
+//      neural network. Genuinely detects a bright, roughly circular,
+//      color-balanced blob against grass — genuinely fails on
+//      similarly-colored/shaped objects (white cones, chalk lines,
+//      socks) more often than a trained detector would; this is a real,
+//      documented limitation, not hidden. Registered in the backend's
 //      MLModelRegistryDB as "ball-detector" "classical-cv-v0.1",
 //      status="experimental" — never silently presented as equivalent
-//      to a trained model.
+//      to a trained model, and `ball_model_status` is reported to the
+//      backend as "fallback_classical" (never "installed") whenever
+//      this detector — rather than a real trained CoreMLBallDetector —
+//      is the one actually running, so the UI/telemetry can honestly
+//      show "BALL MODEL NOT INSTALLED" instead of implying completeness.
 //   3. `CoreMLBallDetector` — the integration point for a REAL trained
 //      model. Throws `.modelNotProvided` until you supply a compiled
 //      `.mlmodelc` and uncomment the VNCoreMLRequest wiring. See the
@@ -48,12 +56,22 @@ public protocol BallDetecting {
     /// tracking event it logs, so which detector produced a given
     /// session's ball data is always reconstructable later.
     var modelIdentifier: (name: String, version: String) { get }
+
+    /// Matches the backend's `TrackingSessionDB.ball_model_status`
+    /// literal exactly ("missing" | "fallback_classical" | "installed").
+    /// TrackingCoordinator reports this at session-create time so the
+    /// backend/UI can honestly show "BALL MODEL NOT INSTALLED" rather
+    /// than implying a trained model exists just because ball tracking
+    /// ran (spec: "Do NOT claim ball detection is complete").
+    var ballModelStatus: String { get }
+
     func detectBall(in pixelBuffer: CVPixelBuffer) throws -> BallDetection?
 }
 
 /// Color/circularity heuristic — NOT a trained model. See file header.
 public final class ClassicalCVBallDetector: BallDetecting {
     public let modelIdentifier: (name: String, version: String) = ("ball-detector", "classical-cv-v0.1")
+    public let ballModelStatus = "fallback_classical"
 
     private let context = CIContext()
 
@@ -69,11 +87,20 @@ public final class ClassicalCVBallDetector: BallDetecting {
         // cheap heuristic, not a neural network, and must stay cheap to
         // avoid competing with player/pose inference for the same frame
         // budget (spec section 26).
+        //
+        // Phase 2 fix: this previously called the non-existent API
+        // `CIImage.cgImage(context:)` (CIImage has no such method —
+        // CGImage rendering is done via `CIContext.createCGImage`).
+        // Caught only now, by finally typechecking this file with the
+        // real Swift compiler while wiring in the actual blob-search
+        // algorithm — it had never been typechecked before (see this
+        // file's original "unverified" status).
         let scale: CGFloat = 240 / max(width, height)
-        guard let small = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            .cgImage(context: context) else { return nil }
+        let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        guard let small = context.createCGImage(scaledImage, from: scaledImage.extent) else { return nil }
 
-        guard let candidate = Self.brightestRoughlyCircularBlob(in: small) else { return nil }
+        guard let buffer = Self.rgbaPixelBuffer(from: small),
+              let candidate = BallBlobDetector.findBrightRoughlyCircularBlob(in: buffer) else { return nil }
 
         return BallDetection(
             boundingBox: NormalizedRect(
@@ -90,21 +117,29 @@ public final class ClassicalCVBallDetector: BallDetecting {
         )
     }
 
-    /// Placeholder blob search — scans for a small, high-contrast,
-    /// roughly square (aspect ratio near 1:1) region. This is
-    /// deliberately NOT a full implementation (real thresholding/
-    /// connected-components code belongs here before shipping) — it's
-    /// scaffolding showing where that logic plugs in, kept short because
-    /// this whole class is explicitly a stand-in for a trained model,
-    /// not the production ball detector.
-    private static func brightestRoughlyCircularBlob(in image: CGImage) -> CGRect? {
-        // Real implementation: threshold on luminance + saturation,
-        // connected-component label, filter by size (2-6% of frame
-        // width for a ball at typical assessment framing distance) and
-        // aspect ratio (0.85-1.15), return the best-scoring blob's
-        // bounding box in `image`'s pixel coordinates. Left unimplemented
-        // here deliberately — see file header.
-        return nil
+    /// Renders a CGImage into a raw RGBA8 buffer so BallBlobDetector (pure
+    /// Foundation/CoreGraphics, no CoreImage dependency — see its header
+    /// for why that separation lets it be compiled and executed outside
+    /// Xcode) can run its connected-component search over real pixels.
+    private static func rgbaPixelBuffer(from image: CGImage) -> RGBAPixelBuffer? {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return nil }
+
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let cgContext = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        cgContext.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return RGBAPixelBuffer(width: width, height: height, bytes: bytes)
     }
 }
 
@@ -120,6 +155,13 @@ public final class ClassicalCVBallDetector: BallDetecting {
 ///      both conform to the same BallDetecting protocol.
 public final class CoreMLBallDetector: BallDetecting {
     public let modelIdentifier: (name: String, version: String)
+
+    // Deliberately "missing", not "installed": this class is the
+    // integration POINT for a real trained model, but detectBall()
+    // below still unconditionally throws .modelNotProvided until a real
+    // .mlmodelc is compiled in and the reference code is uncommented.
+    // Flip this to "installed" only in that same change — never before.
+    public let ballModelStatus = "missing"
 
     public init(modelVersion: String) {
         self.modelIdentifier = ("ball-detector", modelVersion)

@@ -1185,6 +1185,23 @@ class TrackingSessionDB(Base):
     status: Mapped[str] = mapped_column(String, default="recording", index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Model-version traceability (Phase 2) — every session records
+    # EXACTLY which model/algorithm versions produced its telemetry, so
+    # a later reprocessing or dispute always knows what actually ran.
+    # ball_model_status is the honest alternative to a silently-blank
+    # ball_detector_version: "missing" when no real (Core ML) ball model
+    # is installed on the device that recorded this session, so nobody
+    # can mistake an empty ball track for "the ball was never there"
+    # versus "there was no detector capable of finding it."
+    player_detector_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    ball_detector_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    ball_model_status: Mapped[str] = mapped_column(String, default="missing")
+    pose_model_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    tracker_algorithm_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    framing_algorithm_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    ios_app_version: Mapped[str | None] = mapped_column(String, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 

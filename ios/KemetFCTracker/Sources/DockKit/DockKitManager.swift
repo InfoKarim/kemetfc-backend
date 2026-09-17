@@ -48,6 +48,16 @@ public final class DockKitManager: ObservableObject {
     @Published public private(set) var lastError: String?
     @Published public private(set) var batteryLevel: Double?
     @Published public private(set) var firmwareVersion: String?
+    /// From DockAccessory.StateChange.trackingButtonEnabled — surfaced
+    /// for the Gimbal Diagnostics screen (spec: "accessory detected/
+    /// category/name/battery/firmware/tracking capability/current
+    /// state"). Whether the accessory's own physical tracking button is
+    /// currently usable; not the same thing as KEMET's own custom
+    /// tracking, which never uses Apple's system tracking at all (see
+    /// this file's header).
+    @Published public private(set) var trackingButtonEnabled: Bool?
+    @Published public private(set) var lastAccessoryName: String?
+    @Published public private(set) var lastAccessoryCategory: String?
 
     private var stateChangeTask: Task<Void, Never>?
     private var batteryTask: Task<Void, Never>?
@@ -88,12 +98,25 @@ public final class DockKitManager: ObservableObject {
     private func handle(stateChange: DockAccessory.StateChange) async {
         let accessory = stateChange.accessory
 
-        // Only react to a "tracking stand" category accessory — the
-        // Flow 2 Pro identifies itself this way. A different accessory
-        // category (if the user later plugs in something else DockKit
-        // supports) is deliberately ignored rather than silently
-        // treated as our gimbal.
+        // RESOLVED (Phase 2 audit) — this was flagged as an unverified
+        // assumption in the Phase 1 report. Re-checked against Apple's
+        // live docs: DockAccessory.Category has EXACTLY ONE documented
+        // case, .trackingStand — there is no other category to
+        // possibly confuse this with. Every DockKit-compatible
+        // accessory, Flow 2 Pro included, necessarily reports this
+        // category, since the enum defines nothing else. Insta360's own
+        // Flow 2 Pro DockKit documentation (onlinemanual.insta360.com,
+        // /flow2pro/en-us/operating-tutorials/track/apple-dockkit)
+        // confirms iOS 17.0+ (17.4+ recommended) and NFC-based pairing,
+        // but does not itself document a category value — moot, since
+        // no alternative exists in the API for it to be. This guard is
+        // effectively "is this a DockKit accessory at all," not a
+        // Flow-2-Pro-specific guess.
         guard accessory.identifier.category == .trackingStand else { return }
+
+        trackingButtonEnabled = stateChange.trackingButtonEnabled
+        lastAccessoryName = accessory.identifier.name
+        lastAccessoryCategory = String(describing: accessory.identifier.category)
 
         switch stateChange.state {
         case .docked:

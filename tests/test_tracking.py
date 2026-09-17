@@ -425,3 +425,93 @@ def test_admin_can_register_list_and_update_model_status():
     assert update_response.status_code == 200
     assert update_response.json()["status"] == "active"
     assert update_response.json()["deployment_date"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: model-version traceability + coach player-confirmation
+# ---------------------------------------------------------------------------
+
+def test_session_defaults_ball_model_status_to_missing_when_not_reported(client):
+    create_test_player(client, "TRK_P_NOVERSION")
+    session_id = create_session(client, "TRK_P_NOVERSION")
+    detail = client.get(f"/tracking/sessions/{session_id}").json()
+    assert detail["ball_model_status"] == "missing"
+    assert detail["ball_detector_version"] is None
+
+
+def test_session_persists_reported_model_versions(client):
+    create_test_player(client, "TRK_P_VERSIONS")
+    response = client.post(
+        "/tracking/sessions",
+        json={
+            "player_id": "TRK_P_VERSIONS",
+            "tracking_mode": "smart_soccer",
+            "player_detector_version": "vision-v1",
+            "ball_detector_version": "classical-cv-v0.1",
+            "ball_model_status": "fallback_classical",
+            "pose_model_version": "vision-v1",
+            "tracker_algorithm_version": "player-tracker-v1",
+            "framing_algorithm_version": "framing-calculator-v1",
+            "ios_app_version": "1.0.0",
+        },
+    )
+    assert response.status_code == 201
+    body = response.json()
+    assert body["ball_model_status"] == "fallback_classical"
+    assert body["player_detector_version"] == "vision-v1"
+    assert body["ios_app_version"] == "1.0.0"
+
+
+def test_coach_can_confirm_correct_player_tracked(client):
+    create_test_player(client, "TRK_P_CONFIRM")
+    session_id = create_session(client, "TRK_P_CONFIRM")
+
+    response = client.post(
+        f"/tracking/sessions/{session_id}/confirm-player",
+        json={"answer": "yes"},
+    )
+    assert response.status_code == 201
+    assert response.json()["label_type"] == "correct_player_tracked"
+    assert response.json()["value"] == {"answer": "yes"}
+
+    labels = client.get(f"/tracking/sessions/{session_id}/coach-labels").json()["labels"]
+    assert any(label["label_type"] == "correct_player_tracked" for label in labels)
+
+
+def test_guardian_cannot_confirm_player_tracked(client):
+    create_test_player(client, "TRK_P_CONFIRMDENY")
+    session_id = create_session(client, "TRK_P_CONFIRMDENY")
+    guardian = _create_role_client("trk.guardian.confirm", "GuardianPassword123!", "guardian")
+    response = guardian.post(
+        f"/tracking/sessions/{session_id}/confirm-player",
+        json={"answer": "no"},
+    )
+    assert response.status_code == 403
+
+
+def test_quality_gate_forces_review_required_when_id_switch_detected(client):
+    create_test_player(client, "TRK_P_SWITCH")
+    session_id = create_session(client, "TRK_P_SWITCH")
+
+    # 10Hz spacing (0.1s apart) — realistic telemetry density, and
+    # crucially well under tracking_quality.ID_SWITCH_MAX_DT_SECONDS
+    # (0.5s), so the injected jump below is actually evaluated rather
+    # than skipped as "a gap wide enough to be a legitimate
+    # re-acquisition." An earlier version of this test used 1-per-second
+    # samples (dt=1.0s) and the assertion failed on real execution
+    # because every pair was being skipped for exactly that reason —
+    # caught by actually running the test, not just reading the code.
+    samples = [make_sample(i * 0.1) for i in range(40)]
+    samples[20]["player_center"] = [0.95, 0.95]
+    client.post(f"/tracking/sessions/{session_id}/samples", json={"samples": samples})
+    client.post(f"/tracking/sessions/{session_id}/complete", json={})
+
+    quality = client.get(f"/tracking/sessions/{session_id}/quality").json()
+    assert quality["id_switch_risk_count"] >= 1
+    assert quality["outcome"] == "REVIEW_REQUIRED"
+
+    # publish_assessment still succeeds (REVIEW_REQUIRED is not
+    # INSUFFICIENT_DATA) but the published record honestly carries the
+    # review-required outcome for a coach to see, never silently upgraded.
+    publish_response = client.post(f"/tracking/sessions/{session_id}/publish", json={})
+    assert publish_response.status_code == 200

@@ -34,6 +34,14 @@ public struct PoseObservationResult {
 }
 
 public final class PlayerDetector {
+    /// Reported as `player_detector_version`/`pose_model_version` at
+    /// tracking-session-create time (spec section 14: model-version
+    /// traceability) — identifies these as Apple's built-in Vision
+    /// requests running on the OS's bundled model, NOT a KEMET-trained
+    /// one, so telemetry never implies a custom player/pose model exists.
+    public static let detectorVersion = "apple-vision-VNDetectHumanRectanglesRequest-ios13"
+    public static let poseModelVersion = "apple-vision-VNDetectHumanBodyPoseRequest-ios14"
+
     /// VNDetectHumanBodyPoseRequest joint names KEMET actually uses for
     /// interpretable movement metrics (spec section 3) — a deliberate
     /// subset, not every joint Vision can report, to keep

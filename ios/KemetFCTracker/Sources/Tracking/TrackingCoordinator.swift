@@ -29,6 +29,28 @@ public final class TrackingCoordinator: ObservableObject {
     @Published public private(set) var lastFramingTarget: NormalizedRect?
     @Published public private(set) var isPaused = false
 
+    /// The most recent frame's raw person detections and pixel buffer —
+    /// exposed so the tap-to-lock UI only needs to resolve a view tap
+    /// into a normalized camera-space point (via TapToLockConverter) and
+    /// hand it back here; it never needs to track detections/pixel
+    /// buffers itself. `latestPixelBuffer` is intentionally NOT
+    /// `@Published` (CVPixelBuffer retention/observation churn on every
+    /// inference frame would be wasteful) — callers read it only at the
+    /// moment of a tap, not reactively.
+    @Published public private(set) var latestDetections: [PersonDetection] = []
+    public private(set) var latestPixelBuffer: CVPixelBuffer?
+
+    /// Mirrors GimbalController.isControlLost — forwarded explicitly
+    /// (rather than exposing gimbalController itself) since
+    /// TrackingCoordinator's own @Published properties don't
+    /// automatically propagate a nested ObservableObject's changes to
+    /// SwiftUI. See GimbalController.swift's failsafe comment: recording
+    /// continues regardless; only gimbal motion stops.
+    @Published public private(set) var isGimbalControlLost = false
+    private var cancellables = Set<AnyCancellable>()
+
+    public let thermalManager = ThermalManager()
+
     // Field Test Mode telemetry (spec section 32) — visible only behind
     // an admin/debug flag in the UI, never shown to a parent/guardian.
     @Published public private(set) var inferenceFPS: Double = 0
@@ -61,6 +83,41 @@ public final class TrackingCoordinator: ObservableObject {
         self.ballDetector = ballDetector
         self.gimbalController = gimbalController
         self.telemetryUploader = telemetryUploader
+
+        gimbalController.$isControlLost
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] lost in self?.isGimbalControlLost = lost }
+            .store(in: &cancellables)
+    }
+
+    /// Explicit-only "Resume Gimbal Control" (spec: never automatic) —
+    /// see GimbalController.resumeControlAfterFailsafe().
+    public func resumeGimbalControl() {
+        gimbalController.resumeControlAfterFailsafe()
+    }
+
+    /// The exact model/algorithm identifiers active in THIS coordinator
+    /// instance, for the caller to report at tracking-session-create time
+    /// (spec section 14: model-version traceability) — reading these
+    /// from the live objects (rather than duplicating version strings at
+    /// the call site) keeps the reported values honest even if a
+    /// different ballDetector is injected.
+    public var modelVersionInfo: (
+        playerDetectorVersion: String,
+        ballDetectorVersion: String,
+        ballModelStatus: String,
+        poseModelVersion: String,
+        trackerAlgorithmVersion: String,
+        framingAlgorithmVersion: String
+    ) {
+        (
+            playerDetectorVersion: PlayerDetector.detectorVersion,
+            ballDetectorVersion: ballDetector.modelIdentifier.version,
+            ballModelStatus: ballDetector.ballModelStatus,
+            poseModelVersion: PlayerDetector.poseModelVersion,
+            trackerAlgorithmVersion: PlayerTracker.algorithmVersion,
+            framingAlgorithmVersion: FramingCalculator.algorithmVersion
+        )
     }
 
     public func setMode(_ newMode: TrackingMode) {
@@ -76,9 +133,16 @@ public final class TrackingCoordinator: ObservableObject {
     /// 6) — this is the ONLY way a player track is ever created. No
     /// automatic selection, no facial recognition, no database search.
     public func lockPlayer(at tap: NormalizedPoint, detections: [PersonDetection], pixelBuffer: CVPixelBuffer) {
-        guard let chosen = detections.min(by: { lhs, rhs in
-            lhs.boundingBox.center.distance(to: tap) < rhs.boundingBox.center.distance(to: tap)
-        }) else { return }
+        // Phase 2 fix: this previously always locked the NEAREST
+        // detection with a plain `min(by:)`, with no distance cutoff —
+        // meaning a tap on empty space far from everyone still silently
+        // locked whoever happened to be closest. TapToLockConverter
+        // .selectDetection (box-containment first, else nearest-within-
+        // tolerance, else nil) is the actual spec-mandated policy ("Do
+        // not lock an arbitrary person when the user taps empty space")
+        // and was already built + verified (see TapToLockConverter.swift)
+        // but never wired in here until now.
+        guard let chosen = TapToLockConverter.selectDetection(at: tap, among: detections) else { return }
 
         let signature = Self.appearanceSignature(for: chosen.boundingBox, in: pixelBuffer)
         playerTracker = PlayerTracker(targetTrackId: 1, initialBoundingBox: chosen.boundingBox, appearance: signature)
@@ -119,8 +183,14 @@ public final class TrackingCoordinator: ObservableObject {
         guard !isPaused else { return }
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
+        // Thermal management (spec: real, via ProcessInfo, never a
+        // fabricated proxy) widens the EFFECTIVE interval under
+        // pressure — recording/gimbal/UI are untouched either way,
+        // only the rate of ML inference work drops.
+        let effectiveIntervalSeconds = targetInferenceIntervalSeconds * thermalManager.inferenceIntervalMultiplier
+
         let now = CACurrentMediaTime()
-        guard now - lastInferenceTime >= targetInferenceIntervalSeconds else { return }
+        guard now - lastInferenceTime >= effectiveIntervalSeconds else { return }
         guard !isInferring else {
             droppedFrameCount += 1
             return
@@ -134,7 +204,7 @@ public final class TrackingCoordinator: ObservableObject {
             guard let self else { return }
             let result = await self.runInference(pixelBuffer: pixelBuffer)
             await MainActor.run {
-                self.apply(result: result, captureDevice: captureDevice, sessionElapsedSeconds: sessionElapsedSeconds)
+                self.apply(result: result, pixelBuffer: pixelBuffer, captureDevice: captureDevice, sessionElapsedSeconds: sessionElapsedSeconds)
                 self.isInferring = false
             }
         }
@@ -144,13 +214,31 @@ public final class TrackingCoordinator: ObservableObject {
         var people: [PersonDetection]
         var ball: BallDetection?
         var pose: [PoseKeypoint]
+        var timing: StageTiming
     }
 
+    /// Per-stage wall-clock durations (milliseconds) — real measured
+    /// values via CACurrentMediaTime() around each call, not estimates
+    /// (spec: "add performance instrumentation" around each pipeline
+    /// stage). Surfaced in Field Test Mode and attached to tracking
+    /// events so a slow stage on a real device is diagnosable from the
+    /// recorded telemetry after the fact, not just live.
+    public struct StageTiming: Sendable {
+        public var playerDetectionMs: Double
+        public var ballDetectionMs: Double
+        public var poseDetectionMs: Double
+        public var totalMs: Double
+    }
+
+    @Published public private(set) var lastStageTiming: StageTiming?
+
     nonisolated private func runInference(pixelBuffer: CVPixelBuffer) async -> InferenceResult {
+        let stageStart = CACurrentMediaTime()
         var people: [PersonDetection] = []
         var ball: BallDetection?
         var pose: [PoseKeypoint] = []
 
+        let playerStart = CACurrentMediaTime()
         do {
             people = try playerDetector.detectPeople(in: pixelBuffer, orientation: .right)
         } catch {
@@ -158,6 +246,8 @@ public final class TrackingCoordinator: ObservableObject {
             // motion-predicted tracking (handled in apply(result:)) and
             // keep going — never crash the session.
         }
+        let playerEnd = CACurrentMediaTime()
+
         do {
             if let detection = try ballDetector.detectBall(in: pixelBuffer) {
                 ball = detection
@@ -166,24 +256,41 @@ public final class TrackingCoordinator: ObservableObject {
             // Ball-model failure: continue recording and player
             // tracking regardless (spec section 24).
         }
+        let ballEnd = CACurrentMediaTime()
+
         do {
             pose = try playerDetector.detectPose(in: pixelBuffer, orientation: .right)
         } catch {
             // Pose-model failure: mark pose metrics unavailable for this
             // sample, never fail the whole frame (spec section 24).
         }
+        let poseEnd = CACurrentMediaTime()
 
-        return InferenceResult(people: people, ball: ball, pose: pose)
+        let timing = StageTiming(
+            playerDetectionMs: (playerEnd - playerStart) * 1000,
+            ballDetectionMs: (ballEnd - playerEnd) * 1000,
+            poseDetectionMs: (poseEnd - ballEnd) * 1000,
+            totalMs: (poseEnd - stageStart) * 1000
+        )
+
+        return InferenceResult(people: people, ball: ball, pose: pose, timing: timing)
     }
 
-    private func apply(result: InferenceResult, captureDevice: AVCaptureDevice, sessionElapsedSeconds: Double) {
-        let appearanceSignatures = result.people.map { _ in AppearanceSignature(meanColor: (128, 128, 128)) }
-        // NOTE: a real appearance signature needs the actual pixel
-        // buffer sampled within each bounding box — omitted here to
-        // keep this orchestration file's own diff focused; see
-        // Self.appearanceSignature(for:in:) below, which lockPlayer(at:)
-        // already uses, and wire the same call in for each detection
-        // here before shipping.
+    private func apply(result: InferenceResult, pixelBuffer: CVPixelBuffer, captureDevice: AVCaptureDevice, sessionElapsedSeconds: Double) {
+        latestDetections = result.people
+        latestPixelBuffer = pixelBuffer
+        lastStageTiming = result.timing
+
+        // Phase 2 fix: this previously built a flat neutral-gray
+        // signature for every detection (`AppearanceSignature(meanColor:
+        // (128,128,128))`) instead of sampling real pixels — which also
+        // referenced an API (`meanColor:`) that no longer exists after
+        // PlayerTracker.swift's Phase 2 two-region appearance rewrite
+        // (`torsoColor`/`legsColor`), so this file would not have
+        // compiled in Xcode as it stood. Now samples each candidate's
+        // actual torso/legs colors via Self.appearanceSignature(for:in:),
+        // the same real per-region sampling lockPlayer(at:) already uses.
+        let appearanceSignatures = result.people.map { Self.appearanceSignature(for: $0.boundingBox, in: pixelBuffer) }
 
         playerTracker?.update(detections: result.people, appearanceSignatures: appearanceSignatures, at: sessionElapsedSeconds)
         ballTracker.update(detections: result.ball.map { [$0] } ?? [], at: sessionElapsedSeconds)
@@ -264,14 +371,72 @@ public final class TrackingCoordinator: ObservableObject {
         inferenceFPS = Double(inferenceTimestamps.count)
     }
 
-    /// Crude mean-color "jersey" signature within a bounding box — see
-    /// AppearanceSignature's own documented precision caveat.
+    /// Real per-region mean-color "jersey" signature within a person's
+    /// bounding box, via CoreImage's CIAreaAverage filter (an on-GPU
+    /// reduction, not a manual per-pixel scan — appropriate here since
+    /// this runs once per detected person per inference frame, inside
+    /// the same frame budget as player/pose/ball detection). Splits the
+    /// box into an upper torso band (jersey) and lower legs band
+    /// (shorts+socks), matching AppearanceSignature's two-region model
+    /// (see PlayerTracker.swift for why single-flat-color wasn't
+    /// discriminative enough for same-kit collisions) — a thin
+    /// waistband gap between the two bands is deliberately excluded so
+    /// they don't blend. Still explicitly non-biometric: mean color
+    /// only, never a face or identity signal (spec sections 7, 9).
     nonisolated private static func appearanceSignature(for box: NormalizedRect, in pixelBuffer: CVPixelBuffer) -> AppearanceSignature {
-        // Real implementation: sample a small grid of pixels inside
-        // `box` from `pixelBuffer` (converted via CIImage) and average.
-        // Left as a documented stub with a neutral gray default — wire
-        // real pixel sampling in before shipping (see apply(result:)
-        // comment above for the exact call site that also needs it).
-        AppearanceSignature(meanColor: (128, 128, 128))
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let imageWidth = ciImage.extent.width
+        let imageHeight = ciImage.extent.height
+        guard imageWidth > 0, imageHeight > 0, box.width > 0, box.height > 0 else {
+            return AppearanceSignature(flatColor: (128, 128, 128))
+        }
+
+        // NormalizedRect is top-left origin (see PlayerDetector.swift's
+        // explicit Vision bottom-left -> top-left flip when building
+        // these boxes), but CIImage/CoreGraphics coordinates are
+        // bottom-left origin — flip Y here when converting to pixel
+        // space, the same conversion done in reverse there.
+        let pixelX = box.x * imageWidth
+        let pixelWidth = box.width * imageWidth
+        let pixelHeight = box.height * imageHeight
+        let boxBottomOriginY = imageHeight - (box.y * imageHeight) - pixelHeight
+
+        let torsoRect = CGRect(
+            x: pixelX, y: boxBottomOriginY + pixelHeight * 0.55,
+            width: pixelWidth, height: pixelHeight * 0.45
+        ).intersection(ciImage.extent)
+        let legsRect = CGRect(
+            x: pixelX, y: boxBottomOriginY,
+            width: pixelWidth, height: pixelHeight * 0.45
+        ).intersection(ciImage.extent)
+
+        let context = CIContext()
+        let torsoColor = averageColor(of: ciImage, in: torsoRect, context: context)
+        let legsColor = averageColor(of: ciImage, in: legsRect, context: context)
+        return AppearanceSignature(torsoColor: torsoColor, legsColor: legsColor)
+    }
+
+    /// Mean RGB of `extent` within `image`, via CIAreaAverage (an
+    /// on-GPU/Accelerate reduction, not a manual pixel loop). Returns
+    /// neutral gray for a degenerate (empty/off-frame) extent rather
+    /// than crashing — an out-of-frame box is a plausible edge case
+    /// (a person partially off-screen), not an error.
+    nonisolated private static func averageColor(of image: CIImage, in extent: CGRect, context: CIContext) -> (r: Double, g: Double, b: Double) {
+        guard extent.width > 0, extent.height > 0,
+              let filter = CIFilter(name: "CIAreaAverage") else { return (128, 128, 128) }
+        filter.setValue(image, forKey: kCIInputImageKey)
+        filter.setValue(CIVector(cgRect: extent), forKey: kCIInputExtentKey)
+        guard let outputImage = filter.outputImage else { return (128, 128, 128) }
+
+        var bitmap = [UInt8](repeating: 0, count: 4)
+        context.render(
+            outputImage,
+            toBitmap: &bitmap,
+            rowBytes: 4,
+            bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+            format: .RGBA8,
+            colorSpace: nil
+        )
+        return (Double(bitmap[0]), Double(bitmap[1]), Double(bitmap[2]))
     }
 }

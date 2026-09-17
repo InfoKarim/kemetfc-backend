@@ -21,10 +21,15 @@ public struct AssessmentTrackingView: View {
     @State private var candidateDetections: [PersonDetection] = []
     @State private var isFieldTestMode = false
     @State private var isRecording = false
+    @State private var showPlayerTrackedConfirmation = false
 
     let onTapToLock: (NormalizedPoint) -> Void
     let onStartAssessment: () -> Void
     let onStopAssessment: () -> Void
+    /// Coach review workflow (spec section 16) — "Correct Player
+    /// Tracked: YES/NO/UNSURE", posted to the existing, tested backend
+    /// endpoint via AssessmentSessionViewModel.confirmPlayerTracked(_:).
+    let onConfirmPlayerTracked: (String) -> Void
 
     public init(
         capture: CameraCaptureManager,
@@ -32,7 +37,8 @@ public struct AssessmentTrackingView: View {
         coordinator: TrackingCoordinator,
         onTapToLock: @escaping (NormalizedPoint) -> Void,
         onStartAssessment: @escaping () -> Void,
-        onStopAssessment: @escaping () -> Void
+        onStopAssessment: @escaping () -> Void,
+        onConfirmPlayerTracked: @escaping (String) -> Void
     ) {
         self.capture = capture
         self.dockKit = dockKit
@@ -40,31 +46,68 @@ public struct AssessmentTrackingView: View {
         self.onTapToLock = onTapToLock
         self.onStartAssessment = onStartAssessment
         self.onStopAssessment = onStopAssessment
+        self.onConfirmPlayerTracked = onConfirmPlayerTracked
     }
 
     public var body: some View {
-        ZStack {
-            CameraPreviewRepresentable(session: capture.session)
-                .ignoresSafeArea()
-                .overlay(trackingOverlay)
-                .onTapGesture { location in
-                    // Converting a raw view-space tap into a normalized
-                    // (0...1) image-space point is display-layer glue
-                    // (needs the actual preview layer's videoRect) —
-                    // shown as a placeholder call here; wire the real
-                    // AVCaptureVideoPreviewLayer.captureDevicePointConverted
-                    // conversion in CameraPreviewRepresentable before
-                    // shipping.
-                    onTapToLock(NormalizedPoint(x: 0.5, y: 0.5))
-                }
+        GeometryReader { proxy in
+            ZStack {
+                CameraPreviewRepresentable(session: capture.session)
+                    .ignoresSafeArea()
+                    .overlay(trackingOverlay)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        // Phase 2 fix: this previously hardcoded every
+                        // tap to frame-center (`NormalizedPoint(x: 0.5,
+                        // y: 0.5)`), and the view/viewModel wiring for
+                        // this callback was a literal no-op (`{ _ in }`
+                        // in KemetFCTrackerApp.swift) — tap-to-lock did
+                        // not exist end to end. SpatialTapGesture (not
+                        // plain onTapGesture, which provides no
+                        // location) gives the real view-space point;
+                        // TapToLockConverter.normalizedCameraPoint
+                        // inverts the preview layer's aspect-fill crop
+                        // using the view's ACTUAL size (from this
+                        // GeometryReader) and the capture manager's
+                        // negotiated format (never a guessed 1920x1080).
+                        SpatialTapGesture()
+                            .onEnded { value in
+                                guard let cameraPoint = TapToLockConverter.normalizedCameraPoint(
+                                    tapPoint: value.location,
+                                    viewSize: proxy.size,
+                                    videoDimensions: capture.activeVideoDimensions
+                                ) else { return }
+                                onTapToLock(cameraPoint)
+                            }
+                    )
 
-            VStack {
-                topStatusBar
-                Spacer()
-                if isFieldTestMode { fieldTestOverlay }
-                bottomControls
+                VStack {
+                    topStatusBar
+                    if let warning = coordinator.thermalManager.userFacingWarning {
+                        Text(warning)
+                            .font(.caption2)
+                            .bold()
+                            .padding(6)
+                            .frame(maxWidth: .infinity)
+                            .background(.orange.opacity(0.85))
+                            .foregroundStyle(.white)
+                    }
+                    Spacer()
+                    if isFieldTestMode { fieldTestOverlay }
+                    bottomControls
+                }
+                .padding()
             }
-            .padding()
+        }
+        .confirmationDialog(
+            "Was the correct player tracked?",
+            isPresented: $showPlayerTrackedConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Yes") { onConfirmPlayerTracked("yes") }
+            Button("No") { onConfirmPlayerTracked("no") }
+            Button("Unsure") { onConfirmPlayerTracked("unsure") }
+            Button("Skip", role: .cancel) {}
         }
     }
 
@@ -97,11 +140,35 @@ public struct AssessmentTrackingView: View {
     private var topStatusBar: some View {
         HStack {
             gimbalStatusBadge
+            ballModelStatusBadge
             Spacer()
             if isRecording {
                 Label("REC", systemImage: "circle.fill").foregroundStyle(.red).bold()
             }
         }
+    }
+
+    /// Honest, always-visible exposure of what ball detection actually
+    /// is right now (spec: "The app should visibly expose: BALL MODEL
+    /// NOT INSTALLED" — never silently imply a trained model exists just
+    /// because ball tracking runs at all). Read once from the
+    /// coordinator's ballDetector, which does not change for the
+    /// lifetime of a session.
+    @ViewBuilder
+    private var ballModelStatusBadge: some View {
+        let status = coordinator.modelVersionInfo.ballModelStatus
+        switch status {
+        case "installed":
+            EmptyView() // A real trained model is active — no caveat needed.
+        case "fallback_classical":
+            statusBadge("BALL: EXPERIMENTAL (NO TRAINED MODEL)", color: .orange)
+        default: // "missing"
+            statusBadge("BALL MODEL NOT INSTALLED", color: .red)
+        }
+    }
+
+    private func statusBadge(_ text: String, color: Color) -> some View {
+        Text(text).font(.caption2).bold().padding(6).background(color.opacity(0.85)).foregroundStyle(.white).clipShape(Capsule())
     }
 
     private var gimbalStatusBadge: some View {
@@ -131,11 +198,32 @@ public struct AssessmentTrackingView: View {
         }
     }
 
+    /// Gimbal failsafe banner — recording is UNAFFECTED (CameraCapture
+    /// Manager is entirely separate from DockKit), only gimbal motion
+    /// has stopped. Resume is an explicit coach tap, never automatic,
+    /// even once the accessory reconnects on its own (spec: gimbal
+    /// failure must never silently resume).
+    @ViewBuilder
+    private var gimbalFailsafeBanner: some View {
+        if coordinator.isGimbalControlLost {
+            VStack(spacing: 8) {
+                Text("GIMBAL CONTROL LOST — RECORDING CONTINUES").bold()
+                Button("Resume Gimbal Control") { coordinator.resumeGimbalControl() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding()
+            .frame(maxWidth: .infinity)
+            .background(.orange.opacity(0.9))
+            .foregroundStyle(.white)
+        }
+    }
+
     // MARK: - Bottom controls
 
     private var bottomControls: some View {
         VStack(spacing: 12) {
             playerLostBanner
+            gimbalFailsafeBanner
 
             Picker("Mode", selection: Binding(
                 get: { coordinator.mode },
@@ -153,8 +241,14 @@ public struct AssessmentTrackingView: View {
                 }
                 Button("Center Gimbal") { coordinator.centerGimbal() }
                 Button(isRecording ? "Stop Assessment" : "Start Assessment") {
+                    let wasRecording = isRecording
                     isRecording.toggle()
-                    isRecording ? onStartAssessment() : onStopAssessment()
+                    if wasRecording {
+                        onStopAssessment()
+                        showPlayerTrackedConfirmation = true
+                    } else {
+                        onStartAssessment()
+                    }
                 }
                 .bold()
                 .foregroundStyle(isRecording ? .red : .green)
@@ -181,6 +275,11 @@ public struct AssessmentTrackingView: View {
             Text("Gimbal: \(String(describing: dockKit.connectionState))")
             if let battery = dockKit.batteryLevel {
                 Text(String(format: "Gimbal battery: %.0f%%", battery * 100))
+            }
+            Text("Thermal state: \(String(describing: coordinator.thermalManager.thermalState))")
+            Text("Ball model: \(coordinator.modelVersionInfo.ballModelStatus)")
+            if let timing = coordinator.lastStageTiming {
+                Text(String(format: "Player: %.1fms  Ball: %.1fms  Pose: %.1fms  Total: %.1fms", timing.playerDetectionMs, timing.ballDetectionMs, timing.poseDetectionMs, timing.totalMs))
             }
         }
         .font(.system(.caption, design: .monospaced))

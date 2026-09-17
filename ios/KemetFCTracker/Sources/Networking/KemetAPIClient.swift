@@ -68,6 +68,27 @@ public final class KemetAPIClient {
         try await request(path: path, method: "GET", body: Optional<Int>.none, as: type)
     }
 
+    /// Exposed for VideoUploadManager, which needs a raw URLRequest (not
+    /// this client's own JSON-body `request(...)`) to attach a
+    /// multipart/form-data body and stream it via
+    /// `URLSession.upload(for:fromFile:)` — this returns the SAME
+    /// base-URL + CSRF-header construction every other request uses,
+    /// so multipart uploads authenticate identically to JSON requests.
+    public func authenticatedRequest(path: String, method: String) -> URLRequest {
+        var urlRequest = URLRequest(url: configuration.baseURL.appendingPathComponent(path))
+        urlRequest.httpMethod = method
+        if let csrfToken, method != "GET" {
+            urlRequest.setValue(csrfToken, forHTTPHeaderField: "X-CSRF-Token")
+        }
+        return urlRequest
+    }
+
+    /// Exposed for VideoUploadManager's own `session.upload(for:fromFile:
+    /// delegate:)` call, which needs the SAME URLSession (and therefore
+    /// the same cookie storage/session) this client uses for every other
+    /// request — never a separate, differently-configured session.
+    public var underlyingSession: URLSession { session }
+
     private func request<Body: Encodable, Response: Decodable>(
         path: String,
         method: String,
@@ -112,7 +133,7 @@ public final class KemetAPIClient {
         }
     }
 
-    private static func validate(response: URLResponse, data: Data) throws {
+    static func validate(response: URLResponse, data: Data) throws {
         guard let httpResponse = response as? HTTPURLResponse else { return }
         guard (200...299).contains(httpResponse.statusCode) else {
             if httpResponse.statusCode == 401 { throw KemetAPIError.notAuthenticated }

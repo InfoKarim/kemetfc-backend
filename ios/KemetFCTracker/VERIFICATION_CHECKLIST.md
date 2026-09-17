@@ -1,121 +1,202 @@
 # Xcode + Physical Hardware Verification Checklist
 
-Nothing in this checklist has been run in this session — no full Xcode,
-no iPhone, no Flow 2 Pro were available. This is the exact sequence to
-run through on your own machine/devices before trusting this code.
+Nothing past "Build" has been run in this session — no full Xcode, no
+iPhone, no Flow 2 Pro were available (Command Line Tools only; see
+README.md). This is the exact sequence to run through on real hardware
+before trusting this code, structured as the Phase 2 spec requested:
+Stage A (Basic iPhone) → B (Flow 2 Pro) → C (Player Lock) → D (Ball) →
+E (Smart Soccer).
 
-## Stage 0 — Build
+## Build
 
-- [ ] Follow `README.md`'s "Setting up the real Xcode project" section.
-- [ ] `⌘B` in Xcode. Fix every compile error. Expect at least the
-      "Known gaps" items in the README to need real code, not just a
-      config fix.
-- [ ] Run `⌘U` (unit tests) — confirm `FramingMathTests` all pass in
-      Xcode's own XCTest runner (they already passed as a standalone
-      `swiftc` executable in this session; this step confirms they also
-      pass through the actual XCTest machinery, which is a different
-      code path).
+- [ ] `xcodegen generate` from `ios/KemetFCTracker/project.yml` (or
+      follow README.md's manual fallback), then `open
+      KemetFCTracker.xcodeproj`.
+- [ ] `⌘B`. Fix every compile error — expect at least a few; see
+      README.md's "Bugs found by review or execution" for the ones
+      already caught without a compiler, and "Known gaps" for what's
+      still genuinely unimplemented (native login, QR scan).
+- [ ] `⌘U` — confirm ALL of `FramingMathTests`, `TapToLockConverterTests`,
+      `PlayerTrackerTests`, `BallBlobDetectorTests` pass in Xcode's own
+      XCTest runner. Every one of these already passed as a standalone
+      `swiftc` executable in this session (see each file's header for
+      exact pass counts and, for PlayerTracker, the 3 real bugs that
+      standalone run found and led to fixing); this step confirms they
+      also pass through the actual XCTest machinery, a different code
+      path that could theoretically diverge (it shouldn't, but hasn't
+      been checked).
 
-## Stage 1 — Simulator (proves UI/logic wiring only — DockKit/camera do NOT work in Simulator)
+## Simulator (UI/logic wiring only — DockKit/camera do NOT work here)
 
 - [ ] App launches, `PlayerSelectionView` appears.
-- [ ] Search returns players once `searchPlayers` is wired to a real
-      `GET /players?search=...` call.
-- [ ] Confirming a player transitions to the "Connect gimbal / Start
-      Assessment" screen.
 - [ ] `DockKitManager.connectionState` correctly shows
-      `GIMBAL NOT FOUND` (Simulator has no dock hardware — this is the
-      expected, not a bug).
+      `GIMBAL NOT FOUND` (Simulator has no dock hardware — expected).
+- [ ] `GimbalDiagnosticsView` and `DockKitTestModeView` both render
+      without crashing, showing "Not connected"/placeholder values.
 
-## Stage 2 — Real iPhone 17 Pro Max, no gimbal
+## Stage A — Basic iPhone, no gimbal
 
 - [ ] Camera permission prompt appears on first launch; denying it
       surfaces `lastError` in the UI rather than crashing.
 - [ ] `CameraCaptureManager.selectBestFormat` picks a real resolution/
-      frame rate — log or breakpoint `activeFormatDescription` and
-      `effectiveFrameRate` and confirm they're sane (not 0, not a
-      hard-coded fallback).
+      frame rate — confirm `activeFormatDescription` and
+      `activeVideoDimensions` are sane (non-zero, matching the actual
+      negotiated format, not a hard-coded guess).
 - [ ] Live camera preview renders in `AssessmentTrackingView`.
-- [ ] `PlayerDetector.detectPeople` draws a green box around at least
-      one real person standing in frame — confirms Vision inference
-      actually runs on-device.
+- [ ] Tap a real person on screen: confirm the actual tapped person
+      locks, NOT frame-center and NOT whoever happens to be closest —
+      this specifically exercises the Phase 2 fix wiring
+      `TapToLockConverter` through `SpatialTapGesture` →
+      `TrackingCoordinator.lockPlayer`. Tap empty space away from
+      everyone: confirm NOTHING locks (previously this silently locked
+      the nearest person regardless of distance — confirm that bug is
+      actually gone on a real device, not just in the standalone test).
 - [ ] `PlayerDetector.detectPose` returns non-empty keypoints for the
       locked player — confirms `VNDetectHumanBodyPoseRequest` works and
-      `jointName.rawValue.rawValue` (flagged as the least-verified
-      single line in this codebase — see `PlayerDetector.swift`) produces
-      sane joint name strings, not garbage.
-- [ ] Tap-to-lock actually locks the tapped person, not a different one
-      — this requires fixing the `NormalizedPoint(x: 0.5, y: 0.5)`
-      placeholder in `AssessmentTrackingView` first (see README "Known
-      gaps").
+      `jointName.rawValue.rawValue` (flagged as one of the least
+      independently-verified lines in this codebase) produces sane
+      joint name strings, not garbage.
 - [ ] Start Assessment records a real, playable `.mov` file even with
       tracking/inference running simultaneously.
 - [ ] Force an inference failure (e.g. cover the camera) mid-recording
-      — confirm the recording keeps running (spec requirement: "Never
-      drop the assessment video simply because ML inference temporarily
-      fails").
-- [ ] Field Test Mode overlay shows a plausible, non-zero
-      `Inference FPS`.
-- [ ] Leave the app running 10+ minutes outdoors in direct sun — check
-      `ProcessInfo.processInfo.thermalState` (not yet wired into the UI
-      — add this before a real field trial) and confirm the app doesn't
-      crash or freeze under thermal pressure.
+      — confirm the recording keeps running (spec: "Never drop the
+      assessment video simply because ML inference temporarily fails").
+- [ ] Stop Assessment: confirm the recording actually uploads via
+      `POST /videos/upload` (watch `videoUploadState` — PREPARING →
+      UPLOADING_VIDEO(progress) → PROCESSING) and the tracking session
+      completes. This exercises `VideoUploadManager`, which has never
+      sent a byte over a real network before this test.
+- [ ] Kill the network mid-upload (airplane mode) — confirm the upload
+      retries with backoff for transport errors, and confirm a
+      genuinely invalid request (e.g. corrupt the metadata to test a
+      4xx) does NOT retry.
+- [ ] Field Test Mode overlay shows plausible, non-zero
+      `Inference FPS` and non-zero per-stage timings (Player/Ball/Pose/
+      Total ms) — confirms the Phase 2 performance instrumentation is
+      measuring something real, not always reporting 0.
+- [ ] Drain the battery below 15% (or simulate via a low-battery test
+      device) with the phone unplugged, then try Start Assessment —
+      confirm the pre-flight check blocks it with a clear message
+      rather than silently starting and failing mid-recording. Fill
+      device storage near-full and repeat for the storage pre-check.
+- [ ] Leave the app running 10+ minutes outdoors in direct sun. Confirm
+      Field Test Mode's "Thermal state" line progresses past `nominal`
+      under real thermal load, confirm inference visibly slows (wider
+      effective interval) rather than the app crashing or freezing, and
+      confirm recording is NEVER stopped by this app itself.
 
-## Stage 3 — Real iPhone 17 Pro Max + real Insta360 Flow 2 Pro (the part that actually matters)
+## Stage B — Real iPhone + real Insta360 Flow 2 Pro, DockKit Test Mode
 
-This is the stage nothing in this session could touch at all.
+Open `DockKitTestModeView` (NOT the soccer tracking screen) for this
+stage — it exercises DockKit in isolation, with no player/ball tracking
+logic that could obscure which layer a problem is in.
 
 - [ ] Mount the iPhone on the Flow 2 Pro, power it on. Confirm
       `DockKitManager.connectionState` transitions to `GIMBAL CONNECTED`
-      (`DockAccessory.State.docked` actually fires).
-- [ ] Confirm `DockAccessory.identifier.category == .trackingStand`
-      really matches the Flow 2 Pro — if Insta360 reports a different
-      category, `DockKitManager.handle(stateChange:)`'s guard will
-      silently ignore it. **This is an unverified assumption and the
-      single most likely reason this whole pipeline could silently do
-      nothing on real hardware.**
+      (`DockAccessory.State.docked` actually fires) and
+      `GimbalDiagnosticsView` shows a real name/battery/firmware —
+      not placeholders.
+- [ ] `DockAccessory.identifier.category == .trackingStand` — Phase 2
+      resolved this as "the only category that exists," so this should
+      always match any DockKit accessory; confirm it actually does on
+      the real Flow 2 Pro (a mismatch here would mean Apple's API
+      surface has changed since this was verified against their docs).
+- [ ] Tap "Attach Test Controller", then "Center Gimbal" — confirm the
+      Flow 2 Pro physically moves to its center orientation. This is
+      the FIRST real-hardware confirmation that this app can move the
+      gimbal AT ALL.
+- [ ] Tap "Move Target: Left" / "Center" / "Right" — confirm the gimbal
+      physically rotates toward each corresponding position.
+- [ ] Toggle "Stream synthetic sweep" — confirm smooth, continuous
+      gimbal motion following the sweep, and "Stop" halts it cleanly.
+- [ ] Force a DockKit error (e.g. undock mid-stream) — confirm the
+      Test Mode screen's "Last error" field shows the REAL thrown error
+      text, not a swallowed/generic failure.
+- [ ] Undock and re-dock the accessory — confirm `DockKitManager`
+      transitions through `RECONNECTING` before settling on
+      `CONNECTED` or `DISCONNECTED` (3-attempt grace period).
+
+## Stage C — Player Lock (soccer tracking screen, gimbal attached)
+
 - [ ] Start Assessment in PLAYER_LOCK mode with one person walking left/
-      right. Confirm the gimbal PHYSICALLY ROTATES to keep them framed.
-      This is the actual test of `GimbalController.updateTarget` →
-      `DockAccessory.track(_:cameraInformation:)` — nothing before this
-      point proves the accessory ever receives or acts on an
-      observation.
+      right. Confirm the gimbal PHYSICALLY ROTATES to keep them framed
+      — this is `GimbalController.updateTarget` →
+      `DockAccessory.track(_:cameraInformation:)` actually working
+      end-to-end from real Vision detections, not synthetic Test Mode
+      observations.
 - [ ] Confirm motion is smooth, not jerky/oscillating — tune
-      `FramingCalculator`'s `deadZoneRadius`/`dampingFactor` defaults
-      against what actually feels right on this specific gimbal.
+      `FramingCalculator`'s dead-zone/damping defaults against what
+      actually feels right on this specific gimbal.
 - [ ] Switch to SPORT speed profile, have the person jog laterally —
-      confirm the gimbal keeps up without excessive lag AND without
-      overshoot/oscillation. Tune `GimbalController.applySpeedProfileLimits`'s
-      `maxSpeedRadiansPerSecond` constants against reality.
+      confirm the gimbal keeps up without excessive lag or
+      overshoot/oscillation.
 - [ ] Walk out of frame and back in after ~2 seconds — confirm
-      `PLAYER_LOCK` → `TEMPORARILY_LOST` → `REACQUIRED` (not a jump to a
-      different person, if a second person is in frame).
+      LOCKED → TEMPORARILY_LOST → LOCKED (reacquired), not a jump to a
+      different person if one is in frame.
+- [ ] Walk out of frame for 10+ seconds (past both timeout thresholds)
+      — confirm LOCKED → TEMPORARILY_LOST → SEARCHING → LOST, and that
+      the "PLAYER LOST — TAP TO RESELECT" banner appears and a matching
+      detection does NOT silently re-lock without an explicit tap
+      (this exact bug was found and fixed in `PlayerTracker.swift` this
+      session via a standalone test — confirm the fix holds on-device).
 - [ ] Have a second, similarly-dressed person cross between the camera
       and the locked player — confirm tracking stays on the ORIGINAL
-      player (this is the `PlayerTracker` motion+IoU+appearance gating
-      logic's real test — it type-checked but was never executed).
-- [ ] Test SMART_SOCCER mode with a ball: confirm framing keeps both
-      player and ball in frame, and that losing the ball briefly doesn't
-      cause the gimbal to drop the player to go "hunt" for it (spec
-      requirement, `TrackingCoordinator.computeFramingTarget`'s
-      `.smartSoccer` case).
-- [ ] Test Center Gimbal, Pause Tracking, Switch Tracking Mode — confirm
-      each manual override takes effect immediately and predictably.
-- [ ] Confirm `DockAccessory.batteryStates`/`firmwareVersion` report
-      real, sane values in Field Test Mode, not placeholder/garbage
-      data.
+      player. This is `PlayerTracker`'s appearance-discriminativeness
+      reweighting real test; it passed a synthetic standalone test but
+      has never seen a real camera frame.
+- [ ] Disconnect the gimbal (or force several consecutive `track()`
+      failures) mid-assessment — confirm the "GIMBAL CONTROL LOST —
+      RECORDING CONTINUES" banner appears, recording is unaffected, and
+      gimbal motion does NOT resume on its own reconnect — only after
+      tapping "Resume Gimbal Control".
+
+## Stage D — Ball
+
+- [ ] Confirm the "BALL: EXPERIMENTAL (NO TRAINED MODEL)" badge is
+      visible and honest — `ClassicalCVBallDetector` is a real but weak
+      classical-CV heuristic, not a trained model (see
+      `Sources/Vision/BallBlobDetector.swift`).
+- [ ] Roll a real soccer ball through frame on grass — confirm the
+      classical detector picks it up AT ALL some meaningful fraction of
+      the time (no specific accuracy target claimed; this is a sanity
+      check, not a benchmark).
+- [ ] Confirm it also produces plausible FALSE POSITIVES on other
+      bright round-ish objects (a white cone, a sock, a chalk-line
+      intersection) — this is the documented, expected weakness, not a
+      bug to "fix" by tightening thresholds blindly (that trades false
+      positives for false negatives).
+- [ ] BALL_TRACK mode: confirm framing follows the ball reasonably when
+      detected, and does something sane (holds last position / does
+      nothing) when not detected — never crashes.
+
+## Stage E — Smart Soccer
+
+- [ ] SMART_SOCCER mode with both a player and a ball in frame: confirm
+      framing keeps both in view, and that losing the ball briefly does
+      NOT cause the gimbal to drop the player to go "hunt" for it
+      (`TrackingCoordinator.computeFramingTarget`'s `.smartSoccer` case
+      falls back to the player box alone).
+- [ ] Test Center Gimbal, Pause Tracking, Switch Tracking Mode mid-
+      assessment — confirm each manual override takes effect
+      immediately and predictably.
 - [ ] Run a full ~15-20 minute mock assessment end-to-end: select
       player → connect → lock → record → stop → upload → confirm the
       tracking session appears at `/tracking-analysis` in the web
-      dashboard with a real heat map and metrics.
+      dashboard with real telemetry, the correct `ball_model_status`,
+      and (if a coach used the confirmation prompt)
+      a `correct_player_tracked` label.
 
-## Stage 4 — Only after Stage 3 passes
+## After all of the above pass
 
 - [ ] Multiple real coaches/players, varied jersey colors, varied field
       lighting (morning/midday/evening) — stress-test the appearance
-      signature's known weakness (documented in `PlayerTracker.swift`:
-      "two players on the same team look identical to this").
-- [ ] Replace `ClassicalCVBallDetector` with a real trained model
-      (`CoreMLBallDetector`) once one exists, and re-run the SMART_SOCCER
-      checks above — the classical fallback is explicitly not expected
-      to perform well enough for production ball tracking.
+      signature's documented weakness (two players in identical kit
+      look identical to this non-biometric signature).
+- [ ] Replace `ClassicalCVBallDetector` with a real trained
+      `CoreMLBallDetector` once one exists (see that file's inline
+      integration instructions), flip `ball_model_status` to
+      `"installed"` only once that model is actually wired in and
+      tested, and re-run Stage D/E.
+- [ ] Build the native login view and QR check-in flow (explicitly
+      out of scope for this pass — see README.md "Known gaps") before
+      relying on `coachIdentifier` for real attribution.

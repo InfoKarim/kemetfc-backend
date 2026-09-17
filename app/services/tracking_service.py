@@ -47,6 +47,13 @@ class TrackingService:
         tracking_mode: str,
         gimbal_model: str | None = None,
         calibration_scale_m_per_unit: float | None = None,
+        player_detector_version: str | None = None,
+        ball_detector_version: str | None = None,
+        ball_model_status: str = "missing",
+        pose_model_version: str | None = None,
+        tracker_algorithm_version: str | None = None,
+        framing_algorithm_version: str | None = None,
+        ios_app_version: str | None = None,
     ) -> TrackingSessionDB:
         if tracking_mode not in TRACKING_MODES:
             raise TrackingError(f"Unknown tracking_mode: {tracking_mode}")
@@ -62,6 +69,13 @@ class TrackingService:
             calibration_scale_m_per_unit=calibration_scale_m_per_unit,
             status="recording",
             started_at=now,
+            player_detector_version=player_detector_version,
+            ball_detector_version=ball_detector_version,
+            ball_model_status=ball_model_status,
+            pose_model_version=pose_model_version,
+            tracker_algorithm_version=tracker_algorithm_version,
+            framing_algorithm_version=framing_algorithm_version,
+            ios_app_version=ios_app_version,
             created_at=now,
         )
         self.db.add(session)

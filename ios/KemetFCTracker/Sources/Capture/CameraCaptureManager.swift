@@ -37,6 +37,11 @@ public final class CameraCaptureManager: NSObject, ObservableObject {
     @Published public private(set) var isConfigured = false
     @Published public private(set) var activeFormatDescription: String = ""
     @Published public private(set) var effectiveFrameRate: Double = 0
+    /// The negotiated capture format's pixel dimensions — read by the
+    /// tap-to-lock UI (TapToLockConverter.normalizedCameraPoint) to undo
+    /// the preview layer's aspect-fill crop. Zero until configure()
+    /// actually negotiates a format; never a hard-coded guess.
+    @Published public private(set) var activeVideoDimensions: CGSize = .zero
 
     public private(set) var device: AVCaptureDevice?
 
@@ -161,6 +166,7 @@ public final class CameraCaptureManager: NSObject, ObservableObject {
 
         let dims = CMVideoFormatDescriptionGetDimensions(selected.formatDescription)
         activeFormatDescription = "\(dims.width)x\(dims.height)"
+        activeVideoDimensions = CGSize(width: Int(dims.width), height: Int(dims.height))
         effectiveFrameRate = targetFPS
         log.info("Selected capture format \(dims.width)x\(dims.height) @ \(targetFPS)fps")
     }

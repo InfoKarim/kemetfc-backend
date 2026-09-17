@@ -16,6 +16,7 @@
 import AVFoundation
 import Combine
 import Foundation
+import UIKit
 import os.log
 
 @MainActor
@@ -26,6 +27,19 @@ public final class AssessmentSessionViewModel: ObservableObject {
     @Published public private(set) var backendSessionId: String?
     @Published public private(set) var isAssessmentActive = false
     @Published public private(set) var lastError: String?
+    /// Bindable by AssessmentTrackingView (or a future upload-progress
+    /// sheet) to show PREPARING/UPLOADING_VIDEO(progress)/PROCESSING/
+    /// COMPLETE/FAILED without polling — see VideoUploadManager.swift.
+    @Published public private(set) var videoUploadState: VideoUploadManager.UploadState = .notStarted
+
+    /// Stopgap coach identity for `created_by` on the video-upload
+    /// metadata (PlayerVideoUploadMetadataSchema.created_by is
+    /// required). There is no native login view yet (see
+    /// VERIFICATION_CHECKLIST.md and this session's report — building
+    /// one is a separate, explicitly tracked gap), so this is set by
+    /// whatever authenticated a WKWebView-hosted /login instead; NEVER
+    /// silently defaulted to a fabricated-looking real name.
+    public var coachIdentifier: String = "ios-app-unidentified-coach"
 
     public let dockKitManager = DockKitManager()
     public let cameraCaptureManager = CameraCaptureManager()
@@ -37,9 +51,15 @@ public final class AssessmentSessionViewModel: ObservableObject {
     @Published public private(set) var trackingCoordinator: TrackingCoordinator?
     private var telemetryUploader: TelemetryUploader?
     private var recordingURL: URL?
+    private let videoUploadManager = VideoUploadManager()
+    private var cancellables = Set<AnyCancellable>()
 
     public init(apiClient: KemetAPIClient) {
         self.apiClient = apiClient
+        videoUploadManager.$state
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in self?.videoUploadState = state }
+            .store(in: &cancellables)
     }
 
     public func start() async {
@@ -66,11 +86,31 @@ public final class AssessmentSessionViewModel: ObservableObject {
             return
         }
 
+        if let preflightFailure = Self.preflightCheck() {
+            lastError = preflightFailure
+            return
+        }
+
+        // Constructed BEFORE the session POST (not after, like
+        // gimbalController/coordinator below) specifically so the exact
+        // detector instance whose version we report is the same one that
+        // will actually run — never a version string hand-copied
+        // separately from the real object (spec section 14: model-version
+        // traceability must be honest, not guessed).
+        let ballDetector: BallDetecting = ClassicalCVBallDetector()
+
         do {
             struct CreateSessionBody: Encodable {
                 let player_id: String
                 let tracking_mode: String
                 let gimbal_model: String?
+                let player_detector_version: String
+                let ball_detector_version: String
+                let ball_model_status: String
+                let pose_model_version: String
+                let tracker_algorithm_version: String
+                let framing_algorithm_version: String
+                let ios_app_version: String?
             }
             struct SessionResponse: Decodable {
                 let session_id: String
@@ -81,7 +121,14 @@ public final class AssessmentSessionViewModel: ObservableObject {
                 body: CreateSessionBody(
                     player_id: player.playerId,
                     tracking_mode: mode.rawValue,
-                    gimbal_model: dockKitManager.connectedAccessory != nil ? "Insta360 Flow 2 Pro" : nil
+                    gimbal_model: dockKitManager.connectedAccessory != nil ? "Insta360 Flow 2 Pro" : nil,
+                    player_detector_version: PlayerDetector.detectorVersion,
+                    ball_detector_version: ballDetector.modelIdentifier.version,
+                    ball_model_status: ballDetector.ballModelStatus,
+                    pose_model_version: PlayerDetector.poseModelVersion,
+                    tracker_algorithm_version: PlayerTracker.algorithmVersion,
+                    framing_algorithm_version: FramingCalculator.algorithmVersion,
+                    ios_app_version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
                 ),
                 as: SessionResponse.self
             )
@@ -104,7 +151,7 @@ public final class AssessmentSessionViewModel: ObservableObject {
         }
         gimbalController = controller
 
-        let coordinator = TrackingCoordinator(gimbalController: controller, telemetryUploader: uploader)
+        let coordinator = TrackingCoordinator(gimbalController: controller, telemetryUploader: uploader, ballDetector: ballDetector)
         coordinator.setMode(mode)
         trackingCoordinator = coordinator
         cameraCaptureManager.frameDelegate = FrameForwarder(coordinator: coordinator, captureManagerRef: cameraCaptureManager)
@@ -116,9 +163,70 @@ public final class AssessmentSessionViewModel: ObservableObject {
         isAssessmentActive = true
     }
 
+    /// Battery/storage pre-checks before starting an assessment (spec
+    /// section: "add battery/storage pre-checks") — real measured
+    /// values (UIDevice.batteryLevel, FileManager volume capacity), not
+    /// guesses, and deliberately conservative/approximate thresholds
+    /// rather than a fabricated exact recording-duration prediction
+    /// (spec: "Do not fabricate exact recording duration predictions
+    /// unless based on measured bitrate/file size" — this app has not
+    /// measured its own actual bitrate, so it checks a safety margin
+    /// instead of promising "N minutes remaining"). Returns nil when OK,
+    /// or a coach-facing message describing what to fix.
+    private static func preflightCheck() -> String? {
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let batteryState = UIDevice.current.batteryState
+        let batteryLevel = UIDevice.current.batteryLevel
+        // batteryLevel is -1 (unknown) in the Simulator or briefly at
+        // startup — never treated as "low," only a genuinely measured
+        // low value is.
+        if batteryState != .charging, batteryState != .full, batteryLevel >= 0, batteryLevel < 0.15 {
+            return "Battery is below 15% and not charging — plug in before starting a full assessment."
+        }
+
+        // Conservative floor, not a duration promise: 1080p H.264 at a
+        // typical ~15 Mbps runs well under 150MB/minute in practice, so
+        // 1GB free comfortably covers a multi-minute assessment without
+        // this app ever claiming to know the coach's exact device
+        // codec/bitrate in advance.
+        let minimumFreeBytes: Int64 = 1_000_000_000
+        if let values = try? FileManager.default.temporaryDirectory
+            .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+            let available = values.volumeAvailableCapacityForImportantUsage,
+            available < minimumFreeBytes {
+            let availableMB = available / 1_000_000
+            return "Only \(availableMB)MB of storage available — free up space before starting an assessment."
+        }
+
+        return nil
+    }
+
     /// Coach taps a detected person to lock the target (spec section 6).
     public func handlePlayerTap(_ point: NormalizedPoint, detections: [PersonDetection], pixelBuffer: CVPixelBuffer) {
         trackingCoordinator?.lockPlayer(at: point, detections: detections, pixelBuffer: pixelBuffer)
+    }
+
+    /// Coach review workflow (spec section 16): "Correct Player Tracked:
+    /// YES/NO/UNSURE" — posts to the EXISTING, tested backend endpoint
+    /// (POST /tracking/sessions/{id}/confirm-player, app/routers/
+    /// tracking.py). A failure here is deliberately non-fatal to the
+    /// caller (the assessment itself already completed) — surfaced via
+    /// lastError for visibility, not thrown.
+    public func confirmPlayerTracked(_ answer: String, notes: String? = nil) async {
+        guard let sessionId = backendSessionId else { return }
+        struct ConfirmBody: Encodable { let answer: String; let notes: String? }
+        struct LabelResponse: Decodable { let label_id: String }
+        do {
+            apiClient.refreshCSRFToken()
+            _ = try await apiClient.post(
+                path: "/tracking/sessions/\(sessionId)/confirm-player",
+                body: ConfirmBody(answer: answer, notes: notes),
+                as: LabelResponse.self
+            )
+        } catch {
+            log.error("confirmPlayerTracked failed: \(error.localizedDescription)")
+            lastError = "Could not record player-tracking confirmation — the assessment itself was saved regardless."
+        }
     }
 
     /// Stop Assessment -> Upload video -> Complete tracking session
@@ -152,16 +260,24 @@ public final class AssessmentSessionViewModel: ObservableObject {
         }
     }
 
-    /// Multipart upload to the EXISTING /videos/upload endpoint — full
-    /// multipart construction omitted here (standard URLSession
-    /// multipart/form-data boilerplate, not tracking-specific logic);
-    /// see app/routers/videos.py:70 for the exact multipart shape
-    /// (`metadata` JSON part + `video` file part) this must produce.
+    /// Real multipart upload to the EXISTING /videos/upload endpoint —
+    /// see VideoUploadManager.swift for the streaming multipart
+    /// implementation, retry/backoff, and state machine.
     private func uploadVideo(fileURL: URL, playerId: String) async throws -> String {
-        throw KemetAPIError.transport(NSError(
-            domain: "KemetFCTracker", code: -1,
-            userInfo: [NSLocalizedDescriptionKey: "uploadVideo(fileURL:playerId:) multipart body not yet implemented — see method doc comment"]
-        ))
+        let duration = try await AVURLAsset(url: fileURL).load(.duration).seconds
+        let metadata = PlayerVideoUploadMetadata(
+            playerId: playerId,
+            videoType: "assessment_smart_tracking",
+            durationSeconds: duration.isFinite ? duration : 0,
+            sessionId: backendSessionId ?? "",
+            locationId: "kemetfc_ios_field_capture",
+            captureDevice: "iPhone (KemetFCTracker)",
+            resolution: cameraCaptureManager.activeFormatDescription,
+            frameRateFps: cameraCaptureManager.effectiveFrameRate,
+            schemaVersion: "1.0",
+            createdBy: coachIdentifier
+        )
+        return try await videoUploadManager.uploadVideo(fileURL: fileURL, metadata: metadata, apiClient: apiClient)
     }
 }
 

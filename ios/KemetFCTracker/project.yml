@@ -1,0 +1,67 @@
+# XcodeGen project spec — generates KemetFCTracker.xcodeproj from this
+# text file plus Sources/Info.plist, so the project is versioned as
+# plain text (spec: "make the iOS code a real openable Xcode project").
+#
+# This machine has Command Line Tools only (no full Xcode — see
+# ios/KemetFCTracker/README.md and this session's VERIFICATION_CHECKLIST
+# .md), so `xcodegen generate` has NOT been run here and no .xcodeproj
+# has been generated or opened in this environment. On a real Mac with
+# Xcode + XcodeGen installed:
+#
+#   brew install xcodegen   # if not already installed
+#   cd ios/KemetFCTracker
+#   xcodegen generate
+#   open KemetFCTracker.xcodeproj
+#
+# If XcodeGen is unavailable, see README.md's "Manual Xcode project"
+# fallback instructions instead.
+
+name: KemetFCTracker
+options:
+  bundleIdPrefix: com.kemetfc
+  deploymentTarget:
+    iOS: "17.4" # DockKit's Insta360-recommended minimum (see DockKitManager.swift header)
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+targets:
+  KemetFCTracker:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.4"
+    sources:
+      - path: Sources
+    info:
+      path: Sources/Info.plist
+      properties:
+        UILaunchScreen: {}
+        # Portrait only — matches the existing Vision/pose-detection code,
+        # which passes `orientation: .right` (the standard
+        # CGImagePropertyOrientation for a back camera held with the
+        # device upright/portrait) in PlayerDetector.swift. Do not add
+        # landscape here without also updating that orientation argument.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSCameraUsageDescription: "KEMET FC uses the camera to record player assessments and track the player being evaluated."
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kemetfc.tracker
+        TARGETED_DEVICE_FAMILY: "1" # iPhone only — DockKit accessories (Flow 2 Pro) are phone-mounted, no iPad support claimed
+        IPHONEOS_DEPLOYMENT_TARGET: "17.4"
+    dependencies: []
+
+  KemetFCTrackerTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.4"
+    sources:
+      - path: Tests
+    dependencies:
+      - target: KemetFCTracker
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kemetfc.tracker.tests
