@@ -883,24 +883,6 @@
       for (const payment of paymentsData.payments) {
         const row2 = make("div", "row");
         row2.append(make("span", "", `${formatMoney(payment.amount, payment.currency)} — ${payment.status}`));
-        const refundButton = make("button", "link-button", "Refund");
-        refundButton.type = "button";
-        refundButton.hidden = payment.status !== "paid";
-        refundButton.addEventListener("click", async () => {
-          const confirmed = confirm(`Refund ${formatMoney(payment.amount, payment.currency)}?`);
-          if (!confirmed) return;
-          try {
-            await fetchJSON(`/billing/payments/${encodeURIComponent(payment.stripe_invoice_id)}/refund`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({}),
-            });
-            alert("Refund issued.");
-          } catch (error) {
-            alert(error.message);
-          }
-        });
-        row2.append(refundButton);
         paymentsList.append(row2);
       }
       modal.append(paymentsList);

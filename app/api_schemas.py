@@ -416,11 +416,6 @@ class RecordManualPaymentSchema(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
-class RefundPaymentSchema(BaseModel):
-    amount_cents: int | None = Field(default=None, gt=0)
-    reason: str | None = Field(default=None, max_length=500)
-
-
 class CreatePromoCodeSchema(BaseModel):
     code: str = Field(min_length=2, max_length=64)
     discount_type: Literal["percentage", "fixed"]

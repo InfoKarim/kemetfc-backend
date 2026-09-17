@@ -772,45 +772,6 @@ class BillingService:
         self.db.commit()
         return result
 
-    def refund_payment(
-        self,
-        stripe_invoice_id: str,
-        actor_user_id: str,
-        amount_cents: int | None = None,
-        reason: str | None = None,
-    ) -> dict:
-        payment = self.db.get(PaymentDB, stripe_invoice_id)
-        if payment is None:
-            raise BillingError("Payment not found")
-        if payment.status != "paid":
-            raise BillingError("Only a paid invoice can be refunded")
-
-        invoice = _stripe_object_to_dict(stripe.Invoice.retrieve(stripe_invoice_id))
-        payment_intent_id = invoice.get("payment_intent")
-        if not payment_intent_id:
-            raise BillingError("This invoice has no payment to refund")
-
-        refund_kwargs = {"payment_intent": payment_intent_id}
-        if amount_cents is not None:
-            refund_kwargs["amount"] = amount_cents
-
-        refund = stripe.Refund.create(**refund_kwargs)
-
-        self._audit(
-            actor_user_id=actor_user_id,
-            action="payment_refunded",
-            resource_type="payment",
-            resource_id=stripe_invoice_id,
-            details={
-                "player_id": payment.player_id,
-                "amount_cents": amount_cents or payment.amount,
-                "reason": reason,
-                "stripe_refund_id": refund["id"],
-            },
-        )
-        self.db.commit()
-        return _stripe_object_to_dict(refund)
-
     def record_manual_payment(
         self,
         player_id: str,

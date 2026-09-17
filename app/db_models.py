@@ -687,8 +687,7 @@ class StripeEventDB(Base):
     """Explicit ledger of processed Stripe webhook event IDs — defense in
     depth on top of the upsert-by-Stripe-ID pattern already used for
     SubscriptionDB/PaymentDB, so a redelivered event is provably a no-op
-    even for event types that don't map to a single natural primary key
-    (e.g. a refund)."""
+    even for event types that don't map to a single natural primary key."""
 
     __tablename__ = "stripe_events"
 

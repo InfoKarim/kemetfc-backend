@@ -546,7 +546,7 @@ def test_guardian_sees_own_childs_manual_payments_not_another_familys(client):
 
 
 # ---------------------------------------------------------------------------
-# Pause / resume / refund — Stripe-backed, mocked
+# Pause / resume — Stripe-backed, mocked
 # ---------------------------------------------------------------------------
 
 def test_admin_can_pause_and_resume_a_subscription(client, monkeypatch):
@@ -596,105 +596,23 @@ def test_non_admin_cannot_pause_a_subscription(client):
     assert response.status_code == 403
 
 
-def test_admin_can_refund_a_paid_payment(client, monkeypatch):
-    from app.services import billing_service
+# ---------------------------------------------------------------------------
+# No-refunds policy — KEMET FC does not offer refunds through this
+# platform. A completed payment stays recorded as paid; admins may only
+# cancel future renewals, pause a membership, or record a manual payment.
+# These tests are a regression guard: refund functionality must never
+# reappear in the API surface.
+# ---------------------------------------------------------------------------
 
-    create_test_player(client, "PC_P_REFUND")
-    db = TestingSessionLocal()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    db.add(SubscriptionDB(
-        stripe_subscription_id="sub_refund_test",
-        player_id="PC_P_REFUND",
-        paying_user_id="PC_ADMIN",
-        stripe_customer_id="cus_refund_test",
-        stripe_price_id="price_test_refund",
-        status="active",
-        current_period_end=now,
-        cancel_at_period_end=False,
-        created_at=now,
-        updated_at=now,
-    ))
-    db.commit()
-    db.add(PaymentDB(
-        stripe_invoice_id="in_refund_test",
-        stripe_subscription_id="sub_refund_test",
-        player_id="PC_P_REFUND",
-        amount=12000,
-        currency="usd",
-        status="paid",
-        created_at=now,
-    ))
-    db.commit()
-    db.close()
-
-    monkeypatch.setattr(
-        billing_service.stripe.Invoice,
-        "retrieve",
-        lambda invoice_id: {"payment_intent": "pi_refund_test"},
-    )
-    monkeypatch.setattr(
-        billing_service.stripe.Refund,
-        "create",
-        lambda **kwargs: {"id": "re_refund_test", "status": "succeeded"},
-    )
-
-    response = client.post(
-        "/billing/payments/in_refund_test/refund",
-        json={"reason": "Guardian requested a refund"},
-    )
-    assert response.status_code == 200
-    assert response.json()["refund_id"] == "re_refund_test"
-
-    db = TestingSessionLocal()
-    audit_events = (
-        db.query(AuditEventDB)
-        .filter(AuditEventDB.action == "payment_refunded", AuditEventDB.resource_id == "in_refund_test")
-        .all()
-    )
-    assert len(audit_events) == 1
-    db.close()
+def test_no_refund_endpoint_exists(client):
+    response = client.post("/billing/payments/in_norefund_test/refund", json={})
+    assert response.status_code in (404, 405)
 
 
-def test_refund_requires_admin(client):
-    coach_client = _create_role_client("pc.coach5", "CoachPassword123!", "coach")
-    response = coach_client.post(
-        "/billing/payments/in_refund_test/refund",
-        json={},
-    )
-    assert response.status_code == 403
+def test_billing_service_has_no_refund_method():
+    from app.services.billing_service import BillingService
 
-
-def test_refund_rejects_unpaid_invoice(client):
-    create_test_player(client, "PC_P_UNPAID")
-    db = TestingSessionLocal()
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    db.add(SubscriptionDB(
-        stripe_subscription_id="sub_unpaid_test",
-        player_id="PC_P_UNPAID",
-        paying_user_id="PC_ADMIN",
-        stripe_customer_id="cus_unpaid_test",
-        stripe_price_id="price_test_unpaid",
-        status="active",
-        current_period_end=now,
-        cancel_at_period_end=False,
-        created_at=now,
-        updated_at=now,
-    ))
-    db.commit()
-    db.add(PaymentDB(
-        stripe_invoice_id="in_unpaid_test",
-        stripe_subscription_id="sub_unpaid_test",
-        player_id="PC_P_UNPAID",
-        amount=12000,
-        currency="usd",
-        status="failed",
-        created_at=now,
-    ))
-    db.commit()
-    db.close()
-
-    response = client.post("/billing/payments/in_unpaid_test/refund", json={})
-    assert response.status_code == 404
+    assert not hasattr(BillingService, "refund_payment")
 
 
 # ---------------------------------------------------------------------------

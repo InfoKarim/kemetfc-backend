@@ -14,7 +14,6 @@ from app.api_schemas import (
     CreatePromoCodeSchema,
     GrantComplimentaryMembershipSchema,
     RecordManualPaymentSchema,
-    RefundPaymentSchema,
     SetEligibilityOverrideSchema,
     UpdateBillingSettingsSchema,
     UpdateFamilyDiscountRuleSchema,
@@ -390,28 +389,6 @@ def resume_subscription(player_id: str, request: Request, db: Session = Depends(
         raise HTTPException(status_code=404, detail=str(error))
 
     return _subscription_payload(updated)
-
-
-@router.post("/billing/payments/{stripe_invoice_id}/refund")
-def refund_payment(
-    stripe_invoice_id: str,
-    payload: RefundPaymentSchema,
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    require_admin(request)
-
-    try:
-        refund = BillingService(db=db).refund_payment(
-            stripe_invoice_id,
-            actor_user_id=request.state.current_user["user_id"],
-            amount_cents=payload.amount_cents,
-            reason=payload.reason,
-        )
-    except BillingError as error:
-        raise HTTPException(status_code=404, detail=str(error))
-
-    return {"refund_id": refund.get("id"), "status": refund.get("status")}
 
 
 @router.post("/billing/manual-payments/{player_id}", status_code=201)
