@@ -52,7 +52,17 @@ public final class CameraCaptureManager: NSObject, ObservableObject {
     public let minZoomFactor: CGFloat = 1.0
     public let maxZoomFactor: CGFloat = 3.0 // conservative default — see spec section 16
 
-    public weak var frameDelegate: AVCaptureVideoDataOutputSampleBufferDelegate?
+    // nonisolated(unsafe): a real Xcode build flagged captureOutput(_:
+    // didOutput:from:) below (AVFoundation always calls this on
+    // videoDataQueue, a background queue — it MUST stay nonisolated,
+    // not hop to the main actor, or every frame would incur an actor
+    // hop before recording/inference could even begin) reading this
+    // @MainActor-isolated property from that nonisolated context. This
+    // is genuinely safe: `frameDelegate` is set exactly once, from the
+    // main actor, before frames start flowing (AssessmentSessionViewModel
+    // .startAssessment), and a `weak` reference read is atomic at the
+    // runtime level regardless of which thread performs it.
+    public nonisolated(unsafe) weak var frameDelegate: AVCaptureVideoDataOutputSampleBufferDelegate?
 
     public override init() {
         super.init()

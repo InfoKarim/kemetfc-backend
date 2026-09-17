@@ -32,10 +32,25 @@ public enum KemetAPIError: Error {
     case transport(Error)
 }
 
-public final class KemetAPIClient {
+/// `@unchecked Sendable`: a real Xcode build (Swift 6 strict
+/// concurrency) flagged every `await apiClient.post(...)` call in
+/// AssessmentSessionViewModel ("sending 'self.apiClient' risks causing
+/// data races") because of `csrfToken`'s mutable state below — this
+/// class is called only from @MainActor contexts in practice
+/// (AssessmentSessionViewModel, VideoUploadManager) plus TelemetryUploader
+/// (its own @unchecked Sendable, lock-protected), but Swift can't prove
+/// that from the class's shape alone. Fixed with a real `NSLock`
+/// guarding the one piece of mutable state, not by asserting safety
+/// that doesn't exist.
+public final class KemetAPIClient: @unchecked Sendable {
     private let configuration: KemetAPIConfiguration
     private let session: URLSession
-    private var csrfToken: String?
+    private let csrfTokenLock = NSLock()
+    private var _csrfToken: String?
+    private var csrfToken: String? {
+        get { csrfTokenLock.withLock { _csrfToken } }
+        set { csrfTokenLock.withLock { _csrfToken = newValue } }
+    }
 
     public init(configuration: KemetAPIConfiguration, session: URLSession = .shared) {
         self.configuration = configuration

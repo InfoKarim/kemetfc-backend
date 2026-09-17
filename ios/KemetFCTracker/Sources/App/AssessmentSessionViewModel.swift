@@ -53,6 +53,16 @@ public final class AssessmentSessionViewModel: ObservableObject {
     private var recordingURL: URL?
     private let videoUploadManager = VideoUploadManager()
     private var cancellables = Set<AnyCancellable>()
+    // Strong reference required: CameraCaptureManager.frameDelegate is
+    // `weak` (by design, to avoid a retain cycle back to the manager),
+    // so assigning a FrameForwarder to it with nothing else retaining
+    // the instance let Xcode's real build flag "instance will be
+    // immediately deallocated" — meaning processFrame(...) would NEVER
+    // actually fire in production; the entire per-frame inference
+    // pipeline would silently do nothing. Never caught by swiftc
+    // -typecheck (this file needs AVFoundation/DockKit); only a real
+    // Xcode build surfaced it.
+    private var frameForwarder: FrameForwarder?
 
     public init(apiClient: KemetAPIClient) {
         self.apiClient = apiClient
@@ -151,10 +161,17 @@ public final class AssessmentSessionViewModel: ObservableObject {
         }
         gimbalController = controller
 
+        guard let captureDevice = cameraCaptureManager.device else {
+            lastError = "Camera is not configured — cannot start tracking without a negotiated capture device."
+            return
+        }
+
         let coordinator = TrackingCoordinator(gimbalController: controller, telemetryUploader: uploader, ballDetector: ballDetector)
         coordinator.setMode(mode)
         trackingCoordinator = coordinator
-        cameraCaptureManager.frameDelegate = FrameForwarder(coordinator: coordinator, captureManagerRef: cameraCaptureManager)
+        let forwarder = FrameForwarder(coordinator: coordinator, device: captureDevice)
+        frameForwarder = forwarder
+        cameraCaptureManager.frameDelegate = forwarder
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(sessionId).mov")
         recordingURL = url
@@ -288,12 +305,26 @@ public final class AssessmentSessionViewModel: ObservableObject {
 /// telemetry from the actual recorded video timeline).
 private final class FrameForwarder: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
     private let coordinator: TrackingCoordinator
-    private weak var captureManagerRef: CameraCaptureManager?
+    // Captured ONCE at init, on the MainActor (the caller — startAssessment
+    // — is @MainActor-isolated), rather than read from
+    // captureManagerRef.device inside captureOutput(...) below. That
+    // read would be a real Swift 6 build error found only by a genuine
+    // Xcode build (never caught by swiftc -typecheck, since this file
+    // depends on AVFoundation/DockKit unavailable outside Xcode):
+    // captureOutput(...) is a NONISOLATED delegate callback (invoked on
+    // CameraCaptureManager's own dispatch queue), and CameraCaptureManager
+    // .device is @MainActor-isolated — reading it from there is not
+    // just unsafe, it does not compile under Swift 6 strict concurrency.
+    // The negotiated capture device does not change for the lifetime of
+    // one assessment, so capturing it once here is also correct, not
+    // just a compile-error workaround.
+    private let device: AVCaptureDevice
     private var sessionStartTime: CMTime?
 
-    init(coordinator: TrackingCoordinator, captureManagerRef: CameraCaptureManager) {
+    @MainActor
+    init(coordinator: TrackingCoordinator, device: AVCaptureDevice) {
         self.coordinator = coordinator
-        self.captureManagerRef = captureManagerRef
+        self.device = device
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
@@ -301,9 +332,19 @@ private final class FrameForwarder: NSObject, AVCaptureVideoDataOutputSampleBuff
         if sessionStartTime == nil { sessionStartTime = presentationTime }
         let elapsed = CMTimeGetSeconds(CMTimeSubtract(presentationTime, sessionStartTime ?? presentationTime))
 
-        guard let device = captureManagerRef?.device else { return }
+        // Phase 3 fix: a real Xcode build flagged this Task closure
+        // sending both `self` (implicitly, via `coordinator.processFrame
+        // (...)` reading FrameForwarder's own stored property) and
+        // `sampleBuffer` (a non-Sendable CMSampleBuffer) into a
+        // `@MainActor` context. Capturing `coordinator` into a local
+        // avoids the implicit `self` capture; boxing `sampleBuffer`
+        // documents the same single-ownership handoff invariant as
+        // TrackingCoordinator's own CVPixelBuffer box (see that file).
+        let coordinator = self.coordinator
+        let boxedDevice = UncheckedSendableBox(value: self.device)
+        let boxedSampleBuffer = UncheckedSendableBox(value: sampleBuffer)
         Task { @MainActor in
-            coordinator.processFrame(sampleBuffer: sampleBuffer, captureDevice: device, sessionElapsedSeconds: elapsed)
+            coordinator.processFrame(sampleBuffer: boxedSampleBuffer.value, captureDevice: boxedDevice.value, sessionElapsedSeconds: elapsed)
         }
     }
 }

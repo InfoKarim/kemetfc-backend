@@ -255,10 +255,22 @@ public final class GimbalController: ObservableObject {
     /// "If confidence becomes too low: Stop aggressive gimbal movement").
     public func pauseMotorCorrection() {
         guard let accessory else { return }
-        do {
-            try accessory.setAngularVelocity(Vector3D(x: 0, y: 0, z: 0))
-        } catch {
-            log.error("pauseMotorCorrection failed: \(error.localizedDescription)")
+        // Phase 3 fix: this file's own header already documented
+        // `setAngularVelocity(_:)` as `async throws`, but this call site
+        // called it as if synchronous (`try accessory.setAngularVelocity
+        // (...)`, no `await`) — a real Xcode build rejected it outright
+        // ("'async' call in a function that does not support
+        // concurrency"). `pauseMotorCorrection()` itself stays
+        // synchronous (it's called from several places, including
+        // TrackingCoordinator.apply(result:), that are not eager to
+        // become async themselves) — same Task-wrapping pattern already
+        // used by updateTarget(...) below for the same reason.
+        Task {
+            do {
+                try await accessory.setAngularVelocity(Vector3D(x: 0, y: 0, z: 0))
+            } catch {
+                self.log.error("pauseMotorCorrection failed: \(error.localizedDescription)")
+            }
         }
     }
 }

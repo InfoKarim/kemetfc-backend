@@ -32,7 +32,13 @@ import Foundation
 public final class ThermalManager: ObservableObject {
     @Published public private(set) var thermalState: ProcessInfo.ThermalState = ProcessInfo.processInfo.thermalState
 
-    private var observer: NSObjectProtocol?
+    // nonisolated(unsafe): a real Xcode build flagged plain `deinit`
+    // (nonisolated even on a @MainActor class, under Swift 6) reading
+    // this non-Sendable NSObjectProtocol token. It's genuinely safe:
+    // this is an opaque removal token, never mutated after init, and
+    // NotificationCenter.removeObserver(_:) is documented thread-safe —
+    // there is no actual shared-mutable-state risk here to suppress.
+    private nonisolated(unsafe) var observer: NSObjectProtocol?
 
     public init() {
         observer = NotificationCenter.default.addObserver(

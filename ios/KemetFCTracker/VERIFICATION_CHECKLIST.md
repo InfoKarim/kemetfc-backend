@@ -1,38 +1,54 @@
 # Xcode + Physical Hardware Verification Checklist
 
-Nothing past "Build" has been run in this session — no full Xcode, no
-iPhone, no Flow 2 Pro were available (Command Line Tools only; see
-README.md). This is the exact sequence to run through on real hardware
-before trusting this code, structured as the Phase 2 spec requested:
-Stage A (Basic iPhone) → B (Flow 2 Pro) → C (Player Lock) → D (Ball) →
-E (Smart Soccer).
+**Phase 3 status: Build is DONE and genuinely passing** (real Xcode
+27.0, real device SDK — see README.md's "Verification status" and
+"Phase 3: real build errors found and fixed" for exactly what that
+means and the ~15 real errors fixed to get there). **Everything from
+Simulator onward remains PHYSICAL FIELD VALIDATION NOT COMPLETED** — no
+iPhone, no Flow 2 Pro were available in this environment, and no
+Simulator run is possible for THIS app at all (see below). This is the
+exact remaining sequence to run through on real hardware, structured as
+requested: Stage A (Basic iPhone) → B (Flow 2 Pro) → C (Player Lock) →
+D (Ball) → E (Smart Soccer).
 
-## Build
+## Build — ✅ DONE in this environment
 
-- [ ] `xcodegen generate` from `ios/KemetFCTracker/project.yml` (or
-      follow README.md's manual fallback), then `open
-      KemetFCTracker.xcodeproj`.
-- [ ] `⌘B`. Fix every compile error — expect at least a few; see
-      README.md's "Bugs found by review or execution" for the ones
-      already caught without a compiler, and "Known gaps" for what's
-      still genuinely unimplemented (native login, QR scan).
-- [ ] `⌘U` — confirm ALL of `FramingMathTests`, `TapToLockConverterTests`,
-      `PlayerTrackerTests`, `BallBlobDetectorTests` pass in Xcode's own
-      XCTest runner. Every one of these already passed as a standalone
-      `swiftc` executable in this session (see each file's header for
-      exact pass counts and, for PlayerTracker, the 3 real bugs that
-      standalone run found and led to fixing); this step confirms they
-      also pass through the actual XCTest machinery, a different code
-      path that could theoretically diverge (it shouldn't, but hasn't
-      been checked).
+- [x] `xcodegen generate` from `ios/KemetFCTracker/project.yml` — done,
+      produces a real `KemetFCTracker.xcodeproj` (gitignored; regenerate
+      with this command, do not hand-edit the generated project).
+- [x] `xcodebuild build -sdk iphoneos -destination 'generic/platform=iOS'`
+      — **BUILD SUCCEEDED**, 1 benign warning (AppIntents metadata,
+      irrelevant — this app doesn't use AppIntents). Took ~15 real fixes
+      across ~10 build/fix/rebuild cycles; see README.md for the full
+      list (actor-isolation errors, missing Sendable conformances, a
+      wrong Optional assumption on a real DockKit API, an iOS-18-only
+      API called without an availability guard, an async API called as
+      if synchronous, and more).
+- [x] `xcodebuild build-for-testing` for the same scheme — **TEST BUILD
+      SUCCEEDED**: `KemetFCTrackerTests.xctest` (all 4 files —
+      `FramingMathTests`, `TapToLockConverterTests`,
+      `PlayerTrackerTests`, `BallBlobDetectorTests`) compiles and links
+      via `@testable import KemetFCTracker` against the real SDK.
+- [ ] `⌘U` / actually RUNNING those tests — **NOT DONE**. Requires
+      either a Simulator (impossible for this app — see below) or a
+      connected physical device. Every one of these 4 files' assertions
+      already passed as a standalone `swiftc`-compiled executable
+      outside Xcode (see each file's header for exact pass counts and,
+      for PlayerTracker, the 3 real bugs that run found); running them
+      through Xcode's actual XCTest machinery on a device is a
+      different code path that could theoretically diverge and has
+      never been checked.
 
-## Simulator (UI/logic wiring only — DockKit/camera do NOT work here)
+## Simulator — ❌ IMPOSSIBLE FOR THIS APP, not just unavailable here
 
-- [ ] App launches, `PlayerSelectionView` appears.
-- [ ] `DockKitManager.connectionState` correctly shows
-      `GIMBAL NOT FOUND` (Simulator has no dock hardware — expected).
-- [ ] `GimbalDiagnosticsView` and `DockKitTestModeView` both render
-      without crashing, showing "Not connected"/placeholder values.
+`import DockKit` fails to resolve when building for the
+`iphonesimulator` SDK — confirmed by actually attempting a Simulator
+build in this environment (separately from the fact that no Simulator
+runtime could even be installed here: it needs 8.07GB and only 7.4GB
+was free). This is not a temporary constraint: DockKit is a
+physical-accessory framework with no Simulator-side implementation at
+all, on any Mac. Every remaining verification step requires a real
+iPhone. Do not spend time trying to get this running in Simulator.
 
 ## Stage A — Basic iPhone, no gimbal
 

@@ -19,6 +19,16 @@ import Combine
 import Foundation
 import os.log
 
+/// Explicitly asserts single-ownership Sendable-safety for a value
+/// (here, `CVPixelBuffer`) that the Swift 6 checker can't itself prove
+/// safe to move across an isolation boundary — used ONLY where that
+/// invariant genuinely holds (see call site comment). Never a blanket
+/// suppression: a real Xcode build is what found each place this was
+/// actually needed.
+struct UncheckedSendableBox<Value>: @unchecked Sendable {
+    let value: Value
+}
+
 @MainActor
 public final class TrackingCoordinator: ObservableObject {
     private let log = Logger(subsystem: "com.kemetfc.tracker", category: "TrackingCoordinator")
@@ -56,8 +66,20 @@ public final class TrackingCoordinator: ObservableObject {
     @Published public private(set) var inferenceFPS: Double = 0
     @Published public private(set) var droppedFrameCount = 0
 
-    private let playerDetector: PlayerDetector
-    private let ballDetector: BallDetecting
+    // nonisolated(unsafe): a real Xcode build (Swift 6 strict
+    // concurrency) refused to compile runInference(...) below reading
+    // these as plain @MainActor-isolated stored properties from its own
+    // `nonisolated` context — PlayerDetector/BallDetecting are not
+    // Sendable (they wrap mutable Vision request objects), so the
+    // compiler cannot prove concurrent access is safe. It IS safe here,
+    // by construction, not by hand-waving: processFrame(...)'s
+    // `isInferring` flag guarantees at most one runInference(...) call
+    // is ever in flight at a time, so these are never actually accessed
+    // concurrently despite crossing the actor boundary. This annotation
+    // documents and asserts exactly that invariant — it does not disable
+    // or bypass the check for a reason that isn't true.
+    nonisolated(unsafe) private let playerDetector: PlayerDetector
+    nonisolated(unsafe) private let ballDetector: BallDetecting
     private var playerTracker: PlayerTracker?
     private var ballTracker = BallTracker()
     private let gimbalController: GimbalController
@@ -122,7 +144,7 @@ public final class TrackingCoordinator: ObservableObject {
 
     public func setMode(_ newMode: TrackingMode) {
         mode = newMode
-        telemetryUploader.recordEvent(type: "mode_switch", details: ["mode": newMode.rawValue])
+        telemetryUploader.recordEvent(type: "mode_switch", details: ["mode": .string(newMode.rawValue)])
     }
 
     public func setSpeedProfile(_ profile: TrackingSpeedProfile) {
@@ -200,11 +222,27 @@ public final class TrackingCoordinator: ObservableObject {
 
         recordInferenceTimestamp(now)
 
+        // Phase 3 fix: a real Xcode build flagged sending `pixelBuffer`
+        // (CVPixelBuffer, a CoreVideo type that does not conform to
+        // Sendable) into this Task.detached closure as a data-race
+        // risk. The handoff itself is genuinely safe — this is the
+        // standard AVFoundation pattern of handing one frame's buffer
+        // to exactly one consumer for exactly one round of processing,
+        // with no other reference to it retained anywhere afterward —
+        // but the compiler cannot prove that about an un-audited
+        // CoreVideo type. `UncheckedSendableBox` documents and asserts
+        // that single-ownership invariant explicitly, rather than
+        // silencing the check for a reason that isn't true.
+        // Same reasoning as pixelBuffer above: AVCaptureDevice is also
+        // not Sendable, and is only ever read (device type/position),
+        // never mutated, by the code that uses it after this handoff.
+        let boxedCaptureDevice = UncheckedSendableBox(value: captureDevice)
+        let boxedPixelBuffer = UncheckedSendableBox(value: pixelBuffer)
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
-            let result = await self.runInference(pixelBuffer: pixelBuffer)
+            let result = await self.runInference(pixelBuffer: boxedPixelBuffer.value)
             await MainActor.run {
-                self.apply(result: result, pixelBuffer: pixelBuffer, captureDevice: captureDevice, sessionElapsedSeconds: sessionElapsedSeconds)
+                self.apply(result: result, pixelBuffer: boxedPixelBuffer.value, captureDevice: boxedCaptureDevice.value, sessionElapsedSeconds: sessionElapsedSeconds)
                 self.isInferring = false
             }
         }

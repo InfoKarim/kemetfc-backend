@@ -65,8 +65,13 @@ public struct RGBAPixelBuffer {
 }
 
 public enum BallBlobDetector {
-    /// Tunable, documented thresholds — not learned weights.
-    public struct Parameters {
+    /// Tunable, documented thresholds — not learned weights. Explicit
+    /// `Sendable` (all-value-type stored properties, genuinely safe) —
+    /// a real Xcode build flagged the static `default` instance below
+    /// as "not concurrency-safe" without this, since Swift 6 does not
+    /// auto-infer Sendable for a type backing a global/static `let` in
+    /// every context.
+    public struct Parameters: Sendable {
         public var brightnessThreshold: Int
         public var channelBalanceTolerance: Int
         public var minAreaFraction: Double

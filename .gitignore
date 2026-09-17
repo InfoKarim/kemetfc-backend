@@ -14,3 +14,9 @@ analysis/results/
 .coverage
 .DS_Store
 *.log
+
+# ios/KemetFCTracker: XcodeGen-generated artifacts — project.yml is the
+# source of truth (regenerate with `xcodegen generate`); the .xcodeproj
+# and generated Info.plist are build output, not source.
+ios/KemetFCTracker/KemetFCTracker.xcodeproj/
+ios/KemetFCTracker/Sources/Info.plist

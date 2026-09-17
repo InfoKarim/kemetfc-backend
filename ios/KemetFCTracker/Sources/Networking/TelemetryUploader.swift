@@ -14,10 +14,25 @@
 import Foundation
 import os.log
 
-public final class TelemetryUploader {
+/// `@unchecked Sendable`: a real Xcode build (Swift 6 strict
+/// concurrency — never checkable via `swiftc -typecheck` alone, since
+/// this class is called across actor boundaries by TrackingCoordinator)
+/// flagged `start()`/`recordSample(...)`'s `Task { ... }` closures as
+/// unsafe. That flag was pointing at something REAL: `pendingSamples`
+/// had NO synchronization at all before this fix, despite being mutated
+/// from `recordSample`/`recordEvent` (called synchronously from
+/// TrackingCoordinator, @MainActor) AND from `flush()`'s own
+/// periodic-timer Task — a genuine, pre-existing potential data race,
+/// not a false positive. Fixed with an explicit `NSLock` guarding every
+/// access to `pendingSamples`/`flushTask`, never held across an `await`
+/// (holding a lock across a suspension point is its own hazard) — the
+/// `@unchecked Sendable` conformance is honest because of this lock,
+/// not in spite of it.
+public final class TelemetryUploader: @unchecked Sendable {
     private let log = Logger(subsystem: "com.kemetfc.tracker", category: "TelemetryUploader")
     private let apiClient: KemetAPIClient
     private let sessionId: String
+    private let lock = NSLock()
 
     /// Matches api_schemas.IngestTrackingSamplesSchema(samples: ...,
     /// max_length=500) — flushing well under that cap keeps each
@@ -34,19 +49,22 @@ public final class TelemetryUploader {
     }
 
     public func start() {
-        flushTask?.cancel()
-        flushTask = Task { [weak self] in
+        lock.withLock { flushTask?.cancel() }
+        let task = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(self.flushInterval))
                 await self.flush()
             }
         }
+        lock.withLock { flushTask = task }
     }
 
     public func stop() {
-        flushTask?.cancel()
-        flushTask = nil
+        lock.withLock {
+            flushTask?.cancel()
+            flushTask = nil
+        }
     }
 
     public func recordSample(
@@ -78,21 +96,24 @@ public final class TelemetryUploader {
             trackingMode: trackingMode,
             trackingStatus: trackingStatus
         )
-        pendingSamples.append(sample)
-        if pendingSamples.count >= maxBatchSize {
+        let shouldFlush = lock.withLock {
+            pendingSamples.append(sample)
+            return pendingSamples.count >= maxBatchSize
+        }
+        if shouldFlush {
             Task { await flush() }
         }
     }
 
-    public func recordEvent(type: String, details: [String: Any]) {
+    public func recordEvent(type: String, details: [String: TelemetryEventValue]) {
         Task {
             do {
                 struct EventBody: Encodable {
                     let event_type: String
-                    let details: [String: AnyEncodable]
+                    let details: [String: TelemetryEventValue]
                 }
-                let body = EventBody(event_type: type, details: details.mapValues(AnyEncodable.init))
-                try await apiClient.post(
+                let body = EventBody(event_type: type, details: details)
+                _ = try await apiClient.post(
                     path: "/tracking/sessions/\(sessionId)/events",
                     body: body,
                     as: EmptyResponse.self
@@ -104,9 +125,19 @@ public final class TelemetryUploader {
     }
 
     private func flush() async {
-        guard !pendingSamples.isEmpty else { return }
-        let batch = Array(pendingSamples.prefix(maxBatchSize))
-        pendingSamples.removeFirst(batch.count)
+        // A real Xcode build rejected manual lock()/unlock() pairs
+        // INSIDE this async function outright ("unavailable from
+        // asynchronous contexts") — Swift 6's NSLock now requires the
+        // closure-based `withLock` for exactly the scoped, never-
+        // held-across-`await` usage this already was; each `withLock`
+        // call below still fully returns before the next `await`.
+        let batch: [TrackingSample] = lock.withLock {
+            guard !pendingSamples.isEmpty else { return [] }
+            let batch = Array(pendingSamples.prefix(maxBatchSize))
+            pendingSamples.removeFirst(batch.count)
+            return batch
+        }
+        guard !batch.isEmpty else { return }
 
         struct Body: Encodable {
             let samples: [TrackingSample]
@@ -127,28 +158,47 @@ public final class TelemetryUploader {
             // interruption" must never corrupt the assessment record;
             // the same principle applies to telemetry upload).
             log.error("Sample flush failed, re-queuing \(batch.count) samples: \(error.localizedDescription)")
-            pendingSamples.insert(contentsOf: batch, at: 0)
+            lock.withLock {
+                pendingSamples.insert(contentsOf: batch, at: 0)
+            }
         }
     }
 }
 
 private struct EmptyResponse: Decodable {}
 
-/// A minimal type-erased Encodable wrapper so recordEvent's [String: Any]
-/// details dictionary can be sent as JSON without hand-rolling every
-/// possible event's own Codable struct.
-public struct AnyEncodable: Encodable {
-    private let value: Any
-    public init(_ value: Any) { self.value = value }
+/// Phase 3 fix: `recordEvent`'s `details` parameter used to be
+/// `[String: Any]`, encoded via a type-erased `AnyEncodable(Any)`
+/// wrapper — `Any` is not `Sendable`, and a real Xcode build flagged
+/// `recordEvent`'s `Task { ... }` closure (capturing `details`) as a
+/// data-race risk because of it. Since every actual call site only ever
+/// passes a String or an Int (see TrackingCoordinator.setMode/
+/// lockPlayer), this closed, genuinely-Sendable enum replaces the
+/// open-ended `Any` — a real fix, not a suppressed warning, since it
+/// also stops this API from silently accepting a value it couldn't
+/// actually encode (the old `AnyEncodable` defaulted unknown types to
+/// `null` rather than failing).
+public enum TelemetryEventValue: Sendable, Encodable {
+    case string(String)
+    case int(Int)
+    case double(Double)
+    case bool(Bool)
 
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
-        switch value {
-        case let v as String: try container.encode(v)
-        case let v as Int: try container.encode(v)
-        case let v as Double: try container.encode(v)
-        case let v as Bool: try container.encode(v)
-        default: try container.encodeNil()
+        switch self {
+        case .string(let value): try container.encode(value)
+        case .int(let value): try container.encode(value)
+        case .double(let value): try container.encode(value)
+        case .bool(let value): try container.encode(value)
         }
     }
+}
+
+extension TelemetryEventValue: ExpressibleByStringLiteral {
+    public init(stringLiteral value: String) { self = .string(value) }
+}
+
+extension TelemetryEventValue: ExpressibleByIntegerLiteral {
+    public init(integerLiteral value: Int) { self = .int(value) }
 }

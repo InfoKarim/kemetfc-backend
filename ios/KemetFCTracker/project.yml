@@ -2,11 +2,19 @@
 # text file plus Sources/Info.plist, so the project is versioned as
 # plain text (spec: "make the iOS code a real openable Xcode project").
 #
-# This machine has Command Line Tools only (no full Xcode — see
-# ios/KemetFCTracker/README.md and this session's VERIFICATION_CHECKLIST
-# .md), so `xcodegen generate` has NOT been run here and no .xcodeproj
-# has been generated or opened in this environment. On a real Mac with
-# Xcode + XcodeGen installed:
+# Phase 3: this machine now has full Xcode (27.0) — `xcodegen generate`
+# HAS been run here, producing a real KemetFCTracker.xcodeproj that
+# genuinely built successfully against the real iOS 27.0 device SDK
+# (`xcodebuild build ... -sdk iphoneos`, BUILD SUCCEEDED) after fixing
+# ~15 real compile/concurrency/API errors the build found — see the
+# Phase 3 field-readiness report for the full list. No iOS Simulator
+# runtime could be installed on this machine (insufficient disk: 8.07GB
+# required, 7.4GB free) — and separately, DockKit does not exist on the
+# iOS Simulator SDK at all, so this app can NEVER build for Simulator
+# regardless of disk space; only a physical-device SDK build is
+# possible. No physical iPhone or Flow 2 Pro were connected in this
+# environment either. On a Mac with more disk space or a connected
+# device:
 #
 #   brew install xcodegen   # if not already installed
 #   cd ios/KemetFCTracker
@@ -47,6 +55,18 @@ targets:
           - UIInterfaceOrientationPortrait
         NSCameraUsageDescription: "KEMET FC uses the camera to record player assessments and track the player being evaluated."
         ITSAppUsesNonExemptEncryption: false
+        # Phase 3 finding: README.md's own documented on-field workflow
+        # (KEMET_BACKEND_BASE_URL = http://<mac-LAN-IP>:8010 for testing
+        # against a laptop) would be silently blocked by App Transport
+        # Security on a real device without this — ATS refuses plain
+        # HTTP by default. NSAllowsLocalNetworking (iOS 10+) scopes the
+        # exception to literal IP addresses/.local hosts ONLY — it does
+        # NOT disable ATS for the internet at large the way
+        # NSAllowsArbitraryLoads would, so production traffic to
+        # https://app.kemetfc.com is unaffected and still fully
+        # ATS-protected.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kemetfc.tracker

@@ -96,22 +96,29 @@ public final class DockKitManager: ObservableObject {
     }
 
     private func handle(stateChange: DockAccessory.StateChange) async {
-        let accessory = stateChange.accessory
+        // Phase 3 fix — a REAL Xcode build (the first ever performed
+        // against this file; DockKit isn't available to swiftc outside
+        // Xcode) found this treated `stateChange.accessory` as
+        // non-optional. Re-verified against Apple's live docs:
+        // `DockAccessory.StateChange.accessory` is genuinely
+        // `DockAccessory?` — the exact kind of silent wrong assumption
+        // this whole verification pass exists to catch. A nil accessory
+        // carries no identifier/category/battery/firmware to report, so
+        // there is nothing meaningful this manager can do with it.
+        guard let accessory = stateChange.accessory else { return }
 
-        // RESOLVED (Phase 2 audit) — this was flagged as an unverified
-        // assumption in the Phase 1 report. Re-checked against Apple's
-        // live docs: DockAccessory.Category has EXACTLY ONE documented
-        // case, .trackingStand — there is no other category to
-        // possibly confuse this with. Every DockKit-compatible
-        // accessory, Flow 2 Pro included, necessarily reports this
-        // category, since the enum defines nothing else. Insta360's own
-        // Flow 2 Pro DockKit documentation (onlinemanual.insta360.com,
-        // /flow2pro/en-us/operating-tutorials/track/apple-dockkit)
-        // confirms iOS 17.0+ (17.4+ recommended) and NFC-based pairing,
-        // but does not itself document a category value — moot, since
-        // no alternative exists in the API for it to be. This guard is
-        // effectively "is this a DockKit accessory at all," not a
-        // Flow-2-Pro-specific guess.
+        // RESOLVED (Phase 2 audit): DockAccessory.Category has EXACTLY
+        // ONE documented case, .trackingStand — there is no other
+        // category to possibly confuse this with. Every DockKit-
+        // compatible accessory, Flow 2 Pro included, necessarily
+        // reports this category, since the enum defines nothing else.
+        // Insta360's own Flow 2 Pro DockKit documentation
+        // (onlinemanual.insta360.com/flow2pro/en-us/operating-tutorials/
+        // track/apple-dockkit) confirms iOS 17.0+ (17.4+ recommended)
+        // and NFC-based pairing, but does not itself document a
+        // category value — moot, since no alternative exists in the API
+        // for it to be. This guard is effectively "is this a DockKit
+        // accessory at all," not a Flow-2-Pro-specific guess.
         guard accessory.identifier.category == .trackingStand else { return }
 
         trackingButtonEnabled = stateChange.trackingButtonEnabled
@@ -165,14 +172,34 @@ public final class DockKitManager: ObservableObject {
     }
 
     private func observeBattery(for accessory: DockAccessory) {
+        // Phase 3 fix: `DockAccessory.batteryStates` is iOS 18.0+ (this
+        // file's own header already said so, but the project's
+        // deployment target is 17.4 — Insta360's own recommended DockKit
+        // minimum — and nothing had ever actually enforced this
+        // mismatch until a real Xcode build did). On 17.4-17.x,
+        // `batteryLevel` simply stays nil, which every caller already
+        // treats as "unknown," not an error.
+        guard #available(iOS 18.0, *) else {
+            log.info("Battery state streaming requires iOS 18.0+ — battery level will remain unavailable on this OS version.")
+            return
+        }
         batteryTask?.cancel()
         batteryTask = Task { [weak self] in
             guard let self else { return }
             do {
-                for try await states in try accessory.batteryStates {
-                    guard let first = states.first else { continue }
+                // A real Xcode build also found this treated each
+                // yielded element as a COLLECTION needing `.first` —
+                // re-verified against Apple's live docs:
+                // `DockAccessory.BatteryStates.Element` is directly
+                // `DockAccessory.BatteryState`, one value per iteration,
+                // not an array of them. The property access itself also
+                // genuinely throws on this SDK (contrary to this file's
+                // original recollection) — confirmed by the compiler
+                // rejecting the un-`try`'d access, not just re-added
+                // defensively.
+                for try await state in try accessory.batteryStates {
                     await MainActor.run {
-                        self.batteryLevel = Double(first.batteryLevel)
+                        self.batteryLevel = Double(state.batteryLevel)
                     }
                 }
             } catch {
