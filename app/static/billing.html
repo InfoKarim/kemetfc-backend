@@ -46,9 +46,19 @@
       text-transform: uppercase;
       margin-bottom: 14px;
     }
-    .status-badge.active { background: #eefbf3; color: #17a957 !important; }
-    .status-badge.past_due, .status-badge.unpaid { background: #fff0f0; color: #c83b45 !important; }
-    .status-badge.canceled, .status-badge.none { background: #eef1f5; color: #4a5968 !important; }
+    .status-badge.active, .status-badge.complimentary { background: #eefbf3; color: #17a957 !important; }
+    .status-badge.past_due, .status-badge.expired { background: #fff0f0; color: #c83b45 !important; }
+    .status-badge.pending_payment, .status-badge.paused { background: #fff8e9; color: #b9790a !important; }
+    .status-badge.cancelled, .status-badge.unassigned { background: #eef1f5; color: #4a5968 !important; }
+    .promo-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; align-items: center; }
+    .promo-row input {
+      padding: 10px 12px; border: 1px solid #d7e0eb; border-radius: 8px; font: inherit; min-width: 160px;
+    }
+    .promo-message { font-size: 12.5px; margin-top: 6px; }
+    .promo-message.error { color: #a21f2b !important; }
+    .promo-message.success { color: #17a957 !important; }
+    .header-actions { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+    button.manage-payment-method { background: white; border: 1px solid #d7e0eb; color: #16233B !important; }
     .payment-due-notice {
       display: flex;
       flex-direction: column;
@@ -87,13 +97,19 @@
         <a href="/players-dashboard">Players</a>
         <a class="active" href="/billing">Billing</a>
         <a id="payment-control-link" href="/payment-control" hidden>Payment Control</a>
+        <a id="payment-settings-link" href="/payment-settings" hidden>Payment Settings</a>
         <a href="/messages-page">Messaging</a>
       </nav>
     </aside>
 
     <main>
-      <h1>Billing</h1>
-      <p class="muted">Manage your recurring KEMET FC subscription.</p>
+      <div class="header-actions">
+        <div>
+          <h1>Billing</h1>
+          <p class="muted">Manage your recurring KEMET FC subscription.</p>
+        </div>
+        <button id="manage-payment-method" class="manage-payment-method" type="button" hidden>Manage Payment Method</button>
+      </div>
 
       <div id="not-configured-notice" class="notice" hidden>
         Subscriptions are not yet configured for this academy. Contact the
@@ -127,15 +143,24 @@
         : "Checkout was cancelled — no charge was made.";
     }
 
-    function statusLabel(subscription) {
-      if (!subscription) return "No active subscription";
-      if (subscription.cancel_at_period_end) return "Cancelling at period end";
-      return subscription.status.replace(/_/g, " ");
+    const MEMBERSHIP_STATUS_LABELS = {
+      UNASSIGNED: "No membership assigned",
+      ACTIVE: "Active",
+      PENDING_PAYMENT: "Payment pending",
+      PAST_DUE: "Past due",
+      PAUSED: "Paused",
+      CANCELLED: "Cancelled",
+      EXPIRED: "Expired",
+      COMPLIMENTARY: "Complimentary",
+    };
+
+    function statusLabel(statusData, subscription) {
+      if (subscription && subscription.cancel_at_period_end) return "Cancelling at period end";
+      return MEMBERSHIP_STATUS_LABELS[statusData.membership_status] || statusData.membership_status;
     }
 
-    function statusClass(subscription) {
-      if (!subscription) return "none";
-      return subscription.status;
+    function statusClass(statusData) {
+      return (statusData.membership_status || "unassigned").toLowerCase();
     }
 
     function formatMoney(cents, currency) {
@@ -163,9 +188,15 @@
 
       const subscription = statusData.subscription;
       const membership = statusData.membership;
-      const badge = make("span", `status-badge ${statusClass(subscription)}`, statusLabel(subscription));
+      const isComplimentary = statusData.membership_status === "COMPLIMENTARY";
+      const badge = make("span", `status-badge ${statusClass(statusData)}`, statusLabel(statusData, subscription));
       card.append(badge);
       card.append(document.createElement("br"));
+
+      if (isComplimentary) {
+        card.append(make("p", "muted", "This player has a complimentary membership — no payment is needed."));
+        return card;
+      }
 
       if (!subscription && membership) {
         const dueNotice = make("div", "payment-due-notice");
@@ -179,10 +210,11 @@
         card.append(dueNotice);
       }
 
+      const isCancel = subscription && !subscription.cancel_at_period_end;
       const actionButton = make(
         "button",
-        subscription && !subscription.cancel_at_period_end ? "cancel" : "",
-        subscription && !subscription.cancel_at_period_end
+        isCancel ? "cancel" : "",
+        isCancel
           ? "Cancel subscription"
           : membership
             ? "Pay Now"
@@ -194,19 +226,37 @@
         document.querySelector("#not-configured-notice").hidden = false;
       }
 
+      let promoInput = null;
+      let promoMessage = null;
+      if (!isCancel) {
+        const promoRow = make("div", "promo-row");
+        promoInput = make("input");
+        promoInput.type = "text";
+        promoInput.placeholder = "Promo code (optional)";
+        promoRow.append(promoInput);
+        card.append(promoRow);
+        promoMessage = make("p", "promo-message");
+        card.append(promoMessage);
+      }
+
       actionButton.addEventListener("click", async () => {
         actionButton.disabled = true;
         const originalText = actionButton.textContent;
         actionButton.textContent = "Please wait...";
+        if (promoMessage) promoMessage.textContent = "";
 
         try {
-          const isCancel = subscription && !subscription.cancel_at_period_end;
           const response = await fetch(
             isCancel ? "/billing/cancel" : "/billing/checkout-session",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ player_id: child.player_id }),
+              body: JSON.stringify({
+                player_id: child.player_id,
+                ...(promoInput && promoInput.value.trim()
+                  ? { promo_code: promoInput.value.trim() }
+                  : {}),
+              }),
             }
           );
           const data = await response.json();
@@ -223,7 +273,12 @@
         } catch (error) {
           actionButton.disabled = false;
           actionButton.textContent = originalText;
-          alert(error.message);
+          if (promoMessage) {
+            promoMessage.className = "promo-message error";
+            promoMessage.textContent = error.message;
+          } else {
+            alert(error.message);
+          }
         }
       });
 
@@ -292,6 +347,26 @@
         const meResponse = await fetch("/auth/me");
         const me = await meResponse.json();
         const role = me.user.role;
+
+        if (role === "guardian") {
+          const manageButton = document.querySelector("#manage-payment-method");
+          manageButton.hidden = false;
+          manageButton.addEventListener("click", async () => {
+            manageButton.disabled = true;
+            const originalText = manageButton.textContent;
+            manageButton.textContent = "Please wait...";
+            try {
+              const response = await fetch("/billing/portal-session", { method: "POST" });
+              const data = await response.json();
+              if (!response.ok) throw new Error(data.detail || "Something went wrong.");
+              location.href = data.portal_url;
+            } catch (error) {
+              manageButton.disabled = false;
+              manageButton.textContent = originalText;
+              alert(error.message);
+            }
+          });
+        }
 
         const childrenResponse = await fetch(
           role === "guardian" ? "/guardian/children" : "/players"

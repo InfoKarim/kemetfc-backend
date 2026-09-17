@@ -695,3 +695,485 @@ def test_refund_rejects_unpaid_invoice(client):
 
     response = client.post("/billing/payments/in_unpaid_test/refund", json={})
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Promo codes
+# ---------------------------------------------------------------------------
+
+def test_admin_can_create_list_and_deactivate_a_promo_code(client):
+    response = client.post(
+        "/billing/promo-codes",
+        json={
+            "code": "SAVE10",
+            "discount_type": "percentage",
+            "discount_value": 10,
+        },
+    )
+    assert response.status_code == 201
+    promo_code_id = response.json()["promo_code_id"]
+    assert response.json()["code"] == "SAVE10"
+
+    list_response = client.get("/billing/promo-codes")
+    assert list_response.status_code == 200
+    codes = [p["code"] for p in list_response.json()["promo_codes"]]
+    assert "SAVE10" in codes
+
+    deactivate_response = client.patch(
+        f"/billing/promo-codes/{promo_code_id}", json={"active": False}
+    )
+    assert deactivate_response.status_code == 200
+    assert deactivate_response.json()["active"] is False
+
+
+def test_non_admin_cannot_manage_promo_codes(client):
+    coach_client = _create_role_client("pc.coach.promo", "CoachPassword123!", "coach")
+    response = coach_client.post(
+        "/billing/promo-codes",
+        json={"code": "COACHNO", "discount_type": "percentage", "discount_value": 10},
+    )
+    assert response.status_code == 403
+    assert coach_client.get("/billing/promo-codes").status_code == 403
+
+
+def test_checkout_session_applies_a_valid_promo_code(client, monkeypatch):
+    from app.services import billing_service
+
+    create_test_player(client, "PC_P_PROMO_CHECKOUT")
+    plan_id = create_membership_plan(client, "promo_checkout")
+    client.post(
+        "/billing/subscriptions/PC_P_PROMO_CHECKOUT/membership",
+        json={"plan_id": plan_id},
+    )
+    client.post(
+        "/billing/promo-codes",
+        json={"code": "PROMO20", "discount_type": "percentage", "discount_value": 20},
+    )
+
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
+    monkeypatch.setattr(billing_service.stripe.Coupon, "retrieve", lambda coupon_id: None)
+    monkeypatch.setattr(
+        billing_service.stripe.Customer, "create", lambda **kwargs: {"id": "cus_promo_test"}
+    )
+
+    captured = {}
+
+    class FakeSession:
+        url = "https://checkout.stripe.com/session/promo"
+
+    monkeypatch.setattr(
+        billing_service.stripe.checkout.Session,
+        "create",
+        lambda **kwargs: (captured.update(kwargs), FakeSession())[1],
+    )
+
+    guardian_client = _create_role_client("pc.guardian.promo", "GuardianPassword123!", "guardian")
+    db = TestingSessionLocal()
+    db.add(GuardianPlayerLinkDB(
+        guardian_user_id="PC_PC.GUARDIAN.PROMO",
+        player_id="PC_P_PROMO_CHECKOUT",
+        created_at=utcnow(),
+        created_by_user_id="PC_ADMIN",
+    ))
+    db.query(UserDB).filter(UserDB.user_id == "PC_PC.GUARDIAN.PROMO").update(
+        {"email": "promo.guardian@example.com"}
+    )
+    db.commit()
+    db.close()
+
+    response = guardian_client.post(
+        "/billing/checkout-session",
+        json={"player_id": "PC_P_PROMO_CHECKOUT", "promo_code": "promo20"},
+    )
+    assert response.status_code == 201
+    assert captured["discounts"] == [{"coupon": "promo-" + captured["discounts"][0]["coupon"].split("-", 1)[1]}]
+
+    # The redemption was recorded server-side.
+    redemptions = db_query_redemption_count("PROMO20")
+    assert redemptions == 1
+
+
+def test_checkout_session_rejects_an_invalid_promo_code(client, monkeypatch):
+    from app.services import billing_service
+
+    create_test_player(client, "PC_P_BAD_PROMO")
+    plan_id = create_membership_plan(client, "bad_promo")
+    client.post(
+        "/billing/subscriptions/PC_P_BAD_PROMO/membership",
+        json={"plan_id": plan_id},
+    )
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
+
+    guardian_client = _create_role_client("pc.guardian.badpromo", "GuardianPassword123!", "guardian")
+    db = TestingSessionLocal()
+    db.add(GuardianPlayerLinkDB(
+        guardian_user_id="PC_PC.GUARDIAN.BADPROMO",
+        player_id="PC_P_BAD_PROMO",
+        created_at=utcnow(),
+        created_by_user_id="PC_ADMIN",
+    ))
+    db.query(UserDB).filter(UserDB.user_id == "PC_PC.GUARDIAN.BADPROMO").update(
+        {"email": "badpromo.guardian@example.com"}
+    )
+    db.commit()
+    db.close()
+
+    response = guardian_client.post(
+        "/billing/checkout-session",
+        json={"player_id": "PC_P_BAD_PROMO", "promo_code": "NOPE_NOT_REAL"},
+    )
+    assert response.status_code == 404
+    assert "Invalid promo code" in response.json()["detail"]
+
+
+def db_query_redemption_count(code):
+    from app.db_models import PromoCodeDB, PromoCodeRedemptionDB
+
+    db = TestingSessionLocal()
+    promo = db.query(PromoCodeDB).filter(PromoCodeDB.code == code).one()
+    count = (
+        db.query(PromoCodeRedemptionDB)
+        .filter(PromoCodeRedemptionDB.promo_code_id == promo.promo_code_id)
+        .count()
+    )
+    db.close()
+    return count
+
+
+# ---------------------------------------------------------------------------
+# Complimentary membership
+# ---------------------------------------------------------------------------
+
+def test_admin_can_grant_and_revoke_complimentary_membership(client):
+    create_test_player(client, "PC_P_COMP")
+
+    grant_response = client.post(
+        "/billing/subscriptions/PC_P_COMP/complimentary", json={}
+    )
+    assert grant_response.status_code == 200
+    assert grant_response.json()["is_complimentary"] is True
+
+    status_response = client.get("/billing/status/PC_P_COMP")
+    assert status_response.json()["membership_status"] == "COMPLIMENTARY"
+    assert status_response.json()["eligibility"] == "TRAINING_ELIGIBLE"
+
+    revoke_response = client.delete("/billing/subscriptions/PC_P_COMP/complimentary")
+    assert revoke_response.status_code == 200
+    assert revoke_response.json()["is_complimentary"] is False
+
+
+def test_complimentary_membership_blocks_checkout(client, monkeypatch):
+    from app.services import billing_service
+
+    create_test_player(client, "PC_P_COMP_CHECKOUT")
+    client.post("/billing/subscriptions/PC_P_COMP_CHECKOUT/complimentary", json={})
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
+
+    guardian_client = _create_role_client("pc.guardian.comp", "GuardianPassword123!", "guardian")
+    db = TestingSessionLocal()
+    db.add(GuardianPlayerLinkDB(
+        guardian_user_id="PC_PC.GUARDIAN.COMP",
+        player_id="PC_P_COMP_CHECKOUT",
+        created_at=utcnow(),
+        created_by_user_id="PC_ADMIN",
+    ))
+    db.query(UserDB).filter(UserDB.user_id == "PC_PC.GUARDIAN.COMP").update(
+        {"email": "comp.guardian@example.com"}
+    )
+    db.commit()
+    db.close()
+
+    response = guardian_client.post(
+        "/billing/checkout-session", json={"player_id": "PC_P_COMP_CHECKOUT"}
+    )
+    assert response.status_code == 404
+    assert "complimentary" in response.json()["detail"]
+
+
+def test_revoking_complimentary_without_one_raises(client):
+    create_test_player(client, "PC_P_NO_COMP")
+    response = client.delete("/billing/subscriptions/PC_P_NO_COMP/complimentary")
+    assert response.status_code == 404
+
+
+def test_non_admin_cannot_grant_complimentary_membership(client):
+    create_test_player(client, "PC_P_COMP_DENY")
+    coach_client = _create_role_client("pc.coach.comp", "CoachPassword123!", "coach")
+    response = coach_client.post(
+        "/billing/subscriptions/PC_P_COMP_DENY/complimentary", json={}
+    )
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Eligibility override
+# ---------------------------------------------------------------------------
+
+def test_admin_can_set_and_clear_eligibility_override(client):
+    create_test_player(client, "PC_P_OVERRIDE")
+    plan_id = create_membership_plan(client, "override")
+    client.post(
+        "/billing/subscriptions/PC_P_OVERRIDE/membership", json={"plan_id": plan_id}
+    )
+
+    set_response = client.put(
+        "/billing/subscriptions/PC_P_OVERRIDE/eligibility-override",
+        json={"reason": "Injured — approved to keep training with the team"},
+    )
+    assert set_response.status_code == 200
+    assert set_response.json()["admin_override_eligibility"]
+
+    status_response = client.get("/billing/status/PC_P_OVERRIDE")
+    assert status_response.json()["eligibility"] == "ADMIN_OVERRIDE"
+
+    clear_response = client.put(
+        "/billing/subscriptions/PC_P_OVERRIDE/eligibility-override",
+        json={"reason": None},
+    )
+    assert clear_response.status_code == 200
+    assert clear_response.json()["admin_override_eligibility"] is None
+
+
+def test_eligibility_override_requires_existing_membership(client):
+    create_test_player(client, "PC_P_NO_MEMBERSHIP_OVERRIDE")
+    response = client.put(
+        "/billing/subscriptions/PC_P_NO_MEMBERSHIP_OVERRIDE/eligibility-override",
+        json={"reason": "test"},
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Billing settings
+# ---------------------------------------------------------------------------
+
+def test_admin_can_read_and_update_billing_settings(client):
+    get_response = client.get("/billing/settings")
+    assert get_response.status_code == 200
+    assert get_response.json()["grace_period_days"] == 7  # sensible default
+
+    update_response = client.patch(
+        "/billing/settings", json={"grace_period_days": 14}
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["grace_period_days"] == 14
+
+    # Persisted, not just echoed back.
+    get_again = client.get("/billing/settings")
+    assert get_again.json()["grace_period_days"] == 14
+
+
+def test_non_admin_cannot_manage_billing_settings(client):
+    coach_client = _create_role_client("pc.coach.settings", "CoachPassword123!", "coach")
+    assert coach_client.get("/billing/settings").status_code == 403
+    assert coach_client.patch("/billing/settings", json={"grace_period_days": 1}).status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Family / sibling discount rules
+# ---------------------------------------------------------------------------
+
+def test_admin_can_create_and_update_family_discount_rule(client):
+    response = client.post(
+        "/billing/family-discount-rules",
+        json={"sibling_position": 2, "discount_percent": 15},
+    )
+    assert response.status_code == 201
+    rule_id = response.json()["rule_id"]
+
+    list_response = client.get("/billing/family-discount-rules")
+    assert any(r["rule_id"] == rule_id for r in list_response.json()["rules"])
+
+    update_response = client.patch(
+        f"/billing/family-discount-rules/{rule_id}",
+        json={"discount_percent": 20},
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["discount_percent"] == 20
+
+
+def test_duplicate_sibling_position_rejected(client):
+    client.post(
+        "/billing/family-discount-rules",
+        json={"sibling_position": 3, "discount_percent": 10},
+    )
+    response = client.post(
+        "/billing/family-discount-rules",
+        json={"sibling_position": 3, "discount_percent": 25},
+    )
+    assert response.status_code == 400
+
+
+def test_sibling_discount_applied_automatically_at_checkout(client, monkeypatch):
+    from app.services import billing_service
+
+    # sibling_position=2 may already exist from an earlier test in this
+    # shared module-scoped DB — create it, or update it in place to the
+    # exact percent this test expects, rather than assuming a fresh row.
+    create_response = client.post(
+        "/billing/family-discount-rules",
+        json={"sibling_position": 2, "discount_percent": 25},
+    )
+    if create_response.status_code != 201:
+        existing_rule = next(
+            rule for rule in client.get("/billing/family-discount-rules").json()["rules"]
+            if rule["sibling_position"] == 2
+        )
+        client.patch(
+            f"/billing/family-discount-rules/{existing_rule['rule_id']}",
+            json={"discount_percent": 25, "active": True},
+        )
+
+    create_test_player(client, "PC_P_SIB_FIRST")
+    create_test_player(client, "PC_P_SIB_SECOND")
+    plan_id = create_membership_plan(client, "sibling")
+
+    guardian_client = _create_role_client("pc.guardian.sibling", "GuardianPassword123!", "guardian")
+    db = TestingSessionLocal()
+    for player_id in ("PC_P_SIB_FIRST", "PC_P_SIB_SECOND"):
+        db.add(GuardianPlayerLinkDB(
+            guardian_user_id="PC_PC.GUARDIAN.SIBLING",
+            player_id=player_id,
+            created_at=utcnow(),
+            created_by_user_id="PC_ADMIN",
+        ))
+    db.query(UserDB).filter(UserDB.user_id == "PC_PC.GUARDIAN.SIBLING").update(
+        {"email": "sibling.guardian@example.com"}
+    )
+    db.commit()
+    db.close()
+
+    # First child assigned first -> full price (sibling position 1).
+    client.post(
+        f"/billing/subscriptions/PC_P_SIB_FIRST/membership", json={"plan_id": plan_id}
+    )
+    # Second child assigned after -> sibling position 2 -> discounted.
+    client.post(
+        f"/billing/subscriptions/PC_P_SIB_SECOND/membership", json={"plan_id": plan_id}
+    )
+
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
+    monkeypatch.setattr(billing_service.stripe.Coupon, "retrieve", lambda coupon_id: None)
+    monkeypatch.setattr(
+        billing_service.stripe.Customer, "create", lambda **kwargs: {"id": "cus_sibling_test"}
+    )
+
+    captured = {}
+
+    class FakeSession:
+        url = "https://checkout.stripe.com/session/sibling"
+
+    monkeypatch.setattr(
+        billing_service.stripe.checkout.Session,
+        "create",
+        lambda **kwargs: (captured.update(kwargs), FakeSession())[1],
+    )
+
+    response = guardian_client.post(
+        "/billing/checkout-session", json={"player_id": "PC_P_SIB_SECOND"}
+    )
+    assert response.status_code == 201
+    assert captured["discounts"] == [{"coupon": "kemetfc-25pct-forever"}]
+
+
+def test_non_admin_cannot_manage_family_discount_rules(client):
+    coach_client = _create_role_client("pc.coach.sibling", "CoachPassword123!", "coach")
+    response = coach_client.post(
+        "/billing/family-discount-rules",
+        json={"sibling_position": 5, "discount_percent": 10},
+    )
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Billing portal (saved payment methods)
+# ---------------------------------------------------------------------------
+
+def test_guardian_can_request_a_billing_portal_session(client, monkeypatch):
+    from app.services import billing_service
+
+    monkeypatch.setattr(billing_service, "get_stripe_secret_key", lambda: "sk_test_x")
+    monkeypatch.setattr(
+        billing_service.stripe.Customer, "create", lambda **kwargs: {"id": "cus_portal_test"}
+    )
+
+    class FakePortalSession:
+        url = "https://billing.stripe.com/session/portal"
+
+    monkeypatch.setattr(
+        billing_service.stripe.billing_portal.Session,
+        "create",
+        lambda **kwargs: FakePortalSession(),
+    )
+
+    guardian_client = _create_role_client("pc.guardian.portal", "GuardianPassword123!", "guardian")
+    db = TestingSessionLocal()
+    db.query(UserDB).filter(UserDB.user_id == "PC_PC.GUARDIAN.PORTAL").update(
+        {"email": "portal.guardian@example.com"}
+    )
+    db.commit()
+    db.close()
+
+    response = guardian_client.post("/billing/portal-session")
+    assert response.status_code == 200
+    assert response.json()["portal_url"] == "https://billing.stripe.com/session/portal"
+
+
+def test_coach_cannot_request_a_billing_portal_session(client):
+    coach_client = _create_role_client("pc.coach.portal", "CoachPassword123!", "coach")
+    response = coach_client.post("/billing/portal-session")
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Financial reporting
+# ---------------------------------------------------------------------------
+
+def test_admin_financial_report_reflects_manual_payments_by_plan(client):
+    create_test_player(client, "PC_P_REPORT")
+    plan_id = create_membership_plan(client, "report")
+
+    assign_response = client.post(
+        "/billing/subscriptions/PC_P_REPORT/membership", json={"plan_id": plan_id}
+    )
+    assert assign_response.status_code == 200
+
+    manual_response = client.post(
+        "/billing/manual-payments/PC_P_REPORT",
+        json={
+            "amount_cents": 12000,
+            "currency": "usd",
+            "method": "cash",
+            "payment_date": "2026-09-01",
+        },
+    )
+    assert manual_response.status_code == 201
+
+    report_response = client.get("/billing/admin/report")
+    assert report_response.status_code == 200
+    report = report_response.json()
+
+    assert "revenue_by_plan" in report
+    assert "revenue_by_team" in report
+    assert "manual_vs_online_cents" in report
+    assert "upcoming_renewals" in report
+
+    plan_bucket = next(
+        (entry for entry in report["revenue_by_plan"] if entry["plan_name"] == "Monthly Plan report"),
+        None,
+    )
+    assert plan_bucket is not None
+    assert plan_bucket["total_cents"] >= 12000
+    assert report["manual_vs_online_cents"]["manual_cents"] >= 12000
+
+
+def test_non_admin_cannot_view_financial_report(client):
+    guardian_client = _create_role_client("pc.guardian.report", "GuardianPassword123!", "guardian")
+    coach_client = _create_role_client("pc.coach.report", "CoachPassword123!", "coach")
+
+    assert guardian_client.get("/billing/admin/report").status_code == 403
+    assert coach_client.get("/billing/admin/report").status_code == 403
+
+
+def test_unauthenticated_cannot_view_financial_report(anonymous_client):
+    assert anonymous_client.get("/billing/admin/report").status_code == 401

@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Payment Settings | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    :root {
+      --blue: #0866f5;
+      --green: #28b75f;
+      --orange: #ff9418;
+      --red: #c83b45;
+      --line: #dfe6ef;
+      --muted: #68778d;
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, sans-serif; }
+
+    .layout { display: grid; min-height: 100vh; grid-template-columns: 240px 1fr; }
+
+    aside {
+      position: sticky; top: 0; height: 100vh; padding: 28px 16px;
+      color: white; background: linear-gradient(180deg, #071d39, #031226);
+    }
+    .brand { margin: 0 10px 30px; color: #f5c45d; font-size: 24px; font-weight: 900; }
+    .brand small { display: block; margin-top: 3px; color: #8ca1bb; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
+    nav { display: grid; gap: 7px; }
+    nav a { padding: 12px 14px; border-radius: 9px; color: #dce7f5; text-decoration: none; font-size: 14px; font-weight: 650; }
+    nav a:hover, nav a.active { color: white; background: var(--blue); }
+
+    main { min-width: 0; padding: 26px 30px 60px; max-width: 900px; }
+
+    h1 { margin: 0; font-size: 26px; letter-spacing: -.04em; }
+    header p { margin: 5px 0 0; }
+
+    .card { border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: 0 8px 24px #15304d0a; margin-bottom: 20px; }
+    .card h2 { margin: 0 0 4px; font-size: 16px; }
+    .card .hint { margin: 0 0 14px; font-size: 12.5px; }
+
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; font-weight: 700; margin-bottom: 5px; }
+    .field input, .field select {
+      width: 100%; padding: 9px 10px; border: 1px solid #d7e0eb; border-radius: 8px; font: inherit;
+    }
+    .field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+
+    .row-list { display: grid; gap: 8px; margin: 14px 0; }
+    .row-list .row {
+      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
+      padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
+    }
+    .row-list .row .row-actions { display: flex; gap: 6px; }
+
+    .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+    .badge.active { background: #e8f8ee; color: #1c8a4a !important; }
+    .badge.inactive { background: #eef1f5; color: #4a5968 !important; }
+
+    button.link-button {
+      padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: white !important; color: var(--blue) !important;
+      font-size: 12px; font-weight: 750; cursor: pointer;
+    }
+
+    .btn { padding: 9px 14px; border: 0; border-radius: 8px; background: var(--blue) !important; color: white !important; font-weight: 750; cursor: pointer; font-size: 13px; }
+    .btn.secondary { background: white !important; border: 1px solid var(--line); color: #2c3e58 !important; }
+    .btn:disabled { opacity: .6; cursor: default; }
+
+    #page-message { min-height: 18px; font-size: 13px; margin-bottom: 8px; }
+    .muted { color: var(--muted); }
+  </style>
+  <script src="/auth-client.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside>
+      <div class="brand">Kemet FC<small>Academy Development</small></div>
+      <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/players-dashboard">Players</a>
+        <a href="/registrations-dashboard">Assessment Registrations</a>
+        <a href="/payment-control">Payment Control</a>
+        <a class="active" href="/payment-settings">Payment Settings</a>
+        <a href="/billing">Billing</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <h1>Payment Settings</h1>
+        <p class="muted">Grace periods, promo codes, and sibling discounts — configured here, no code changes needed.</p>
+      </header>
+
+      <p id="page-message" role="status"></p>
+
+      <section class="card">
+        <h2>Billing Policy</h2>
+        <p class="hint muted">How long a past-due membership stays past-due before it needs admin attention, and how many days before a renewal to remind a guardian.</p>
+        <form id="settings-form">
+          <div class="field-grid">
+            <div class="field">
+              <label>Grace period (days)</label>
+              <input type="number" id="grace-period-days" min="0" max="90" required>
+            </div>
+            <div class="field">
+              <label>Payment reminder (days before due)</label>
+              <input type="number" id="reminder-days" min="0" max="30" required>
+            </div>
+          </div>
+          <button class="btn" type="submit">Save</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Sibling / Family Discounts</h2>
+        <p class="hint muted">Applied automatically at checkout based on the order a guardian's children were assigned a membership — the first child is always full price unless you also add a rule for position 1.</p>
+        <div id="family-rules-list" class="row-list"></div>
+        <form id="family-rule-form">
+          <div class="field-grid">
+            <div class="field">
+              <label>Child position (2 = second child)</label>
+              <input type="number" id="sibling-position" min="1" max="10" required>
+            </div>
+            <div class="field">
+              <label>Discount %</label>
+              <input type="number" id="sibling-discount" min="1" max="100" required>
+            </div>
+          </div>
+          <button class="btn secondary" type="submit">Add Rule</button>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Promo Codes</h2>
+        <p class="hint muted">Guardians enter these at checkout. Validated entirely server-side — dates, usage limits, and eligible plans are all enforced here, never trusted from the browser.</p>
+        <div id="promo-codes-list" class="row-list"></div>
+        <form id="promo-code-form">
+          <div class="field-grid">
+            <div class="field">
+              <label>Code</label>
+              <input type="text" id="promo-code" placeholder="WELCOME10" required>
+            </div>
+            <div class="field">
+              <label>Discount type</label>
+              <select id="promo-type">
+                <option value="percentage">Percentage</option>
+                <option value="fixed">Fixed amount (cents)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Value</label>
+              <input type="number" id="promo-value" min="1" required>
+            </div>
+            <div class="field">
+              <label>Max total uses (optional)</label>
+              <input type="number" id="promo-max-uses" min="1">
+            </div>
+            <div class="field">
+              <label>Max uses per family (optional)</label>
+              <input type="number" id="promo-family-limit" min="1">
+            </div>
+            <div class="field">
+              <label>Expires (optional)</label>
+              <input type="date" id="promo-expires">
+            </div>
+          </div>
+          <button class="btn secondary" type="submit">Create Promo Code</button>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    function make(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    async function fetchJSON(url, options) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const detail = data.detail;
+        throw new Error((detail && detail.message) || detail || "Request failed.");
+      }
+      return data;
+    }
+
+    const message = document.querySelector("#page-message");
+
+    async function loadSettings() {
+      const settings = await fetchJSON("/billing/settings");
+      document.querySelector("#grace-period-days").value = settings.grace_period_days;
+      document.querySelector("#reminder-days").value = settings.payment_due_reminder_days_before;
+    }
+
+    document.querySelector("#settings-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        await fetchJSON("/billing/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            grace_period_days: Number(document.querySelector("#grace-period-days").value),
+            payment_due_reminder_days_before: Number(document.querySelector("#reminder-days").value),
+          }),
+        });
+        message.textContent = "Saved.";
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    });
+
+    async function loadFamilyRules() {
+      const data = await fetchJSON("/billing/family-discount-rules");
+      const list = document.querySelector("#family-rules-list");
+      list.replaceChildren();
+
+      if (!data.rules.length) {
+        list.append(make("div", "muted", "No sibling discount rules yet — every child is full price."));
+        return;
+      }
+
+      for (const rule of data.rules) {
+        const row = make("div", "row");
+        const label = make("span", "", `Child #${rule.sibling_position} — ${rule.discount_percent}% off`);
+        row.append(label);
+        row.append(make("span", `badge ${rule.active ? "active" : "inactive"}`, rule.active ? "Active" : "Inactive"));
+
+        const actions = make("span", "row-actions");
+        const toggleButton = make("button", "link-button", rule.active ? "Deactivate" : "Activate");
+        toggleButton.type = "button";
+        toggleButton.addEventListener("click", async () => {
+          toggleButton.disabled = true;
+          try {
+            await fetchJSON(`/billing/family-discount-rules/${rule.rule_id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ active: !rule.active }),
+            });
+            await loadFamilyRules();
+          } catch (error) {
+            toggleButton.disabled = false;
+            alert(error.message);
+          }
+        });
+        actions.append(toggleButton);
+        row.append(actions);
+        list.append(row);
+      }
+    }
+
+    document.querySelector("#family-rule-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        await fetchJSON("/billing/family-discount-rules", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sibling_position: Number(document.querySelector("#sibling-position").value),
+            discount_percent: Number(document.querySelector("#sibling-discount").value),
+          }),
+        });
+        event.target.reset();
+        await loadFamilyRules();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    async function loadPromoCodes() {
+      const data = await fetchJSON("/billing/promo-codes");
+      const list = document.querySelector("#promo-codes-list");
+      list.replaceChildren();
+
+      if (!data.promo_codes.length) {
+        list.append(make("div", "muted", "No promo codes yet."));
+        return;
+      }
+
+      for (const promo of data.promo_codes) {
+        const row = make("div", "row");
+        const valueLabel = promo.discount_type === "percentage"
+          ? `${promo.discount_value}% off`
+          : `$${(promo.discount_value / 100).toFixed(2)} off`;
+        const usageLabel = promo.max_uses ? ` — max ${promo.max_uses} uses` : "";
+        row.append(make("span", "", `${promo.code} — ${valueLabel}${usageLabel}`));
+        row.append(make("span", `badge ${promo.active ? "active" : "inactive"}`, promo.active ? "Active" : "Inactive"));
+
+        const actions = make("span", "row-actions");
+        const toggleButton = make("button", "link-button", promo.active ? "Deactivate" : "Activate");
+        toggleButton.type = "button";
+        toggleButton.addEventListener("click", async () => {
+          toggleButton.disabled = true;
+          try {
+            await fetchJSON(`/billing/promo-codes/${promo.promo_code_id}`, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ active: !promo.active }),
+            });
+            await loadPromoCodes();
+          } catch (error) {
+            toggleButton.disabled = false;
+            alert(error.message);
+          }
+        });
+        actions.append(toggleButton);
+        row.append(actions);
+        list.append(row);
+      }
+    }
+
+    document.querySelector("#promo-code-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const expiresInput = document.querySelector("#promo-expires").value;
+      const maxUsesInput = document.querySelector("#promo-max-uses").value;
+      const familyLimitInput = document.querySelector("#promo-family-limit").value;
+      try {
+        await fetchJSON("/billing/promo-codes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            code: document.querySelector("#promo-code").value.trim(),
+            discount_type: document.querySelector("#promo-type").value,
+            discount_value: Number(document.querySelector("#promo-value").value),
+            max_uses: maxUsesInput ? Number(maxUsesInput) : null,
+            per_family_limit: familyLimitInput ? Number(familyLimitInput) : null,
+            expires_at: expiresInput ? new Date(expiresInput).toISOString() : null,
+          }),
+        });
+        event.target.reset();
+        await loadPromoCodes();
+      } catch (error) {
+        alert(error.message);
+      }
+    });
+
+    async function init() {
+      try {
+        await Promise.all([loadSettings(), loadFamilyRules(), loadPromoCodes()]);
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

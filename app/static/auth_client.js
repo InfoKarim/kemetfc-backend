@@ -375,6 +375,9 @@
 
           const paymentControlLink = document.querySelector("#payment-control-link");
           if (paymentControlLink) paymentControlLink.hidden = false;
+
+          const paymentSettingsLink = document.querySelector("#payment-settings-link");
+          if (paymentSettingsLink) paymentSettingsLink.hidden = false;
         }
 
         if (data.user.role !== "admin") {

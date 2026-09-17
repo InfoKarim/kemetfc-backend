@@ -375,6 +375,7 @@ class GuardianPlayerLinkSchema(BaseModel):
 
 class CreateCheckoutSessionSchema(BaseModel):
     player_id: str = Field(min_length=1)
+    promo_code: str | None = Field(default=None, max_length=64)
 
 
 class ApplyDiscountSchema(BaseModel):
@@ -418,6 +419,44 @@ class RecordManualPaymentSchema(BaseModel):
 class RefundPaymentSchema(BaseModel):
     amount_cents: int | None = Field(default=None, gt=0)
     reason: str | None = Field(default=None, max_length=500)
+
+
+class CreatePromoCodeSchema(BaseModel):
+    code: str = Field(min_length=2, max_length=64)
+    discount_type: Literal["percentage", "fixed"]
+    discount_value: int = Field(ge=1)
+    starts_at: datetime | None = None
+    expires_at: datetime | None = None
+    max_uses: int | None = Field(default=None, ge=1)
+    per_family_limit: int | None = Field(default=None, ge=1)
+    eligible_plan_ids: list[str] | None = None
+
+
+class UpdatePromoCodeSchema(BaseModel):
+    active: bool | None = None
+
+
+class GrantComplimentaryMembershipSchema(BaseModel):
+    plan_id: str | None = None
+
+
+class SetEligibilityOverrideSchema(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class UpdateBillingSettingsSchema(BaseModel):
+    grace_period_days: int | None = Field(default=None, ge=0, le=90)
+    payment_due_reminder_days_before: int | None = Field(default=None, ge=0, le=30)
+
+
+class CreateFamilyDiscountRuleSchema(BaseModel):
+    sibling_position: int = Field(ge=1, le=10)
+    discount_percent: int = Field(ge=1, le=100)
+
+
+class UpdateFamilyDiscountRuleSchema(BaseModel):
+    discount_percent: int | None = Field(default=None, ge=1, le=100)
+    active: bool | None = None
 
 
 class UpdateRegistrationStatusSchema(BaseModel):

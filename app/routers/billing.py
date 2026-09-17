@@ -1,3 +1,4 @@
+from datetime import datetime, UTC
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -8,16 +9,27 @@ from app.api_schemas import (
     ApplyDiscountSchema,
     AssignMembershipPlanSchema,
     CreateCheckoutSessionSchema,
+    CreateFamilyDiscountRuleSchema,
     CreateMembershipPlanSchema,
+    CreatePromoCodeSchema,
+    GrantComplimentaryMembershipSchema,
     RecordManualPaymentSchema,
     RefundPaymentSchema,
+    SetEligibilityOverrideSchema,
+    UpdateBillingSettingsSchema,
+    UpdateFamilyDiscountRuleSchema,
     UpdateMembershipPlanSchema,
+    UpdatePromoCodeSchema,
 )
 from app.database import get_db
-from app.db_models import UserDB
+from app.db_models import FamilyDiscountRuleDB, PaymentDB, SubscriptionDB, UserDB
 from app.dependencies import require_admin, require_guardian_player_access
 from app.services.billing_service import BillingError, BillingService, is_configured
+from app.services.eligibility_service import derive_eligibility, derive_membership_status
+from app.services.id_service import next_entity_id
+from app.services.notification_service import NotificationService
 from app.services.player_service import PlayerService
+from app.services.promo_code_service import PromoCodeError, PromoCodeService
 
 router = APIRouter()
 
@@ -80,6 +92,11 @@ def payment_control_page():
     return FileResponse(STATIC_DIR / "payment_control.html")
 
 
+@router.get("/payment-settings")
+def payment_settings_page():
+    return FileResponse(STATIC_DIR / "payment_settings.html")
+
+
 @router.get("/billing/status/{player_id}")
 def get_billing_status(
     player_id: str,
@@ -93,6 +110,7 @@ def get_billing_status(
 
     service = BillingService(db=db)
     subscription = service.get_subscription_for_player(player_id)
+    membership = service.get_membership_for_player(player_id)
 
     return {
         "configured": is_configured(),
@@ -100,6 +118,8 @@ def get_billing_status(
             _subscription_payload(subscription) if subscription is not None else None
         ),
         "membership": service.get_membership_plan_summary_for_player(player_id),
+        "membership_status": derive_membership_status(membership, subscription),
+        "eligibility": derive_eligibility(membership, subscription),
     }
 
 
@@ -128,6 +148,7 @@ def create_checkout_session(
             player_id=checkout_data.player_id,
             paying_user_id=user_id,
             guardian_email=user.email,
+            promo_code=checkout_data.promo_code,
         )
     except BillingError as error:
         raise HTTPException(status_code=404, detail=str(error))
@@ -206,6 +227,59 @@ def remove_subscription_discount(
     return result
 
 
+_SUBSCRIPTION_NOTIFICATIONS = {
+    "past_due": ("payment_past_due", "Payment past due", "A payment on your membership is past due — please update your payment method."),
+    "unpaid": ("payment_past_due", "Payment past due", "A payment on your membership is past due — please update your payment method."),
+    "canceled": ("membership_cancelled", "Membership cancelled", "Your membership has been cancelled."),
+    "active": ("membership_activated", "Membership active", "Your membership is now active."),
+}
+
+
+def notify_membership_status_change(db: Session, subscription: SubscriptionDB, event_type: str) -> None:
+    # Only worth telling the guardian about on genuine status transitions —
+    # not every "updated" event changes anything they'd care about (e.g. a
+    # metadata-only update), and "active" right after checkout.session
+    # already gets its own confirmation, so skip the generic one there.
+    if event_type == "customer.subscription.created":
+        return
+    notification = _SUBSCRIPTION_NOTIFICATIONS.get(subscription.status)
+    if notification is None:
+        return
+    notif_type, title, body = notification
+    NotificationService(db=db).create_notification(
+        user_id=subscription.paying_user_id,
+        type=notif_type,
+        title=title,
+        body=body,
+        link="/billing",
+    )
+
+
+def notify_payment_result(db: Session, payment: PaymentDB | None, succeeded: bool) -> None:
+    if payment is None:
+        return
+    subscription = db.get(SubscriptionDB, payment.stripe_subscription_id)
+    if subscription is None:
+        return
+    amount = f"{payment.amount / 100:.2f} {payment.currency.upper()}"
+    if succeeded:
+        NotificationService(db=db).create_notification(
+            user_id=subscription.paying_user_id,
+            type="payment_received",
+            title="Payment received",
+            body=f"We received your payment of {amount}. Your receipt is available in Billing.",
+            link="/billing",
+        )
+    else:
+        NotificationService(db=db).create_notification(
+            user_id=subscription.paying_user_id,
+            type="payment_failed",
+            title="Payment failed",
+            body=f"Your payment of {amount} could not be processed. Please update your payment method.",
+            link="/billing",
+        )
+
+
 @router.post("/billing/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()
@@ -219,6 +293,17 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(error))
 
     event_type = event["type"]
+    event_id = event["id"]
+
+    # Explicit idempotency ledger — defense in depth on top of the
+    # upsert-by-Stripe-ID pattern the handlers below already use, and the
+    # single place that guarantees a redelivered event never sends a
+    # duplicate notification either. Checked before processing but only
+    # marked AFTER it succeeds, so a failure mid-processing still gets
+    # genuinely retried instead of being silently swallowed.
+    if service.has_processed_stripe_event(event_id):
+        return {"received": True, "duplicate": True}
+
     data_object = _as_plain_dict(event["data"]["object"])
 
     if event_type in {
@@ -226,17 +311,21 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         "customer.subscription.updated",
         "customer.subscription.deleted",
     }:
-        service.upsert_subscription_from_stripe_object(data_object)
+        subscription = service.upsert_subscription_from_stripe_object(data_object)
+        notify_membership_status_change(db, subscription, event_type)
     elif event_type == "checkout.session.completed" and data_object.get("mode") == "subscription":
         import stripe
 
         subscription = stripe.Subscription.retrieve(data_object["subscription"])
         service.upsert_subscription_from_stripe_object(_as_plain_dict(subscription))
     elif event_type == "invoice.paid":
-        service.upsert_payment_from_stripe_invoice(data_object, status="paid")
+        payment = service.upsert_payment_from_stripe_invoice(data_object, status="paid")
+        notify_payment_result(db, payment, succeeded=True)
     elif event_type == "invoice.payment_failed":
-        service.upsert_payment_from_stripe_invoice(data_object, status="failed")
+        payment = service.upsert_payment_from_stripe_invoice(data_object, status="failed")
+        notify_payment_result(db, payment, succeeded=False)
 
+    service.mark_stripe_event_processed(event_id, event_type)
     return {"received": True}
 
 
@@ -452,3 +541,271 @@ def get_admin_billing_summary(request: Request, db: Session = Depends(get_db)):
 def list_admin_billing_rows(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
     return {"rows": BillingService(db=db).list_admin_billing_rows()}
+
+
+@router.get("/billing/admin/report")
+def get_financial_report(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    return BillingService(db=db).get_financial_report()
+
+
+def _promo_code_payload(promo) -> dict:
+    return {
+        "promo_code_id": promo.promo_code_id,
+        "code": promo.code,
+        "discount_type": promo.discount_type,
+        "discount_value": promo.discount_value,
+        "starts_at": promo.starts_at,
+        "expires_at": promo.expires_at,
+        "max_uses": promo.max_uses,
+        "per_family_limit": promo.per_family_limit,
+        "eligible_plan_ids": promo.eligible_plan_ids,
+        "active": promo.active,
+    }
+
+
+@router.post("/billing/promo-codes", status_code=201)
+def create_promo_code(
+    payload: CreatePromoCodeSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    try:
+        promo = PromoCodeService(db=db).create_promo_code(
+            actor_user_id=request.state.current_user["user_id"],
+            code=payload.code,
+            discount_type=payload.discount_type,
+            discount_value=payload.discount_value,
+            starts_at=payload.starts_at,
+            expires_at=payload.expires_at,
+            max_uses=payload.max_uses,
+            per_family_limit=payload.per_family_limit,
+            eligible_plan_ids=payload.eligible_plan_ids,
+        )
+    except PromoCodeError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    return _promo_code_payload(promo)
+
+
+@router.get("/billing/promo-codes")
+def list_promo_codes(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    promos = PromoCodeService(db=db).list_promo_codes()
+    return {"promo_codes": [_promo_code_payload(promo) for promo in promos]}
+
+
+@router.patch("/billing/promo-codes/{promo_code_id}")
+def update_promo_code(
+    promo_code_id: str,
+    payload: UpdatePromoCodeSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    try:
+        promo = PromoCodeService(db=db).update_promo_code(
+            promo_code_id,
+            actor_user_id=request.state.current_user["user_id"],
+            active=payload.active,
+        )
+    except PromoCodeError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    return _promo_code_payload(promo)
+
+
+@router.post("/billing/subscriptions/{player_id}/complimentary")
+def grant_complimentary_membership(
+    player_id: str,
+    payload: GrantComplimentaryMembershipSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    if PlayerService(db=db).get_player(player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    membership = BillingService(db=db).grant_complimentary_membership(
+        player_id,
+        actor_user_id=request.state.current_user["user_id"],
+        plan_id=payload.plan_id,
+    )
+    return {
+        "player_id": membership.player_id,
+        "plan_id": membership.plan_id,
+        "is_complimentary": membership.is_complimentary,
+    }
+
+
+@router.delete("/billing/subscriptions/{player_id}/complimentary")
+def revoke_complimentary_membership(
+    player_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    try:
+        membership = BillingService(db=db).revoke_complimentary_membership(
+            player_id,
+            actor_user_id=request.state.current_user["user_id"],
+        )
+    except BillingError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    return {
+        "player_id": membership.player_id,
+        "plan_id": membership.plan_id,
+        "is_complimentary": membership.is_complimentary,
+    }
+
+
+@router.put("/billing/subscriptions/{player_id}/eligibility-override")
+def set_eligibility_override(
+    player_id: str,
+    payload: SetEligibilityOverrideSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    try:
+        membership = BillingService(db=db).set_admin_override_eligibility(
+            player_id,
+            actor_user_id=request.state.current_user["user_id"],
+            reason=payload.reason,
+        )
+    except BillingError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    return {
+        "player_id": membership.player_id,
+        "admin_override_eligibility": membership.admin_override_eligibility,
+    }
+
+
+def _billing_settings_payload(settings) -> dict:
+    return {
+        "grace_period_days": settings.grace_period_days,
+        "payment_due_reminder_days_before": settings.payment_due_reminder_days_before,
+        "updated_at": settings.updated_at,
+    }
+
+
+@router.get("/billing/settings")
+def get_billing_settings(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    return _billing_settings_payload(BillingService(db=db).get_billing_settings())
+
+
+@router.patch("/billing/settings")
+def update_billing_settings(
+    payload: UpdateBillingSettingsSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    settings = BillingService(db=db).update_billing_settings(
+        actor_user_id=request.state.current_user["user_id"],
+        grace_period_days=payload.grace_period_days,
+        payment_due_reminder_days_before=payload.payment_due_reminder_days_before,
+    )
+    return _billing_settings_payload(settings)
+
+
+def _family_discount_rule_payload(rule) -> dict:
+    return {
+        "rule_id": rule.rule_id,
+        "sibling_position": rule.sibling_position,
+        "discount_percent": rule.discount_percent,
+        "active": rule.active,
+    }
+
+
+@router.get("/billing/family-discount-rules")
+def list_family_discount_rules(request: Request, db: Session = Depends(get_db)):
+    require_admin(request)
+    rules = (
+        db.query(FamilyDiscountRuleDB)
+        .order_by(FamilyDiscountRuleDB.sibling_position.asc())
+        .all()
+    )
+    return {"rules": [_family_discount_rule_payload(rule) for rule in rules]}
+
+
+@router.post("/billing/family-discount-rules", status_code=201)
+def create_family_discount_rule(
+    payload: CreateFamilyDiscountRuleSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    existing = (
+        db.query(FamilyDiscountRuleDB)
+        .filter(FamilyDiscountRuleDB.sibling_position == payload.sibling_position)
+        .first()
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A rule for sibling position {payload.sibling_position} already exists",
+        )
+
+
+    now = datetime.now(UTC).replace(tzinfo=None)
+    rule = FamilyDiscountRuleDB(
+        rule_id=next_entity_id(db, "family_discount_rule"),
+        sibling_position=payload.sibling_position,
+        discount_percent=payload.discount_percent,
+        active=True,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _family_discount_rule_payload(rule)
+
+
+@router.patch("/billing/family-discount-rules/{rule_id}")
+def update_family_discount_rule(
+    rule_id: str,
+    payload: UpdateFamilyDiscountRuleSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    rule = db.get(FamilyDiscountRuleDB, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+
+    if payload.discount_percent is not None:
+        rule.discount_percent = payload.discount_percent
+    if payload.active is not None:
+        rule.active = payload.active
+    rule.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    db.commit()
+    db.refresh(rule)
+    return _family_discount_rule_payload(rule)
+
+
+@router.post("/billing/portal-session")
+def create_billing_portal_session(request: Request, db: Session = Depends(get_db)):
+    # Any authenticated guardian may open a portal session for their OWN
+    # Stripe customer record — there is no player_id in this request to
+    # scope, so this deliberately does not use require_guardian_player_access;
+    # the guardian's own user_id is the only identity involved.
+    if request.state.current_user["role"] not in {"guardian", "admin"}:
+        raise HTTPException(status_code=403, detail="Not permitted")
+
+    user_id = request.state.current_user["user_id"]
+    user = db.get(UserDB, user_id)
+    if user is None or not user.email:
+        raise HTTPException(
+            status_code=400,
+            detail="Your account needs an email on file first",
+        )
+
+    try:
+        url = BillingService(db=db).create_billing_portal_session(user_id, user.email)
+    except BillingError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    return {"portal_url": url}

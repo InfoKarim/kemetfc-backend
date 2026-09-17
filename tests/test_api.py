@@ -10,6 +10,7 @@ from app.db_models import (
     AuditEventDB,
     DataRecordDB,
     GuardianConsentDB,
+    NotificationDB,
     PlayerDB,
     TeamDB,
     UserDB,
@@ -3850,7 +3851,7 @@ def test_checkout_session_returns_url_from_billing_service(monkeypatch):
     monkeypatch.setattr(
         billing_router_module.BillingService,
         "create_checkout_session",
-        lambda self, player_id, paying_user_id, guardian_email: "https://checkout.stripe.com/x",
+        lambda self, player_id, paying_user_id, guardian_email, promo_code=None: "https://checkout.stripe.com/x",
     )
 
     response = client.post(
@@ -3962,6 +3963,7 @@ def test_stripe_webhook_processes_subscription_event(monkeypatch):
     from app.routers import billing as billing_router_module
 
     fake_event = {
+        "id": "evt_sub_webhook_test",
         "type": "customer.subscription.updated",
         "data": {
             "object": {
@@ -4026,6 +4028,7 @@ def test_stripe_webhook_handles_real_stripe_object_without_get_method(monkeypatc
     from app.routers import billing as billing_router_module
 
     fake_event = {
+        "id": "evt_no_get_test",
         "type": "customer.subscription.updated",
         "data": {
             "object": _FakeStripeObject(
@@ -4070,6 +4073,7 @@ def _push_subscription_webhook(monkeypatch, player_id, subscription_id):
     from app.routers import billing as billing_router_module
 
     fake_event = {
+        "id": f"evt_{subscription_id}",
         "type": "customer.subscription.updated",
         "data": {
             "object": {
@@ -4103,6 +4107,7 @@ def test_stripe_webhook_processes_paid_invoice_into_payment_history(monkeypatch)
     _push_subscription_webhook(monkeypatch, "P_BILLING_INVOICE", "sub_invoice_test")
 
     fake_invoice_event = {
+        "id": "evt_invoice_test",
         "type": "invoice.paid",
         "data": {
             "object": {
@@ -4145,6 +4150,7 @@ def test_stripe_webhook_redelivered_invoice_does_not_duplicate_payment(monkeypat
     _push_subscription_webhook(monkeypatch, "P_BILLING_DUPLICATE", "sub_dup_test")
 
     fake_invoice_event = {
+        "id": "evt_dup_test",
         "type": "invoice.paid",
         "data": {
             "object": {
@@ -4171,6 +4177,174 @@ def test_stripe_webhook_redelivered_invoice_does_not_duplicate_payment(monkeypat
 
     payments = client.get("/billing/payments/P_BILLING_DUPLICATE").json()["payments"]
     assert len(payments) == 1
+
+
+def test_stripe_webhook_notifies_guardian_on_payment_success_once(monkeypatch):
+    from app.routers import billing as billing_router_module
+
+    create_test_player("P_BILLING_NOTIFY_PAID")
+    _push_subscription_webhook(monkeypatch, "P_BILLING_NOTIFY_PAID", "sub_notify_paid")
+
+    fake_invoice_event = {
+        "id": "evt_notify_paid",
+        "type": "invoice.paid",
+        "data": {
+            "object": {
+                "id": "in_notify_paid",
+                "subscription": "sub_notify_paid",
+                "amount_paid": 2500,
+                "currency": "usd",
+            }
+        },
+    }
+    monkeypatch.setattr(
+        billing_router_module.BillingService,
+        "construct_webhook_event",
+        lambda self, payload, signature_header: fake_invoice_event,
+    )
+
+    def count_payment_received_notifications():
+        db = TestingSessionLocal()
+        count = (
+            db.query(NotificationDB)
+            .filter(
+                NotificationDB.user_id == "TEST_ADMIN",
+                NotificationDB.type == "payment_received",
+            )
+            .count()
+        )
+        db.close()
+        return count
+
+    # TEST_ADMIN is the shared admin user reused across this whole test
+    # file, so other tests may already have created "payment_received"
+    # notifications for it — assert the increase, not an absolute count.
+    before = count_payment_received_notifications()
+
+    for _ in range(2):
+        response = client.post(
+            "/billing/webhook",
+            content=b"{}",
+            headers={"stripe-signature": "t=1,v1=whatever"},
+        )
+        assert response.status_code == 200
+
+    assert count_payment_received_notifications() == before + 1
+
+
+def test_stripe_webhook_notifies_guardian_on_payment_failure(monkeypatch):
+    from app.routers import billing as billing_router_module
+
+    create_test_player("P_BILLING_NOTIFY_FAILED")
+    _push_subscription_webhook(monkeypatch, "P_BILLING_NOTIFY_FAILED", "sub_notify_failed")
+
+    fake_invoice_event = {
+        "id": "evt_notify_failed",
+        "type": "invoice.payment_failed",
+        "data": {
+            "object": {
+                "id": "in_notify_failed",
+                "subscription": "sub_notify_failed",
+                "amount_due": 2500,
+                "currency": "usd",
+            }
+        },
+    }
+    monkeypatch.setattr(
+        billing_router_module.BillingService,
+        "construct_webhook_event",
+        lambda self, payload, signature_header: fake_invoice_event,
+    )
+
+    db = TestingSessionLocal()
+    before = (
+        db.query(NotificationDB)
+        .filter(
+            NotificationDB.user_id == "TEST_ADMIN",
+            NotificationDB.type == "payment_failed",
+        )
+        .count()
+    )
+    db.close()
+
+    response = client.post(
+        "/billing/webhook",
+        content=b"{}",
+        headers={"stripe-signature": "t=1,v1=whatever"},
+    )
+    assert response.status_code == 200
+
+    db = TestingSessionLocal()
+    after = (
+        db.query(NotificationDB)
+        .filter(
+            NotificationDB.user_id == "TEST_ADMIN",
+            NotificationDB.type == "payment_failed",
+        )
+        .count()
+    )
+    db.close()
+    assert after == before + 1
+
+
+def test_stripe_webhook_notifies_guardian_on_past_due_subscription(monkeypatch):
+    from app.routers import billing as billing_router_module
+
+    create_test_player("P_BILLING_NOTIFY_PASTDUE")
+
+    db = TestingSessionLocal()
+    before = (
+        db.query(NotificationDB)
+        .filter(
+            NotificationDB.user_id == "TEST_ADMIN",
+            NotificationDB.type == "payment_past_due",
+        )
+        .count()
+    )
+    db.close()
+
+    fake_event = {
+        "id": "evt_notify_pastdue",
+        "type": "customer.subscription.updated",
+        "data": {
+            "object": {
+                "id": "sub_notify_pastdue",
+                "customer": "cus_notify_pastdue",
+                "status": "past_due",
+                "current_period_end": 1893456000,
+                "cancel_at_period_end": False,
+                "items": {"data": [{"price": {"id": "price_x"}}]},
+                "metadata": {
+                    "player_id": "P_BILLING_NOTIFY_PASTDUE",
+                    "paying_user_id": "TEST_ADMIN",
+                },
+            }
+        },
+    }
+    monkeypatch.setattr(
+        billing_router_module.BillingService,
+        "construct_webhook_event",
+        lambda self, payload, signature_header: fake_event,
+    )
+
+    response = client.post(
+        "/billing/webhook",
+        content=b"{}",
+        headers={"stripe-signature": "t=1,v1=whatever"},
+    )
+    assert response.status_code == 200
+
+    db = TestingSessionLocal()
+    after = (
+        db.query(NotificationDB)
+        .filter(
+            NotificationDB.user_id == "TEST_ADMIN",
+            NotificationDB.type == "payment_past_due",
+        )
+        .count()
+    )
+    db.close()
+    assert after == before + 1
 
 
 def test_billing_payments_requires_authentication():

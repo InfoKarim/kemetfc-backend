@@ -477,6 +477,11 @@ class SubscriptionDB(Base):
         nullable=True,
         index=True,
     )
+    # Stripe's pause_collection does NOT change `status` (it stays
+    # "active" while paused) — tracked separately so a paused
+    # membership can be told apart from a genuinely active one without an
+    # extra live Stripe call on every read.
+    is_paused: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
@@ -497,6 +502,21 @@ class MembershipPlanDB(Base):
     currency: Mapped[str] = mapped_column(String)
     billing_interval: Mapped[str] = mapped_column(String)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # A one-time fee charged alongside the first payment only (e.g. a
+    # registration fee) — added as a second Stripe Checkout line item,
+    # never folded into the recurring price itself.
+    enrollment_fee_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    trial_period_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Eligibility metadata shown to staff when assigning a plan — informational
+    # only in this pass; not yet enforced as a hard checkout gate.
+    age_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    age_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    eligible_team_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("teams.team_id"),
+        nullable=True,
+    )
+    location: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime)
 
@@ -541,9 +561,13 @@ class PlayerMembershipDB(Base):
         ForeignKey("players.player_id"),
         primary_key=True,
     )
-    plan_id: Mapped[str] = mapped_column(
+    # Nullable: a COMPLIMENTARY membership may have no plan at all ("this
+    # player trains free, full stop") rather than always pointing at a
+    # real priced plan.
+    plan_id: Mapped[str | None] = mapped_column(
         String,
         ForeignKey("membership_plans.plan_id"),
+        nullable=True,
     )
     assigned_by_user_id: Mapped[str] = mapped_column(
         String,
@@ -557,7 +581,137 @@ class PlayerMembershipDB(Base):
     # discounts are tracked on SubscriptionDB instead (the authoritative,
     # webhook-confirmed value) — this field stops being read at that point.
     discount_percent_off: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # A COMPLIMENTARY membership — the player trains free, granted
+    # explicitly by an admin. Bypasses Stripe entirely: no checkout is ever
+    # created while this is true, and it is never set by anything payment-
+    # related (webhook, checkout, etc.) — only a direct admin action.
+    is_complimentary: Mapped[bool] = mapped_column(Boolean, default=False)
+    # A manual admin override of computed eligibility (e.g. "let this
+    # player train despite a past-due balance") — a documented exception,
+    # not a silent bypass; always paired with an audit log entry.
+    admin_override_eligibility: Mapped[str | None] = mapped_column(
+        String, nullable=True
+    )
+    promo_code_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("promo_codes.promo_code_id"),
+        nullable=True,
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class PromoCodeDB(Base):
+    """Admin-created discount code — validated server-side only. Discount
+    math and eligibility (dates, max uses, per-family limit, eligible
+    plans) all live here; the client only ever submits the code string."""
+
+    __tablename__ = "promo_codes"
+
+    promo_code_id: Mapped[str] = mapped_column(String, primary_key=True)
+    code: Mapped[str] = mapped_column(String, unique=True, index=True)
+    discount_type: Mapped[str] = mapped_column(String)  # "percentage" | "fixed"
+    discount_value: Mapped[int] = mapped_column(Integer)
+    starts_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    max_uses: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    per_family_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    eligible_plan_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class PromoCodeRedemptionDB(Base):
+    """One use of a promo code by one family — the record that lets
+    per_family_limit and max_uses be enforced server-side rather than
+    trusted from the client."""
+
+    __tablename__ = "promo_code_redemptions"
+
+    redemption_id: Mapped[str] = mapped_column(String, primary_key=True)
+    promo_code_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("promo_codes.promo_code_id"),
+        index=True,
+    )
+    guardian_user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        index=True,
+    )
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+    )
+    redeemed_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class FamilyDiscountRuleDB(Base):
+    """A configurable "Nth child gets X% off" rule — e.g. sibling_position=2,
+    discount_percent=10 means a guardian's 2nd active-membership child gets
+    10% off. No percentages are hard-coded; an academy with no rows here
+    simply has no sibling discount."""
+
+    __tablename__ = "family_discount_rules"
+
+    rule_id: Mapped[str] = mapped_column(String, primary_key=True)
+    sibling_position: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    discount_percent: Mapped[int] = mapped_column(Integer)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class StripeCustomerMappingDB(Base):
+    """One persistent Stripe Customer per guardian, reused across every
+    checkout for every one of their children — required for saved payment
+    methods and the Stripe Billing Portal to work across a family rather
+    than per-child."""
+
+    __tablename__ = "stripe_customer_mappings"
+
+    guardian_user_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        primary_key=True,
+    )
+    stripe_customer_id: Mapped[str] = mapped_column(String, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class StripeEventDB(Base):
+    """Explicit ledger of processed Stripe webhook event IDs — defense in
+    depth on top of the upsert-by-Stripe-ID pattern already used for
+    SubscriptionDB/PaymentDB, so a redelivered event is provably a no-op
+    even for event types that don't map to a single natural primary key
+    (e.g. a refund)."""
+
+    __tablename__ = "stripe_events"
+
+    stripe_event_id: Mapped[str] = mapped_column(String, primary_key=True)
+    event_type: Mapped[str] = mapped_column(String)
+    received_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class BillingSettingsDB(Base):
+    """Single-row academy-wide billing configuration — deliberately not a
+    generic key/value table, so every setting stays typed and discoverable."""
+
+    __tablename__ = "billing_settings"
+
+    settings_id: Mapped[str] = mapped_column(String, primary_key=True)
+    grace_period_days: Mapped[int] = mapped_column(Integer)
+    payment_due_reminder_days_before: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_by_user_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("users.user_id"),
+        nullable=True,
+    )
 
 
 class PaymentDB(Base):

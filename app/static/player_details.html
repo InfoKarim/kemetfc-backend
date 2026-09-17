@@ -1120,9 +1120,18 @@
       const facts = document.querySelector("#membership-facts");
       facts.replaceChildren();
 
-      const subscriptionStatus = status.subscription ? status.subscription.status : "none";
+      const MEMBERSHIP_STATUS_LABELS = {
+        UNASSIGNED: "No membership",
+        ACTIVE: "Active",
+        PENDING_PAYMENT: "Payment pending",
+        PAST_DUE: "Past due",
+        PAUSED: "Paused",
+        CANCELLED: "Cancelled",
+        EXPIRED: "Expired",
+        COMPLIMENTARY: "Complimentary",
+      };
       [
-        ["Status", subscriptionStatus.replace(/_/g, " ")],
+        ["Status", MEMBERSHIP_STATUS_LABELS[status.membership_status] || status.membership_status],
         ["Plan", status.membership ? status.membership.name : "No plan assigned"],
         ["Guardian", (row && row.guardian_name) || "Not linked"],
         [

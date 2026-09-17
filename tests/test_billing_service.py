@@ -108,6 +108,9 @@ def test_create_checkout_session_calls_stripe_with_expected_params(monkeypatch):
         return FakeSession()
 
     monkeypatch.setattr(billing_service.stripe.checkout.Session, "create", fake_create)
+    monkeypatch.setattr(
+        billing_service.stripe.Customer, "create", lambda **kwargs: {"id": "cus_test_x"}
+    )
 
     db = make_db()
     service = BillingService(db=db)
@@ -116,7 +119,7 @@ def test_create_checkout_session_calls_stripe_with_expected_params(monkeypatch):
     assert url == "https://checkout.stripe.com/session/abc"
     assert captured["mode"] == "subscription"
     assert captured["line_items"] == [{"price": "price_x", "quantity": 1}]
-    assert captured["customer_email"] == "guardian@example.com"
+    assert captured["customer"] == "cus_test_x"
     assert captured["client_reference_id"] == "P1"
     assert captured["metadata"] == {"player_id": "P1", "paying_user_id": "U1"}
     assert captured["success_url"] == "https://app.kemetfc.com/billing?checkout=success"
@@ -286,6 +289,29 @@ def test_construct_webhook_event_returns_event_on_success(monkeypatch):
     service = BillingService(db=db)
 
     assert service.construct_webhook_event(b"{}", "good-signature") == fake_event
+
+
+def test_stripe_event_idempotency_ledger():
+    db = make_db()
+    service = BillingService(db=db)
+
+    assert service.has_processed_stripe_event("evt_1") is False
+
+    service.mark_stripe_event_processed("evt_1", "invoice.paid")
+
+    assert service.has_processed_stripe_event("evt_1") is True
+    # Marking twice is a safe no-op, not a duplicate-row error.
+    service.mark_stripe_event_processed("evt_1", "invoice.paid")
+
+
+def test_stripe_event_ledger_is_per_event_id_not_per_type():
+    db = make_db()
+    service = BillingService(db=db)
+
+    service.mark_stripe_event_processed("evt_2", "invoice.paid")
+
+    assert service.has_processed_stripe_event("evt_2") is True
+    assert service.has_processed_stripe_event("evt_3") is False
 
 
 def _seed_membership(service, discount_percent_off=None):
@@ -642,6 +668,9 @@ def test_checkout_session_applies_pending_membership_discount(monkeypatch):
         billing_service.stripe.Coupon,
         "retrieve",
         lambda coupon_id: None,
+    )
+    monkeypatch.setattr(
+        billing_service.stripe.Customer, "create", lambda **kwargs: {"id": "cus_test_x"}
     )
 
     captured = {}

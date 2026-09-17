@@ -8,6 +8,7 @@ from app.db_models import (
     DrillDB,
     GeneratedDrillDiagramDB,
     GuardianConsentDB,
+    FamilyDiscountRuleDB,
     IdCounterDB,
     ManualPaymentDB,
     MatchDB,
@@ -16,6 +17,8 @@ from app.db_models import (
     PlayerAssessmentDB,
     PlayerDB,
     PrivacyRequestDB,
+    PromoCodeDB,
+    PromoCodeRedemptionDB,
     SeasonDB,
     TeamDB,
     TrainingPlanDB,
@@ -44,6 +47,9 @@ ENTITY_CONFIG = {
     "player_assessment": ("ASSESS", PlayerAssessmentDB),
     "membership_plan": ("MPLAN", MembershipPlanDB),
     "manual_payment": ("MPAY", ManualPaymentDB),
+    "promo_code": ("PROMO", PromoCodeDB),
+    "promo_code_redemption": ("PROMORED", PromoCodeRedemptionDB),
+    "family_discount_rule": ("FAMDISC", FamilyDiscountRuleDB),
 }
 
 

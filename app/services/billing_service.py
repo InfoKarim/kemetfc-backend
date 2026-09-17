@@ -14,16 +14,24 @@ from app.config import (
 from app.db_models import (
     AssessmentRegistrationDB,
     AuditEventDB,
+    BillingSettingsDB,
+    FamilyDiscountRuleDB,
     GuardianPlayerLinkDB,
     ManualPaymentDB,
     MembershipPlanDB,
     PaymentDB,
     PlayerDB,
     PlayerMembershipDB,
+    PromoCodeDB,
+    StripeCustomerMappingDB,
+    StripeEventDB,
     SubscriptionDB,
+    TeamDB,
     UserDB,
 )
+from app.services.eligibility_service import derive_eligibility, derive_membership_status
 from app.services.id_service import next_entity_id
+from app.services.promo_code_service import PromoCodeError, PromoCodeService
 
 
 class BillingError(ValueError):
@@ -79,6 +87,7 @@ class BillingService:
         player_id: str,
         paying_user_id: str,
         guardian_email: str,
+        promo_code: str | None = None,
     ) -> str:
         if not is_configured():
             raise BillingError("Billing is not configured")
@@ -88,8 +97,14 @@ class BillingService:
         # checkout always reflects the plan an admin actually chose for
         # their child.
         membership = self.get_membership_for_player(player_id)
+        if membership is not None and membership.is_complimentary:
+            raise BillingError(
+                "This player has a complimentary membership — no payment is needed"
+            )
+
+        plan = None
         price_id = get_stripe_price_id()
-        if membership is not None:
+        if membership is not None and membership.plan_id is not None:
             plan = self.db.get(MembershipPlanDB, membership.plan_id)
             if plan is not None and plan.active:
                 price_id = plan.stripe_price_id
@@ -100,29 +115,78 @@ class BillingService:
                 "default price is configured"
             )
 
+        # Discount precedence — deliberately only one applies, never
+        # stacked, so the price a guardian sees is always unambiguous and
+        # fully server-computed: a promo code entered right now outranks a
+        # standing admin discount, which outranks an automatic sibling
+        # discount.
         checkout_kwargs = {}
-        if membership is not None and membership.discount_percent_off is not None:
+        redeemed_promo = None
+        if promo_code:
+            try:
+                redeemed_promo = PromoCodeService(self.db).validate_promo_code(
+                    promo_code, paying_user_id, plan.plan_id if plan is not None else None
+                )
+            except PromoCodeError as error:
+                raise BillingError(str(error))
+            coupon_id = self._ensure_promo_coupon(redeemed_promo)
+            checkout_kwargs["discounts"] = [{"coupon": coupon_id}]
+        elif membership is not None and membership.discount_percent_off is not None:
             # A discount an admin approved before this guardian ever paid
             # (see apply_discount) — attach it here so the very first
             # invoice already reflects it, rather than requiring a second
             # manual step after checkout completes.
             coupon_id = self._ensure_discount_coupon(membership.discount_percent_off)
             checkout_kwargs["discounts"] = [{"coupon": coupon_id}]
+        else:
+            sibling_discount = self.get_family_discount_percent(paying_user_id, player_id)
+            if sibling_discount is not None:
+                coupon_id = self._ensure_discount_coupon(sibling_discount)
+                checkout_kwargs["discounts"] = [{"coupon": coupon_id}]
+
+        line_items = [{"price": price_id, "quantity": 1}]
+        if plan is not None and plan.enrollment_fee_cents:
+            # A one-time fee charged alongside the first invoice only —
+            # price_data (not a catalog Price) because it's a one-off, not
+            # a reusable recurring price.
+            line_items.append({
+                "price_data": {
+                    "currency": plan.currency,
+                    "product_data": {"name": f"{plan.name} — Enrollment Fee"},
+                    "unit_amount": plan.enrollment_fee_cents,
+                },
+                "quantity": 1,
+            })
+
+        subscription_data = {
+            "metadata": {"player_id": player_id, "paying_user_id": paying_user_id},
+        }
+        if plan is not None and plan.trial_period_days:
+            subscription_data["trial_period_days"] = plan.trial_period_days
+
+        stripe_customer_id = self.get_or_create_stripe_customer(paying_user_id, guardian_email)
 
         base_url = get_billing_return_base_url()
         session = stripe.checkout.Session.create(
             mode="subscription",
-            line_items=[{"price": price_id, "quantity": 1}],
-            customer_email=guardian_email,
+            line_items=line_items,
+            customer=stripe_customer_id,
             client_reference_id=player_id,
             metadata={"player_id": player_id, "paying_user_id": paying_user_id},
-            subscription_data={
-                "metadata": {"player_id": player_id, "paying_user_id": paying_user_id},
-            },
+            subscription_data=subscription_data,
             success_url=f"{base_url}/billing?checkout=success",
             cancel_url=f"{base_url}/billing?checkout=cancelled",
             **checkout_kwargs,
         )
+
+        if redeemed_promo is not None:
+            # Reserved at checkout creation, not at payment success — an
+            # abandoned checkout costs one redemption slot, a deliberate
+            # simplicity trade-off an admin can always correct by editing
+            # the code's max_uses.
+            PromoCodeService(self.db).redeem_promo_code(
+                redeemed_promo.promo_code_id, paying_user_id, player_id
+            )
         return session.url
 
     def construct_webhook_event(self, payload: bytes, signature_header: str):
@@ -153,6 +217,7 @@ class BillingService:
             subscription.get("current_period_end")
         )
         discount_percent_off = _extract_discount_percent_off(subscription)
+        is_paused = bool(subscription.get("pause_collection"))
         stripe_price_id = subscription["items"]["data"][0]["price"]["id"]
         plan = (
             self.db.query(MembershipPlanDB)
@@ -173,6 +238,7 @@ class BillingService:
                 cancel_at_period_end=bool(subscription.get("cancel_at_period_end")),
                 discount_percent_off=discount_percent_off,
                 plan_id=plan_id,
+                is_paused=is_paused,
                 created_at=now,
                 updated_at=now,
             )
@@ -185,11 +251,30 @@ class BillingService:
             )
             existing.discount_percent_off = discount_percent_off
             existing.plan_id = plan_id
+            existing.is_paused = is_paused
             existing.updated_at = now
 
         self.db.commit()
         self.db.refresh(existing)
         return existing
+
+    def has_processed_stripe_event(self, stripe_event_id: str) -> bool:
+        """Checked BEFORE processing. Deliberately read-only — the event is
+        only marked processed (mark_stripe_event_processed) AFTER handling
+        it succeeds, so a failure mid-processing leaves it unmarked and a
+        genuine Stripe retry still reprocesses it, rather than being
+        silently swallowed."""
+        return self.db.get(StripeEventDB, stripe_event_id) is not None
+
+    def mark_stripe_event_processed(self, stripe_event_id: str, event_type: str) -> None:
+        if self.db.get(StripeEventDB, stripe_event_id) is not None:
+            return
+        self.db.add(StripeEventDB(
+            stripe_event_id=stripe_event_id,
+            event_type=event_type,
+            received_at=datetime.now(UTC).replace(tzinfo=None),
+        ))
+        self.db.commit()
 
     def get_subscription_for_player(self, player_id: str) -> SubscriptionDB | None:
         return (
@@ -285,6 +370,255 @@ class BillingService:
         except stripe.StripeError as error:
             raise BillingError(f"Stripe rejected this discount: {error.user_message or error}")
         return coupon_id
+
+    def _ensure_promo_coupon(self, promo: PromoCodeDB) -> str:
+        # duration="once" (applies to the first invoice only) — distinct
+        # from admin/sibling discounts, which are ongoing.
+        coupon_id = f"promo-{promo.promo_code_id}"
+        try:
+            try:
+                stripe.Coupon.retrieve(coupon_id)
+            except stripe.InvalidRequestError:
+                if promo.discount_type == "percentage":
+                    stripe.Coupon.create(
+                        id=coupon_id, percent_off=promo.discount_value, duration="once"
+                    )
+                else:
+                    stripe.Coupon.create(
+                        id=coupon_id,
+                        amount_off=promo.discount_value,
+                        currency="usd",
+                        duration="once",
+                    )
+        except stripe.StripeError as error:
+            raise BillingError(f"Stripe rejected this promo code: {error.user_message or error}")
+        return coupon_id
+
+    def get_or_create_stripe_customer(self, guardian_user_id: str, guardian_email: str) -> str:
+        """One persistent Stripe Customer per guardian, reused across every
+        one of their children's checkouts — required for saved payment
+        methods and the Billing Portal to manage a family, not just one
+        subscription."""
+        mapping = self.db.get(StripeCustomerMappingDB, guardian_user_id)
+        if mapping is not None:
+            return mapping.stripe_customer_id
+
+        try:
+            customer = stripe.Customer.create(
+                email=guardian_email,
+                metadata={"guardian_user_id": guardian_user_id},
+            )
+        except stripe.StripeError as error:
+            raise BillingError(f"Stripe rejected this customer: {error.user_message or error}")
+
+        self.db.add(StripeCustomerMappingDB(
+            guardian_user_id=guardian_user_id,
+            stripe_customer_id=customer["id"],
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+        ))
+        self.db.commit()
+        return customer["id"]
+
+    def create_billing_portal_session(self, guardian_user_id: str, guardian_email: str) -> str:
+        """A Stripe-hosted page where a guardian manages saved payment
+        methods and views invoices across every one of their children —
+        no custom card UI, so no card data ever reaches this app."""
+        if not is_configured():
+            raise BillingError("Billing is not configured")
+
+        stripe_customer_id = self.get_or_create_stripe_customer(
+            guardian_user_id, guardian_email
+        )
+        base_url = get_billing_return_base_url()
+        try:
+            session = stripe.billing_portal.Session.create(
+                customer=stripe_customer_id,
+                return_url=f"{base_url}/billing",
+            )
+        except stripe.StripeError as error:
+            raise BillingError(
+                f"Stripe rejected the billing portal request: {error.user_message or error}"
+            )
+        return session.url
+
+    def calculate_sibling_position(self, guardian_user_id: str, player_id: str) -> int:
+        """1-indexed position of this player among the guardian's children
+        who have ever been assigned a membership, ordered by when they
+        were assigned — the 1st-assigned child is position 1 (full
+        price), matching a plain "first child full price, later children
+        discounted" sibling policy."""
+        linked_player_ids = [
+            link.player_id
+            for link in self.db.query(GuardianPlayerLinkDB)
+            .filter(GuardianPlayerLinkDB.guardian_user_id == guardian_user_id)
+            .all()
+        ]
+        if player_id not in linked_player_ids:
+            linked_player_ids = [*linked_player_ids, player_id]
+
+        memberships = (
+            self.db.query(PlayerMembershipDB)
+            .filter(PlayerMembershipDB.player_id.in_(linked_player_ids))
+            .order_by(PlayerMembershipDB.assigned_at.asc())
+            .all()
+        )
+        ordered_ids = [membership.player_id for membership in memberships]
+        if player_id not in ordered_ids:
+            return len(ordered_ids) + 1
+        return ordered_ids.index(player_id) + 1
+
+    def get_family_discount_percent(self, guardian_user_id: str, player_id: str) -> int | None:
+        position = self.calculate_sibling_position(guardian_user_id, player_id)
+        rule = (
+            self.db.query(FamilyDiscountRuleDB)
+            .filter(
+                FamilyDiscountRuleDB.sibling_position == position,
+                FamilyDiscountRuleDB.active.is_(True),
+            )
+            .first()
+        )
+        return rule.discount_percent if rule is not None else None
+
+    def grant_complimentary_membership(
+        self,
+        player_id: str,
+        actor_user_id: str,
+        plan_id: str | None = None,
+    ) -> PlayerMembershipDB:
+        """A player who trains free — an explicit admin decision, never
+        set by anything payment-related. No Stripe checkout is ever
+        created while this is true."""
+        now = datetime.now(UTC).replace(tzinfo=None)
+        membership = self.get_membership_for_player(player_id)
+
+        if membership is None:
+            membership = PlayerMembershipDB(
+                player_id=player_id,
+                plan_id=plan_id,
+                assigned_by_user_id=actor_user_id,
+                assigned_at=now,
+                is_complimentary=True,
+                updated_at=now,
+            )
+            self.db.add(membership)
+        else:
+            membership.is_complimentary = True
+            if plan_id is not None:
+                membership.plan_id = plan_id
+            membership.updated_at = now
+
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="complimentary_membership_granted",
+            resource_type="player",
+            resource_id=player_id,
+            details={"plan_id": plan_id},
+        )
+        self.db.commit()
+        self.db.refresh(membership)
+        return membership
+
+    def revoke_complimentary_membership(
+        self, player_id: str, actor_user_id: str
+    ) -> PlayerMembershipDB:
+        membership = self.get_membership_for_player(player_id)
+        if membership is None or not membership.is_complimentary:
+            raise BillingError("This player does not have a complimentary membership")
+
+        membership.is_complimentary = False
+        membership.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="complimentary_membership_revoked",
+            resource_type="player",
+            resource_id=player_id,
+            details={},
+        )
+        self.db.commit()
+        self.db.refresh(membership)
+        return membership
+
+    def set_admin_override_eligibility(
+        self,
+        player_id: str,
+        actor_user_id: str,
+        reason: str | None,
+    ) -> PlayerMembershipDB:
+        """`reason` set = override active (player is TRAINING_ELIGIBLE
+        regardless of computed status); `reason` None = clear it. Always
+        a documented exception — never silent."""
+        membership = self.get_membership_for_player(player_id)
+        if membership is None:
+            raise BillingError(
+                "Assign a membership to this player before setting an eligibility override"
+            )
+
+        previous = membership.admin_override_eligibility
+        membership.admin_override_eligibility = reason
+        membership.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="eligibility_override_changed",
+            resource_type="player",
+            resource_id=player_id,
+            details={"previous_reason": previous, "new_reason": reason},
+        )
+        self.db.commit()
+        self.db.refresh(membership)
+        return membership
+
+    def get_billing_settings(self) -> BillingSettingsDB:
+        settings = self.db.get(BillingSettingsDB, "default")
+        if settings is None:
+            # Sensible defaults on first read — no migration-time data
+            # seeding required, and every academy gets a working config
+            # immediately.
+            settings = BillingSettingsDB(
+                settings_id="default",
+                grace_period_days=7,
+                payment_due_reminder_days_before=3,
+                updated_at=datetime.now(UTC).replace(tzinfo=None),
+                updated_by_user_id=None,
+            )
+            self.db.add(settings)
+            self.db.commit()
+            self.db.refresh(settings)
+        return settings
+
+    def update_billing_settings(
+        self,
+        actor_user_id: str,
+        grace_period_days: int | None = None,
+        payment_due_reminder_days_before: int | None = None,
+    ) -> BillingSettingsDB:
+        settings = self.get_billing_settings()
+        previous = {
+            "grace_period_days": settings.grace_period_days,
+            "payment_due_reminder_days_before": settings.payment_due_reminder_days_before,
+        }
+        if grace_period_days is not None:
+            settings.grace_period_days = grace_period_days
+        if payment_due_reminder_days_before is not None:
+            settings.payment_due_reminder_days_before = payment_due_reminder_days_before
+        settings.updated_at = datetime.now(UTC).replace(tzinfo=None)
+        settings.updated_by_user_id = actor_user_id
+
+        self._audit(
+            actor_user_id=actor_user_id,
+            action="billing_settings_updated",
+            resource_type="billing_settings",
+            resource_id="default",
+            details={
+                "previous": previous,
+                "new": {
+                    "grace_period_days": settings.grace_period_days,
+                    "payment_due_reminder_days_before": settings.payment_due_reminder_days_before,
+                },
+            },
+        )
+        self.db.commit()
+        self.db.refresh(settings)
+        return settings
 
     def apply_discount(
         self,
@@ -704,7 +1038,7 @@ class BillingService:
         shown to both the guardian (as "payment due") and staff (Player
         Profile -> Membership) before any Stripe subscription exists."""
         membership = self.get_membership_for_player(player_id)
-        if membership is None:
+        if membership is None or membership.plan_id is None:
             return None
 
         plan = self.db.get(MembershipPlanDB, membership.plan_id)
@@ -792,6 +1126,124 @@ class BillingService:
             "registrations_awaiting_billing_setup": registrations_awaiting_billing_setup,
         }
 
+    def get_financial_report(self) -> dict:
+        """Revenue broken down by plan and by team, manual-vs-online split,
+        and renewals due soon — grouped by each player's CURRENT plan/team
+        assignment (not a historical snapshot at payment time), which is
+        the right tradeoff for a small academy where reassignment is rare
+        and this is a working dashboard, not a point-in-time ledger."""
+        now = datetime.now(UTC).replace(tzinfo=None)
+        renewal_cutoff = now + timedelta(days=14)
+
+        online_payments = (
+            self.db.query(PaymentDB.player_id, PaymentDB.amount, PaymentDB.currency)
+            .filter(PaymentDB.status == "paid")
+            .all()
+        )
+        manual_payments = (
+            self.db.query(
+                ManualPaymentDB.player_id,
+                ManualPaymentDB.amount_cents,
+                ManualPaymentDB.currency,
+            ).all()
+        )
+
+        online_total_cents = sum(amount for _, amount, _ in online_payments)
+        manual_total_cents = sum(amount for _, amount, _ in manual_payments)
+
+        membership_by_player = {
+            m.player_id: m for m in self.db.query(PlayerMembershipDB).all()
+        }
+        plan_by_id = {p.plan_id: p for p in self.db.query(MembershipPlanDB).all()}
+        players_by_id = {p.player_id: p for p in self.db.query(PlayerDB).all()}
+        teams_by_id = {t.team_id: t for t in self.db.query(TeamDB).all()}
+
+        plan_totals: dict[str, dict] = {}
+        team_totals: dict[str, dict] = {}
+
+        def add_revenue(player_id: str, amount: int, currency: str) -> None:
+            membership = membership_by_player.get(player_id)
+            plan = (
+                plan_by_id.get(membership.plan_id)
+                if membership is not None and membership.plan_id is not None
+                else None
+            )
+            plan_key = plan.plan_id if plan is not None else "unassigned"
+            plan_bucket = plan_totals.setdefault(
+                plan_key,
+                {
+                    "plan_name": plan.name if plan is not None else "No plan assigned",
+                    "total_cents": 0,
+                    "currency": currency,
+                },
+            )
+            plan_bucket["total_cents"] += amount
+
+            player = players_by_id.get(player_id)
+            team = (
+                teams_by_id.get(player.team_id)
+                if player is not None and player.team_id is not None
+                else None
+            )
+            team_key = team.team_id if team is not None else "unassigned"
+            team_bucket = team_totals.setdefault(
+                team_key,
+                {
+                    "team_name": team.name if team is not None else "No team assigned",
+                    "total_cents": 0,
+                    "currency": currency,
+                },
+            )
+            team_bucket["total_cents"] += amount
+
+        for player_id, amount, currency in online_payments:
+            add_revenue(player_id, amount, currency)
+        for player_id, amount_cents, currency in manual_payments:
+            add_revenue(player_id, amount_cents, currency)
+
+        upcoming = (
+            self.db.query(SubscriptionDB)
+            .filter(
+                SubscriptionDB.status == "active",
+                SubscriptionDB.cancel_at_period_end.is_(False),
+                SubscriptionDB.current_period_end.isnot(None),
+                SubscriptionDB.current_period_end >= now,
+                SubscriptionDB.current_period_end <= renewal_cutoff,
+            )
+            .order_by(SubscriptionDB.current_period_end.asc())
+            .all()
+        )
+        upcoming_renewals = []
+        for subscription in upcoming:
+            player = players_by_id.get(subscription.player_id)
+            plan = (
+                plan_by_id.get(subscription.plan_id)
+                if subscription.plan_id is not None
+                else None
+            )
+            upcoming_renewals.append({
+                "player_id": subscription.player_id,
+                "player_name": (
+                    f"{player.first_name_en} {player.last_name_en}"
+                    if player is not None
+                    else subscription.player_id
+                ),
+                "plan_name": plan.name if plan is not None else None,
+                "amount_cents": plan.amount_cents if plan is not None else None,
+                "currency": plan.currency if plan is not None else None,
+                "current_period_end": subscription.current_period_end,
+            })
+
+        return {
+            "revenue_by_plan": list(plan_totals.values()),
+            "revenue_by_team": list(team_totals.values()),
+            "manual_vs_online_cents": {
+                "manual_cents": manual_total_cents,
+                "online_cents": online_total_cents,
+            },
+            "upcoming_renewals": upcoming_renewals,
+        }
+
     def list_admin_billing_rows(self) -> list[dict]:
         players = self.db.query(PlayerDB).order_by(PlayerDB.first_name_en.asc()).all()
         rows = []
@@ -801,7 +1253,7 @@ class BillingService:
             membership = self.get_membership_for_player(player.player_id)
             plan = (
                 self.db.get(MembershipPlanDB, membership.plan_id)
-                if membership is not None
+                if membership is not None and membership.plan_id is not None
                 else None
             )
             guardian_link = (
@@ -846,6 +1298,12 @@ class BillingService:
                     else (membership.discount_percent_off if membership is not None else None)
                 ),
                 "has_membership_assigned": membership is not None,
+                "is_complimentary": membership.is_complimentary if membership is not None else False,
+                "admin_override_eligibility": (
+                    membership.admin_override_eligibility if membership is not None else None
+                ),
+                "membership_status": derive_membership_status(membership, subscription),
+                "eligibility": derive_eligibility(membership, subscription),
             })
 
         return rows

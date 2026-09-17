@@ -297,6 +297,7 @@ HTML_PAGE_PATHS = {
     "/create-player-from-registration",
     "/billing",
     "/payment-control",
+    "/payment-settings",
 }
 
 FEATURE_PAGE_PATHS = {
@@ -467,7 +468,11 @@ async def enforce_authentication(request: Request, call_next):
             )
             or (
                 request.method == "POST"
-                and path in {"/billing/checkout-session", "/billing/cancel"}
+                and path in {
+                    "/billing/checkout-session",
+                    "/billing/cancel",
+                    "/billing/portal-session",
+                }
             )
             or (request.method == "GET" and path == "/upload-player-video")
             or (request.method == "POST" and path == "/videos/upload")
@@ -521,11 +526,18 @@ async def enforce_authentication(request: Request, call_next):
     # require_admin itself, so this is defense-in-depth, not the sole gate.
     payment_control_path = (
         path == "/payment-control"
+        or path == "/payment-settings"
         or path.startswith("/billing/admin/")
         or path.startswith("/billing/membership-plans")
+        or path.startswith("/billing/promo-codes")
+        or path.startswith("/billing/family-discount-rules")
+        or path == "/billing/settings"
         or (
             path.startswith("/billing/subscriptions/")
-            and path.rsplit("/", 1)[-1] in {"pause", "resume", "membership", "discount"}
+            and path.rsplit("/", 1)[-1] in {
+                "pause", "resume", "membership", "discount",
+                "complimentary", "eligibility-override",
+            }
         )
         or (
             path.startswith("/billing/payments/")
