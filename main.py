@@ -155,6 +155,7 @@ from app.routers import drills as drills_router
 from app.routers import matches as matches_router
 from app.routers import messaging as messaging_router
 from app.routers import player_assessments as player_assessments_router
+from app.routers import player_checkin as player_checkin_router
 from app.routers import seasons as seasons_router
 from app.routers import teams as teams_router
 from app.routers import tracking as tracking_router
@@ -166,6 +167,7 @@ app.include_router(drills_router.router)
 app.include_router(matches_router.router)
 app.include_router(messaging_router.router)
 app.include_router(player_assessments_router.router)
+app.include_router(player_checkin_router.router)
 app.include_router(seasons_router.router)
 app.include_router(teams_router.router)
 app.include_router(tracking_router.router)

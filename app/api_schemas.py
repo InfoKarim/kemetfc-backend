@@ -635,6 +635,11 @@ class CreateTrackingSessionSchema(BaseModel):
     tracking_mode: Literal["player_lock", "ball_track", "smart_soccer"]
     gimbal_model: str | None = Field(default=None, max_length=120)
     calibration_scale_m_per_unit: float | None = Field(default=None, gt=0, le=1000)
+    # The iOS app's local recording ID — retrying this call (e.g. after a
+    # dropped response while the backend actually created the session
+    # fine) with the SAME value returns the existing session rather than
+    # creating a duplicate. See TrackingService.create_session.
+    client_recording_id: str | None = Field(default=None, max_length=64)
     # Model-version traceability (Phase 2) — the iOS client reports
     # exactly what ran, never left for the backend to guess. Omitting
     # ball_detector_version defaults ball_model_status to "missing"
@@ -716,6 +721,10 @@ class RecordCoachValidationLabelSchema(BaseModel):
 class ConfirmPlayerTrackedSchema(BaseModel):
     answer: Literal["yes", "no", "unsure"]
     notes: str | None = Field(default=None, max_length=1000)
+
+
+class ResolveCheckInTokenSchema(BaseModel):
+    token: str = Field(min_length=1, max_length=200)
 
 
 class RegisterMLModelSchema(BaseModel):

@@ -8,6 +8,7 @@ matching the "coach selects player before recording" requirement."""
 
 from datetime import date, datetime, UTC
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db_models import (
@@ -32,6 +33,14 @@ class TrackingError(ValueError):
     pass
 
 
+class TrackingSessionIdentityConflict(TrackingError):
+    """A client_recording_id was reused with different player/metadata
+    than the session it already identifies — never silently returned as
+    if it were the same recording (spec Phase 8: "Reject reuse of one
+    clientRecordingId with a different player or incompatible
+    metadata")."""
+
+
 def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
@@ -54,9 +63,31 @@ class TrackingService:
         tracker_algorithm_version: str | None = None,
         framing_algorithm_version: str | None = None,
         ios_app_version: str | None = None,
+        client_recording_id: str | None = None,
     ) -> TrackingSessionDB:
         if tracking_mode not in TRACKING_MODES:
             raise TrackingError(f"Unknown tracking_mode: {tracking_mode}")
+
+        # Idempotent retry: the iOS app's local upload queue may retry
+        # this exact call (e.g. after the response was lost to a network
+        # drop even though the backend's write succeeded) — matching on
+        # client_recording_id returns the ORIGINAL session instead of
+        # creating a second one for the same physical recording. A
+        # client_recording_id reused with a DIFFERENT player is a real
+        # identity conflict, never silently treated as the same recording.
+        if client_recording_id is not None:
+            existing = (
+                self.db.query(TrackingSessionDB)
+                .filter(TrackingSessionDB.client_recording_id == client_recording_id)
+                .one_or_none()
+            )
+            if existing is not None:
+                if existing.player_id != player_id:
+                    raise TrackingSessionIdentityConflict(
+                        f"client_recording_id {client_recording_id!r} already belongs to "
+                        f"player {existing.player_id!r}, not {player_id!r}"
+                    )
+                return existing
 
         now = _now()
         session = TrackingSessionDB(
@@ -76,10 +107,35 @@ class TrackingService:
             tracker_algorithm_version=tracker_algorithm_version,
             framing_algorithm_version=framing_algorithm_version,
             ios_app_version=ios_app_version,
+            client_recording_id=client_recording_id,
             created_at=now,
         )
         self.db.add(session)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError:
+            # Two simultaneous requests for the SAME client_recording_id
+            # both passed the SELECT above before either committed (spec
+            # Phase 8: "Make clientRecordingId idempotency safe under
+            # simultaneous requests, not only sequential retries") — the
+            # unique constraint on client_recording_id catches this at
+            # the database level; the loser rolls back and returns
+            # whichever row actually won, exactly like the sequential
+            # retry path above, rather than raising a raw 500.
+            self.db.rollback()
+            winner = (
+                self.db.query(TrackingSessionDB)
+                .filter(TrackingSessionDB.client_recording_id == client_recording_id)
+                .one_or_none()
+            )
+            if winner is None:
+                raise
+            if winner.player_id != player_id:
+                raise TrackingSessionIdentityConflict(
+                    f"client_recording_id {client_recording_id!r} already belongs to "
+                    f"player {winner.player_id!r}, not {player_id!r}"
+                ) from None
+            return winner
         self.db.refresh(session)
         return session
 

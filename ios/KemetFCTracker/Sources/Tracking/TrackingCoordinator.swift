@@ -38,6 +38,13 @@ public final class TrackingCoordinator: ObservableObject {
     @Published public private(set) var ballState: BallTrackState = .lost
     @Published public private(set) var lastFramingTarget: NormalizedRect?
     @Published public private(set) var isPaused = false
+    /// Real measured confidence from the active PlayerTracker/BallTracker
+    /// instance (never a fabricated/placeholder value) — the production
+    /// HUD's "PLAYER LOCKED 94%" and Field Test Mode's confidence rows
+    /// both read these, nothing else.
+    @Published public private(set) var playerConfidence: Double?
+    @Published public private(set) var ballConfidence: Double?
+    @Published public private(set) var lockedTrackId: Int?
 
     /// The most recent frame's raw person detections and pixel buffer —
     /// exposed so the tap-to-lock UI only needs to resolve a view tap
@@ -335,6 +342,9 @@ public final class TrackingCoordinator: ObservableObject {
 
         playerState = playerTracker?.state ?? .lost
         ballState = ballTracker.state
+        playerConfidence = playerTracker?.currentConfidence
+        ballConfidence = ballTracker.currentConfidence
+        lockedTrackId = playerTracker?.targetTrackId
 
         if playerState == .lost {
             gimbalController.pauseMotorCorrection()

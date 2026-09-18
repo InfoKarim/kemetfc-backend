@@ -57,6 +57,10 @@ public final class KemetAPIClient: @unchecked Sendable {
         self.session = session
     }
 
+    /// Exposed for BackendDiagnostics (Field Test Mode's connectivity
+    /// panel) — the actual configured base URL, never a guess.
+    public var baseURL: URL { configuration.baseURL }
+
     /// Reads the CSRF token from the same cookie the web app's own
     /// auth-client.js reads (CSRF_COOKIE_NAME in main.py) — set once
     /// after login, reused for every unsafe request, matching the
@@ -159,16 +163,57 @@ public final class KemetAPIClient: @unchecked Sendable {
 }
 
 extension JSONEncoder {
+    // .iso8601, matching JSONDecoder.kemet below — a real bug this
+    // session's physical device test caught: PendingAssessmentStore
+    // (Sources/Networking/PendingAssessmentStore.swift) uses this SAME
+    // encoder/decoder pair to persist its queue to disk, and every
+    // record has a `startTime: Date`. Without this, the encoder wrote
+    // dates as a raw number (Foundation's default .deferredToDate)
+    // while the decoder expected an ISO8601 string — every decode
+    // failed with a silently swallowed type-mismatch error, resetting
+    // the whole local queue to empty on every fresh load. That broke
+    // "survives app restart" for every real recording, not just tests.
+    // No existing network request body encodes a Date field, so this
+    // has no effect on any API call already in production use.
     static let kemet: JSONEncoder = {
         let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
         return encoder
     }()
 }
 
 extension JSONDecoder {
+    // Tries ISO8601 first (everything this app writes today, and every
+    // backend response) — falling back to the raw-number format
+    // (seconds since the 2001 reference date) ONLY for backward
+    // compatibility with PendingAssessmentRecord queue files written by
+    // the pre-fix app version, before JSONEncoder.kemet.dateEncodingStrategy
+    // was set to .iso8601 above. Without this fallback, a device that
+    // still has an old-format queue file on disk would hit the exact
+    // silent-decode-failure bug this pairing fixed, a second time, for
+    // anyone who installs this fix without ever having a clean queue.
     static let kemet: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        let iso8601Formatter = ISO8601DateFormatter()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            if let string = try? container.decode(String.self) {
+                if let date = iso8601Formatter.date(from: string) {
+                    return date
+                }
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Expected an ISO8601 date string, got \"\(string)\""
+                )
+            }
+            if let seconds = try? container.decode(Double.self) {
+                return Date(timeIntervalSinceReferenceDate: seconds)
+            }
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Expected an ISO8601 string or a legacy numeric timestamp"
+            )
+        }
         return decoder
     }()
 }

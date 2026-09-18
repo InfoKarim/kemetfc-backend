@@ -67,11 +67,35 @@ targets:
         # ATS-protected.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # Required alongside NSAllowsLocalNetworking above — iOS 14+
+        # shows its system "find and connect to devices on your local
+        # network" permission prompt for ANY request to a LAN IP
+        # (including a plain URLSession call, not just Bonjour/mDNS
+        # discovery), and without this description key the request can
+        # fail rather than prompt. Needed for the same on-field
+        # KEMET_BACKEND_BASE_URL=http://<mac-LAN-IP>:port workflow.
+        NSLocalNetworkUsageDescription: "KEMET FC connects to the coach's laptop on the same WiFi network during on-field testing to upload assessment videos and tracking data."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kemetfc.tracker
         TARGETED_DEVICE_FAMILY: "1" # iPhone only — DockKit accessories (Flow 2 Pro) are phone-mounted, no iPad support claimed
         IPHONEOS_DEPLOYMENT_TARGET: "17.4"
+        CODE_SIGN_STYLE: Automatic
+        # Karim Elsayed's Apple ID Personal Team. NOT HU277BUGLJ (a STALE
+        # team ID from before this account was removed and re-added in
+        # Xcode's Accounts settings during earlier troubleshooting —
+        # Apple issued a new Personal Team ID afterward). Confirmed
+        # current via a genuinely-issued, unexpired provisioning profile
+        # (~/Library/Developer/Xcode/UserData/Provisioning Profiles/,
+        # "iOS Team Provisioning Profile: com.kemetfc.tracker", team
+        # JHA8GPK7C5) — never guessed. Every prior "No Account for Team
+        # HU277BUGLJ" / "No profiles found" failure was this file
+        # overwriting Xcode's own correct live resolution back to the
+        # wrong team on every `xcodegen generate`. Replace with the paid
+        # Apple Developer Program team ID once that membership is active
+        # (see README's signing section) — Personal Team profiles expire
+        # in 7 days and are locally-scoped, not portal-registered.
+        DEVELOPMENT_TEAM: JHA8GPK7C5
     dependencies: []
 
   KemetFCTrackerTests:
@@ -85,3 +109,16 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kemetfc.tracker.tests
+        DEVELOPMENT_TEAM: JHA8GPK7C5
+        CODE_SIGN_STYLE: Automatic
+        # `xcodebuild test` (unlike a plain `build` of the app target
+        # alone) actually code-signs this bundle too, which fails
+        # without an Info.plist — XCTest bundles don't need a real one
+        # checked in, just this auto-generation flag.
+        GENERATE_INFOPLIST_FILE: YES
+        # DockKitManager (via the KemetFCTracker dependency) needs the real
+        # device SDK — DockKit doesn't exist on macOS/Catalyst or Simulator —
+        # so this target must not offer a Mac destination.
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+        TARGETED_DEVICE_FAMILY: "1"

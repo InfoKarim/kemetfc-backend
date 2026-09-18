@@ -58,6 +58,29 @@ class PlayerDB(Base):
     )
 
 
+class PlayerCheckInTokenDB(Base):
+    """An opaque QR check-in token minted for one player (see
+    PlayerCheckInService). Only `token_hash` is ever stored — never the
+    raw token — matching AuthSessionDB's own token_hash pattern, so a
+    database read alone can never yield a working check-in code. Minting
+    a new token revokes the player's previous one (see mint_token), so
+    `revoked_at IS NULL` is at most one row per player_id at a time."""
+
+    __tablename__ = "player_checkin_tokens"
+
+    token_id: Mapped[str] = mapped_column(String, primary_key=True)
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    token_hash: Mapped[str] = mapped_column(String, unique=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class MatchDB(Base):
     __tablename__ = "matches"
 
@@ -1162,6 +1185,19 @@ class TrackingSessionDB(Base):
     coach_user_id: Mapped[str] = mapped_column(
         String,
         ForeignKey("users.user_id"),
+        index=True,
+    )
+    # The iOS app's own locally-generated recording ID (a UUID, created
+    # the moment Start Assessment is tapped, before this row can even be
+    # created) — lets a retried POST /tracking/sessions after a dropped
+    # response return the SAME session instead of creating a duplicate.
+    # Unlike video_id/record_id (client-supplied primary keys — see
+    # videos.py), session_id here is always server-generated, so this
+    # separate nullable+unique column is how retries are matched instead.
+    client_recording_id: Mapped[str | None] = mapped_column(
+        String,
+        unique=True,
+        nullable=True,
         index=True,
     )
     video_id: Mapped[str | None] = mapped_column(

@@ -17,6 +17,7 @@ from app.db_models import (
     MLDatasetEntryDB,
     MLModelRegistryDB,
     PlayerAssessmentDB,
+    PlayerCheckInTokenDB,
     PlayerDB,
     PrivacyRequestDB,
     PromoCodeDB,
@@ -60,6 +61,7 @@ ENTITY_CONFIG = {
     "tracking_event": ("TRKE", TrackingEventDB),
     "ml_model": ("MODEL", MLModelRegistryDB),
     "coach_validation_label": ("CVL", CoachValidationLabelDB),
+    "player_checkin_token": ("CHKTOK", PlayerCheckInTokenDB),
 }
 
 

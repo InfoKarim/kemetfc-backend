@@ -31,7 +31,11 @@ from app.services.heatmap_service import build_heatmap_payload
 from app.services.id_service import next_entity_id
 from app.services.model_registry_service import ModelRegistryError, ModelRegistryService
 from app.services.player_service import PlayerService
-from app.services.tracking_service import TrackingError, TrackingService
+from app.services.tracking_service import (
+    TrackingError,
+    TrackingService,
+    TrackingSessionIdentityConflict,
+)
 
 router = APIRouter()
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
@@ -47,6 +51,7 @@ def _session_payload(session) -> dict:
         "session_id": session.session_id,
         "player_id": session.player_id,
         "coach_user_id": session.coach_user_id,
+        "client_recording_id": session.client_recording_id,
         "video_id": session.video_id,
         "tracking_mode": session.tracking_mode,
         "gimbal_model": session.gimbal_model,
@@ -141,7 +146,10 @@ def create_tracking_session(
             tracker_algorithm_version=payload.tracker_algorithm_version,
             framing_algorithm_version=payload.framing_algorithm_version,
             ios_app_version=payload.ios_app_version,
+            client_recording_id=payload.client_recording_id,
         )
+    except TrackingSessionIdentityConflict as error:
+        raise HTTPException(status_code=409, detail=str(error))
     except TrackingError as error:
         raise HTTPException(status_code=400, detail=str(error))
 
