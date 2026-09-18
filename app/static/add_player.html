@@ -164,6 +164,10 @@
                 <option value="">No team assigned</option>
               </select>
             </div>
+            <div>
+              <label for="jersey-number">Shirt number (optional)</label>
+              <input id="jersey-number" type="number" min="1" max="99" step="1" placeholder="e.g. 10">
+            </div>
           </div>
         </section>
 
@@ -491,6 +495,9 @@
         if (player.team_id) {
           document.querySelector("#team-id").value = player.team_id;
         }
+        if (player.jersey_number != null) {
+          document.querySelector("#jersey-number").value = player.jersey_number;
+        }
       } catch (error) {
         const status = document.querySelector("#form-status");
         status.className = "error";
@@ -657,6 +664,10 @@
           sex: document.querySelector("#sex").value,
           team_id:
             document.querySelector("#team-id").value || null,
+          jersey_number:
+            document.querySelector("#jersey-number").value
+              ? Number(document.querySelector("#jersey-number").value)
+              : null,
           physical_profile: readGroup("physical"),
           technical_profile: readGroup("technical"),
           mental_profile: readGroup("mental"),

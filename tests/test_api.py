@@ -209,13 +209,15 @@ client.headers.update({
     "X-CSRF-Token": client.cookies.get(CSRF_COOKIE_NAME),
 })
 
-def create_test_player(player_id="P100"):
+def create_test_player(player_id="P100", team_id=None, jersey_number=None):
     player_data = {
         "player_id": player_id,
         "first_name_ar": "كريم",
         "last_name_ar": "السيد",
         "first_name_en": "Karim",
         "last_name_en": "Elsayed",
+        "team_id": team_id,
+        "jersey_number": jersey_number,
         "date_of_birth": "2015-05-10",
         "sex": "male",
         "physical_profile": {
@@ -1013,6 +1015,156 @@ def test_update_unknown_player_returns_404():
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Player not found"}
+
+
+def test_create_player_with_jersey_number():
+    create_test_team("TEAM_JERSEY_A")
+    create_test_player("P_JERSEY_1", team_id="TEAM_JERSEY_A", jersey_number=10)
+
+    response = client.get("/players/P_JERSEY_1")
+
+    assert response.status_code == 200
+    assert response.json()["jersey_number"] == 10
+
+
+def test_create_player_rejects_jersey_number_out_of_range():
+    # Build the payload directly rather than via create_test_player(),
+    # which asserts 201 — this request must not succeed.
+    payload = {
+        "player_id": "P_JERSEY_RANGE",
+        "first_name_ar": "كريم",
+        "last_name_ar": "السيد",
+        "first_name_en": "Karim",
+        "last_name_en": "Elsayed",
+        "jersey_number": 150,
+        "date_of_birth": "2015-05-10",
+        "sex": "male",
+        "physical_profile": {
+            "height_cm": 140.0, "weight_kg": 35.0, "dominant_foot": "right",
+            "speed": 70.0, "acceleration": 72.0, "agility": 68.0,
+            "stamina": 75.0, "strength": 60.0,
+        },
+        "technical_profile": {
+            "ball_control": 70.0, "dribbling": 72.0, "passing": 68.0,
+            "shooting": 65.0, "finishing": 67.0,
+        },
+        "mental_profile": {
+            "decision_making": 70.0, "concentration": 72.0, "composure": 68.0,
+            "positioning": 71.0, "vision": 74.0, "awareness": 70.0,
+            "game_reading": 70.0, "coachability": 70.0,
+        },
+        "match_performance": {
+            "minutes_played": 90, "goals": 1, "assists": 1, "shots": 3,
+            "shots_on_target": 2, "passes_attempted": 40, "passes_completed": 34,
+            "tackles": 3, "interceptions": 2, "rating": 8.2,
+        },
+        "tactical_profile": {
+            "positioning_spatial_intelligence": 70.0,
+            "attacking_contribution_in_possession": 68.0,
+            "attacking_contribution_off_ball": 72.0,
+            "defensive_tactical_contribution": 69.0,
+            "transitions": 71.0, "decision_quality": 70.0,
+            "collective_coordination": 68.0, "set_piece_contribution": 65.0,
+        },
+        "weak_foot_profile": {
+            "weak_foot_usage_pct": 20.0, "weak_foot_passing": 60.0,
+            "weak_foot_receiving": 62.0, "weak_foot_dribbling": 58.0,
+            "weak_foot_finishing": 55.0,
+        },
+    }
+
+    response = client.post("/players", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_create_player_rejects_duplicate_jersey_number_on_same_team():
+    create_test_team("TEAM_JERSEY_B")
+    create_test_player("P_JERSEY_2", team_id="TEAM_JERSEY_B", jersey_number=7)
+
+    # Same team, same number as an existing player — must be rejected.
+    conflict_payload = dict(
+        player_id="P_JERSEY_3",
+        first_name_ar="كريم", last_name_ar="السيد",
+        first_name_en="Sami", last_name_en="Youssef",
+        team_id="TEAM_JERSEY_B", jersey_number=7,
+        date_of_birth="2014-01-01", sex="male",
+        physical_profile={
+            "height_cm": 140.0, "weight_kg": 35.0, "dominant_foot": "right",
+            "speed": 70.0, "acceleration": 72.0, "agility": 68.0,
+            "stamina": 75.0, "strength": 60.0,
+        },
+        technical_profile={
+            "ball_control": 70.0, "dribbling": 72.0, "passing": 68.0,
+            "shooting": 65.0, "finishing": 67.0,
+        },
+        mental_profile={
+            "decision_making": 70.0, "concentration": 72.0, "composure": 68.0,
+            "positioning": 71.0, "vision": 74.0, "awareness": 70.0,
+            "game_reading": 70.0, "coachability": 70.0,
+        },
+        match_performance={
+            "minutes_played": 90, "goals": 1, "assists": 1, "shots": 3,
+            "shots_on_target": 2, "passes_attempted": 40, "passes_completed": 34,
+            "tackles": 3, "interceptions": 2, "rating": 8.2,
+        },
+        tactical_profile={
+            "positioning_spatial_intelligence": 70.0,
+            "attacking_contribution_in_possession": 68.0,
+            "attacking_contribution_off_ball": 72.0,
+            "defensive_tactical_contribution": 69.0,
+            "transitions": 71.0, "decision_quality": 70.0,
+            "collective_coordination": 68.0, "set_piece_contribution": 65.0,
+        },
+        weak_foot_profile={
+            "weak_foot_usage_pct": 20.0, "weak_foot_passing": 60.0,
+            "weak_foot_receiving": 62.0, "weak_foot_dribbling": 58.0,
+            "weak_foot_finishing": 55.0,
+        },
+    )
+
+    response = client.post("/players", json=conflict_payload)
+
+    assert response.status_code == 409
+
+
+def test_jersey_number_not_unique_across_different_teams():
+    create_test_team("TEAM_JERSEY_C")
+    create_test_team("TEAM_JERSEY_D")
+    create_test_player("P_JERSEY_4", team_id="TEAM_JERSEY_C", jersey_number=9)
+    create_test_player("P_JERSEY_5", team_id="TEAM_JERSEY_D", jersey_number=9)
+
+    response = client.get("/players/P_JERSEY_5")
+
+    assert response.status_code == 200
+    assert response.json()["jersey_number"] == 9
+
+
+def test_player_without_team_skips_jersey_number_uniqueness_check():
+    create_test_player("P_JERSEY_6", team_id=None, jersey_number=11)
+    create_test_player("P_JERSEY_7", team_id=None, jersey_number=11)
+
+    first = client.get("/players/P_JERSEY_6")
+    second = client.get("/players/P_JERSEY_7")
+
+    assert first.json()["jersey_number"] == 11
+    assert second.json()["jersey_number"] == 11
+
+
+def test_get_all_players_filters_by_jersey_number():
+    create_test_team("TEAM_JERSEY_E")
+    create_test_player("P_JERSEY_8", team_id="TEAM_JERSEY_E", jersey_number=23)
+    create_test_player("P_JERSEY_9", team_id=None, jersey_number=None)
+
+    response = client.get("/players?jersey_number=23")
+
+    assert response.status_code == 200
+    players = response.json()
+    player_ids = [player["player_id"] for player in players]
+    assert "P_JERSEY_8" in player_ids
+    assert "P_JERSEY_9" not in player_ids
+
+
 def test_delete_player():
     create_test_player("P500")
 

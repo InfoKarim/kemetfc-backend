@@ -50,6 +50,109 @@
     #form-status { min-height: 24px; margin-top: 15px; font-weight: 700; }
     .success { color: #13844b; }
     .error { color: #b83232; }
+
+    [hidden] { display: none !important; }
+    .method-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .method-tab {
+      padding: 9px 16px;
+      border-radius: 999px !important;
+      border: 1px solid #d8e0eb;
+      background: white !important;
+      color: #142039 !important;
+      font-weight: 750;
+      font-size: 13px;
+      cursor: pointer;
+      font: inherit;
+    }
+    .method-tab.active {
+      background: #071a2b !important;
+      color: #ffd36b !important;
+      border-color: #071a2b;
+    }
+    .method-panel { margin-top: 14px; }
+    .player-results {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      gap: 10px;
+      max-height: 300px;
+      overflow-y: auto;
+      margin-top: 12px;
+      padding-right: 4px;
+    }
+    .player-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid #e1e7ef;
+      border-radius: 12px !important;
+      background: #fbfcfe !important;
+      color: #142039 !important;
+      cursor: pointer;
+      text-align: left;
+      font: inherit;
+      font-weight: 400 !important;
+      width: 100%;
+    }
+    .player-card:hover { border-color: #1265ed; background: #eef5ff !important; }
+    .player-avatar {
+      width: 38px;
+      height: 38px;
+      border-radius: 999px;
+      background: #071a2b;
+      color: #ffd36b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 13px;
+      flex-shrink: 0;
+      overflow: hidden;
+    }
+    .player-avatar img { width: 100%; height: 100%; object-fit: cover; }
+    .player-card-name { font-weight: 750; font-size: 14px; color: #142039; }
+    .player-card-meta { font-size: 12px; color: #69768a; margin-top: 2px; }
+    .player-empty { padding: 16px; text-align: center; color: #69768a; font-size: 13px; }
+    .player-selected {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border: 1.5px solid #0a7147;
+      border-radius: 12px;
+      background: #eef9f3;
+    }
+    .player-selected-name { font-weight: 800; font-size: 15px; color: #0a3a24; }
+    .player-selected-meta { font-size: 12.5px; color: #3d6753; margin-top: 2px; }
+    .link-btn {
+      margin-left: auto;
+      border: 0;
+      background: none !important;
+      color: #1265ed !important;
+      font-weight: 750;
+      cursor: pointer;
+      font: inherit;
+      padding: 0 !important;
+      flex-shrink: 0;
+      box-shadow: none !important;
+    }
+    .id-lookup-row { display: flex; gap: 8px; }
+    .id-lookup-row input { flex: 1; }
+    .id-lookup-row button {
+      white-space: nowrap;
+      border: 0;
+      color: white !important;
+      background: #1265ed !important;
+      cursor: pointer;
+      border-radius: 9px !important;
+      padding: 12px 18px;
+      font: inherit;
+      font-weight: 750;
+    }
+    .lookup-status { min-height: 18px; margin-top: 8px; font-size: 13px; font-weight: 700; }
+    .lookup-status.error { color: #b83232; }
+    .lookup-status.success { color: #13844b; }
+
     @media (max-width: 760px) {
       .layout { grid-template-columns: 1fr; }
       aside { display: none; }
@@ -94,11 +197,49 @@
         <h2>What do you want to analyze?</h2>
 
         <div class="fields">
-          <div>
-            <label for="player-id">Player</label>
-            <select id="player-id" required>
-              <option value="">Loading players...</option>
-            </select>
+          <div class="wide">
+            <label>Player</label>
+
+            <div id="player-selected" class="player-selected" hidden>
+              <div class="player-avatar" id="player-selected-avatar"></div>
+              <div>
+                <div class="player-selected-name" id="player-selected-name"></div>
+                <div class="player-selected-meta" id="player-selected-meta"></div>
+              </div>
+              <button type="button" class="link-btn" id="player-change-btn">Change player</button>
+            </div>
+
+            <div id="player-methods">
+              <div class="method-tabs" id="method-tabs" role="tablist">
+                <button type="button" class="method-tab active" data-method="search">Search Player</button>
+                <button type="button" class="method-tab" data-method="jersey" id="jersey-tab">Shirt Number</button>
+                <button type="button" class="method-tab" data-method="id" id="id-tab">Player ID</button>
+              </div>
+
+              <div class="method-panel" data-panel="search">
+                <input type="text" id="player-search-input" placeholder="Search by name or ID" autocomplete="off">
+                <div id="player-search-results" class="player-results"></div>
+              </div>
+
+              <div class="method-panel" data-panel="jersey" hidden>
+                <div class="id-lookup-row">
+                  <input type="number" id="jersey-number-input" placeholder="Shirt number, e.g. 10" min="1" max="99" step="1">
+                  <button type="button" id="jersey-lookup-btn">Find</button>
+                </div>
+                <p id="jersey-status" class="lookup-status"></p>
+                <div id="jersey-results" class="player-results"></div>
+              </div>
+
+              <div class="method-panel" data-panel="id" hidden>
+                <div class="id-lookup-row">
+                  <input type="text" id="player-id-input" placeholder="Player ID">
+                  <button type="button" id="player-id-lookup-btn">Look up</button>
+                </div>
+                <p id="player-id-status" class="lookup-status"></p>
+              </div>
+            </div>
+
+            <input type="hidden" id="player-id">
           </div>
 
           <div>
@@ -158,6 +299,8 @@
     const videoFile = document.querySelector("#video-file");
     const fileSummary = document.querySelector("#file-summary");
     let currentUser = null;
+    let allPlayers = [];
+    let teamsById = {};
 
     function readVideoMetadata(file) {
       return new Promise((resolve) => {
@@ -195,14 +338,155 @@
         : `${selected.length} videos selected · ${totalMb.toFixed(1)} MB total`;
     });
 
+    function playerDisplayName(player) {
+      return player.name || `${player.first_name_en} ${player.last_name_en}`;
+    }
+
+    function playerInitials(player) {
+      return playerDisplayName(player)
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0].toUpperCase())
+        .join("");
+    }
+
+    function computeAge(dobValue) {
+      if (!dobValue) return null;
+      const dob = new Date(dobValue);
+      if (Number.isNaN(dob.getTime())) return null;
+      const ageMs = Date.now() - dob.getTime();
+      return Math.floor(ageMs / (365.25 * 24 * 60 * 60 * 1000));
+    }
+
+    function playerMetaText(player) {
+      const parts = [];
+      const age = computeAge(player.date_of_birth);
+      if (age != null) parts.push(`${age} yrs`);
+      const teamName = player.team_id ? teamsById[player.team_id] : null;
+      if (teamName) parts.push(teamName);
+      if (player.jersey_number != null) parts.push(`#${player.jersey_number}`);
+      return parts.length ? parts.join(" · ") : "No team assigned";
+    }
+
+    function buildAvatar(player) {
+      const avatar = document.createElement("div");
+      avatar.className = "player-avatar";
+      if (player.photo_filename) {
+        const img = document.createElement("img");
+        img.src = `/uploads/avatars/${player.photo_filename}`;
+        img.alt = "";
+        avatar.append(img);
+      } else {
+        avatar.textContent = playerInitials(player);
+      }
+      return avatar;
+    }
+
+    function renderPlayerCard(player) {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "player-card";
+      card.append(buildAvatar(player));
+
+      const info = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "player-card-name";
+      name.textContent = playerDisplayName(player);
+      const meta = document.createElement("div");
+      meta.className = "player-card-meta";
+      meta.textContent = `${player.player_id} · ${playerMetaText(player)}`;
+      info.append(name, meta);
+      card.append(info);
+
+      card.addEventListener("click", () => selectPlayer(player));
+      return card;
+    }
+
+    function selectPlayer(player) {
+      document.querySelector("#player-id").value = player.player_id;
+
+      document.querySelector("#player-selected-name").textContent = playerDisplayName(player);
+      document.querySelector("#player-selected-meta").textContent =
+        `${player.player_id} · ${playerMetaText(player)}`;
+
+      const avatarSlot = document.querySelector("#player-selected-avatar");
+      avatarSlot.replaceChildren(...buildAvatar(player).childNodes);
+
+      document.querySelector("#player-selected").hidden = false;
+      document.querySelector("#player-methods").hidden = true;
+      status.className = "";
+      status.textContent = "";
+    }
+
+    function clearSelectedPlayer() {
+      document.querySelector("#player-id").value = "";
+      document.querySelector("#player-selected").hidden = true;
+      document.querySelector("#player-methods").hidden = false;
+    }
+
+    function renderSearchResults(query) {
+      const container = document.querySelector("#player-search-results");
+      container.replaceChildren();
+
+      const term = query.trim().toLowerCase();
+      const matches = term
+        ? allPlayers.filter((player) => {
+            const name = playerDisplayName(player).toLowerCase();
+            return name.includes(term) || player.player_id.toLowerCase().includes(term);
+          })
+        : allPlayers;
+
+      if (!matches.length) {
+        const empty = document.createElement("p");
+        empty.className = "player-empty";
+        empty.textContent = allPlayers.length
+          ? "No players match your search."
+          : "No players yet.";
+        container.append(empty);
+        return;
+      }
+
+      matches.slice(0, 60).forEach((player) => container.append(renderPlayerCard(player)));
+    }
+
+    async function loadTeamsMap() {
+      try {
+        const response = await fetch("/teams");
+        if (!response.ok) return;
+        const teams = await response.json();
+        teams.forEach((team) => { teamsById[team.team_id] = team.name; });
+      } catch {
+        // Team names are a display nicety only — a player is still fully
+        // selectable without one.
+      }
+    }
+
+    function switchMethod(method) {
+      document.querySelectorAll(".method-tab").forEach((tab) => {
+        tab.classList.toggle("active", tab.dataset.method === method);
+      });
+      document.querySelectorAll(".method-panel").forEach((panel) => {
+        panel.hidden = panel.dataset.panel !== method;
+      });
+    }
+
     async function loadPlayers() {
-      const select = document.querySelector("#player-id");
+      const searchResults = document.querySelector("#player-search-results");
 
       try {
         const meResponse = await fetch("/auth/me");
         if (!meResponse.ok) throw new Error();
         const me = await meResponse.json();
         currentUser = me.user;
+
+        if (currentUser.role === "guardian") {
+          document.querySelector("#jersey-tab").hidden = true;
+          document.querySelector("#id-tab").hidden = true;
+          document.querySelector("#player-search-input").placeholder = "Search your children";
+        } else {
+          await loadTeamsMap();
+        }
 
         const response = await fetch(
           currentUser.role === "guardian"
@@ -211,34 +495,127 @@
         );
         if (!response.ok) throw new Error();
 
-        const players = await response.json();
-        select.replaceChildren(new Option(
-          currentUser.role === "guardian"
-            ? "Select your child"
-            : "Select player",
-          ""
-        ));
+        allPlayers = await response.json();
 
-        players.forEach((player) => {
-          select.append(new Option(
-            player.name || `${player.first_name_en} ${player.last_name_en}`,
-            player.player_id
-          ));
-        });
-
-        if (!players.length && currentUser.role === "guardian") {
-          select.replaceChildren(new Option(
-            "Ask the administrator to link your child",
-            ""
-          ));
+        if (!allPlayers.length && currentUser.role === "guardian") {
+          const empty = document.createElement("p");
+          empty.className = "player-empty";
+          empty.textContent = "Ask the administrator to link your child.";
+          searchResults.append(empty);
           button.disabled = true;
           status.className = "error";
           status.textContent = "Your account is not linked to a child yet.";
+          return;
         }
+
+        renderSearchResults("");
       } catch {
-        select.replaceChildren(new Option("Could not load players", ""));
+        searchResults.replaceChildren();
+        const empty = document.createElement("p");
+        empty.className = "player-empty";
+        empty.textContent = "Could not load players.";
+        searchResults.append(empty);
       }
     }
+
+    document.querySelector("#player-search-input").addEventListener("input", (event) => {
+      renderSearchResults(event.target.value);
+    });
+
+    document.querySelectorAll(".method-tab").forEach((tab) => {
+      tab.addEventListener("click", () => switchMethod(tab.dataset.method));
+    });
+
+    document.querySelector("#player-change-btn").addEventListener("click", () => {
+      clearSelectedPlayer();
+    });
+
+    async function lookUpJerseyNumber() {
+      const jerseyStatus = document.querySelector("#jersey-status");
+      const results = document.querySelector("#jersey-results");
+      results.replaceChildren();
+      jerseyStatus.className = "lookup-status";
+
+      const raw = document.querySelector("#jersey-number-input").value.trim();
+      const number = Number(raw);
+
+      if (!raw || !Number.isInteger(number) || number < 1 || number > 99) {
+        jerseyStatus.className = "lookup-status error";
+        jerseyStatus.textContent = "Enter a shirt number between 1 and 99.";
+        return;
+      }
+
+      jerseyStatus.textContent = "Searching...";
+
+      try {
+        const response = await fetch(`/players?jersey_number=${number}`);
+        if (!response.ok) throw new Error();
+        const matches = await response.json();
+
+        if (!matches.length) {
+          jerseyStatus.className = "lookup-status error";
+          jerseyStatus.textContent = `No player is wearing #${number}.`;
+          return;
+        }
+
+        jerseyStatus.className = "lookup-status success";
+        jerseyStatus.textContent = matches.length === 1
+          ? "1 player found."
+          : `${matches.length} players found wearing #${number} — pick the right one.`;
+        matches.forEach((player) => results.append(renderPlayerCard(player)));
+      } catch {
+        jerseyStatus.className = "lookup-status error";
+        jerseyStatus.textContent = "Could not search by shirt number.";
+      }
+    }
+
+    document.querySelector("#jersey-lookup-btn").addEventListener("click", lookUpJerseyNumber);
+    document.querySelector("#jersey-number-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        lookUpJerseyNumber();
+      }
+    });
+
+    async function lookUpPlayerId() {
+      const idStatus = document.querySelector("#player-id-status");
+      idStatus.className = "lookup-status";
+
+      const value = document.querySelector("#player-id-input").value.trim();
+      if (!value) {
+        idStatus.className = "lookup-status error";
+        idStatus.textContent = "Enter a player ID.";
+        return;
+      }
+
+      idStatus.textContent = "Looking up...";
+
+      try {
+        const response = await fetch(`/players/${encodeURIComponent(value)}`);
+        if (response.status === 404) {
+          idStatus.className = "lookup-status error";
+          idStatus.textContent = "Player not found.";
+          return;
+        }
+        if (!response.ok) throw new Error();
+
+        const player = await response.json();
+        idStatus.className = "lookup-status success";
+        idStatus.textContent = "Player found.";
+        selectPlayer(player);
+      } catch {
+        idStatus.className = "lookup-status error";
+        idStatus.textContent = "Could not look up this player ID.";
+      }
+    }
+
+    document.querySelector("#player-id-lookup-btn").addEventListener("click", lookUpPlayerId);
+    document.querySelector("#player-id-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        lookUpPlayerId();
+      }
+    });
 
     async function uploadOneVideo(file, index) {
       const { duration, resolution } = await readVideoMetadata(file);
@@ -298,6 +675,13 @@
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       status.className = "";
+
+      if (!document.querySelector("#player-id").value) {
+        status.className = "error";
+        status.textContent = "Choose a player.";
+        return;
+      }
+
       button.disabled = true;
 
       const selectedFiles = Array.from(document.querySelector("#video-file").files);

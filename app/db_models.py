@@ -40,6 +40,15 @@ class PlayerDB(Base):
     match_performance: Mapped[dict] = mapped_column(JSON)
     tactical_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     weak_foot_profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Shirt/jersey number — not globally unique (two players on different
+    # teams can both wear #10); uniqueness is only enforced within a team,
+    # in PlayerService, since the database can't express "unique unless
+    # team_id is NULL" portably across SQLite and PostgreSQL.
+    jersey_number: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     photo_filename: Mapped[str | None] = mapped_column(String, nullable=True)
     # Staff-only provenance — where this player record originated. Never

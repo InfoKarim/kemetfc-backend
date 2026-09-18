@@ -122,7 +122,7 @@ from app.services.auth_service import (
 )
 from app.services.drill_service import DrillService
 from app.services.id_service import next_entity_id
-from app.services.player_service import PlayerService
+from app.services.player_service import JerseyNumberConflictError, PlayerService
 from app.services.privacy_service import PrivacyService
 from app.services.contact_message_service import ContactMessageService
 from app.services.registration_service import (
@@ -1414,6 +1414,7 @@ def create_player(
         date_of_birth=player_data.date_of_birth,
         sex=player_data.sex,
         team_id=player_data.team_id,
+        jersey_number=player_data.jersey_number,
         physical_profile=PhysicalProfile(
             **player_data.physical_profile.model_dump()
         ),
@@ -1437,7 +1438,10 @@ def create_player(
         created_by_user_id=request.state.current_user["user_id"],
     )
 
-    service.add_player(player)
+    try:
+        service.add_player(player)
+    except JerseyNumberConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error))
 
     return player
 
@@ -1703,6 +1707,7 @@ def delete_player_photo(
 @app.get("/players")
 def get_all_players(
     request: Request,
+    jersey_number: int | None = None,
     db: Session = Depends(get_db),
 ):
     # Defense in depth: the auth middleware already denies guardians on
@@ -1715,6 +1720,10 @@ def get_all_players(
         )
 
     service = PlayerService(db=db)
+
+    if jersey_number is not None:
+        return service.find_by_jersey_number(jersey_number)
+
     return service.get_all_players()
 
 @app.put("/players/{player_id}")
@@ -1753,6 +1762,7 @@ def update_player(
         date_of_birth=player_data.date_of_birth,
         sex=player_data.sex,
         team_id=player_data.team_id,
+        jersey_number=player_data.jersey_number,
         physical_profile=PhysicalProfile(
             **player_data.physical_profile.model_dump()
         ),
@@ -1775,7 +1785,10 @@ def update_player(
         photo_filename=existing_player.photo_filename,
     )
 
-    service.update_player(updated_player)
+    try:
+        service.update_player(updated_player)
+    except JerseyNumberConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error))
 
     return updated_player
 

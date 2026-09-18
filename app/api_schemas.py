@@ -80,6 +80,7 @@ class PlayerSchema(BaseModel):
     tactical_profile: TacticalProfileSchema
     weak_foot_profile: WeakFootProfileSchema
     team_id: str | None = None
+    jersey_number: int | None = Field(default=None, ge=1, le=99)
 
 
 class MatchSchema(BaseModel):

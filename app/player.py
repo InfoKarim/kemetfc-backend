@@ -22,6 +22,7 @@ class Player:
     tactical_profile: TacticalProfile
     weak_foot_profile: WeakFootProfile
     team_id: str | None = None
+    jersey_number: int | None = None
     created_at: datetime | None = None
     photo_filename: str | None = None
     source: str = "manual"

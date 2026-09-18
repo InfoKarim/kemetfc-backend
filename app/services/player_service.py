@@ -52,9 +52,43 @@ _DEFAULT_WEAK_FOOT_PROFILE = {
 }
 
 
+class JerseyNumberConflictError(ValueError):
+    """Raised when a player's jersey number is already worn by another
+    player on the same team. Not raised for players without a team_id —
+    shirt numbers are only meaningful (and only checked) within a squad."""
+
+    def __init__(self, jersey_number: int, team_id: str, other_player_id: str):
+        self.jersey_number = jersey_number
+        self.team_id = team_id
+        self.other_player_id = other_player_id
+        super().__init__(
+            f"Jersey number {jersey_number} is already worn by another "
+            f"player ({other_player_id}) on this team."
+        )
+
+
 class PlayerService:
     def __init__(self, db: Session | None = None):
         self.db = db or SessionLocal()
+
+    def _check_jersey_number_conflict(self, player: Player) -> None:
+        if player.jersey_number is None or player.team_id is None:
+            return
+
+        conflict = (
+            self.db.query(PlayerDB)
+            .filter(
+                PlayerDB.team_id == player.team_id,
+                PlayerDB.jersey_number == player.jersey_number,
+                PlayerDB.player_id != player.player_id,
+            )
+            .first()
+        )
+
+        if conflict is not None:
+            raise JerseyNumberConflictError(
+                player.jersey_number, player.team_id, conflict.player_id
+            )
 
     def _to_db(self, player: Player) -> PlayerDB:
         return PlayerDB(
@@ -66,6 +100,7 @@ class PlayerService:
             date_of_birth=player.date_of_birth,
             sex=player.sex,
             team_id=player.team_id,
+            jersey_number=player.jersey_number,
             physical_profile=player.physical_profile.__dict__,
             technical_profile=player.technical_profile.__dict__,
             mental_profile=player.mental_profile.__dict__,
@@ -112,6 +147,7 @@ class PlayerService:
             date_of_birth=db_player.date_of_birth,
             sex=db_player.sex,
             team_id=db_player.team_id,
+            jersey_number=db_player.jersey_number,
             physical_profile=PhysicalProfile(**db_player.physical_profile),
             technical_profile=TechnicalProfile(**db_player.technical_profile),
             mental_profile=self._mental_profile(db_player),
@@ -125,6 +161,7 @@ class PlayerService:
         )
 
     def add_player(self, player: Player) -> None:
+        self._check_jersey_number_conflict(player)
         self.db.merge(self._to_db(player))
         self.db.commit()
 
@@ -178,9 +215,21 @@ class PlayerService:
         if existing is None:
             return False
 
+        self._check_jersey_number_conflict(player)
         self.db.merge(self._to_db(player))
         self.db.commit()
         return True
+
+    def find_by_jersey_number(self, jersey_number: int) -> list[Player]:
+        """All players wearing this number, across every team — shirt
+        numbers are only unique within a team, so a coach picking a player
+        by number may need to disambiguate between several matches."""
+        db_players = (
+            self.db.query(PlayerDB)
+            .filter(PlayerDB.jersey_number == jersey_number)
+            .all()
+        )
+        return [self._to_domain(player) for player in db_players]
 
 
     def get_players_by_team(
