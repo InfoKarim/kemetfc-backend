@@ -69,6 +69,7 @@ public struct PlayerSelectionView: View {
     let findByJerseyNumber: (Int) async -> [KemetPlayerSummary]
     let onSignOut: () async -> Void
     let currentUsername: String?
+    let onBack: (() -> Void)?
 
     @State private var isSigningOut = false
 
@@ -77,13 +78,15 @@ public struct PlayerSelectionView: View {
         searchPlayers: @escaping (String) async -> [KemetPlayerSummary],
         findByJerseyNumber: @escaping (Int) async -> [KemetPlayerSummary],
         onSignOut: @escaping () async -> Void,
-        currentUsername: String? = nil
+        currentUsername: String? = nil,
+        onBack: (() -> Void)? = nil
     ) {
         self.onPlayerConfirmed = onPlayerConfirmed
         self.searchPlayers = searchPlayers
         self.findByJerseyNumber = findByJerseyNumber
         self.onSignOut = onSignOut
         self.currentUsername = currentUsername
+        self.onBack = onBack
     }
 
     public var body: some View {
@@ -92,6 +95,14 @@ public struct PlayerSelectionView: View {
 
             VStack(spacing: 20) {
                 HStack {
+                    if let onBack {
+                        Button(action: onBack) {
+                            Image(systemName: "chevron.left")
+                                .font(.body.bold())
+                                .foregroundStyle(.white)
+                                .padding(.trailing, 4)
+                        }
+                    }
                     Text("Select Assessment Player")
                         .font(.title2).bold()
                         .foregroundStyle(.white)

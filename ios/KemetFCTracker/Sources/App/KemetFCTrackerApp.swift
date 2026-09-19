@@ -50,6 +50,7 @@ struct KemetFCTrackerApp: App {
 struct RootView: View {
     @EnvironmentObject var session: AssessmentSessionViewModel
     @State private var showPendingUploads = false
+    @State private var coachWantsToRecord = false
 
     var body: some View {
         Group {
@@ -75,8 +76,20 @@ struct RootView: View {
                     onRetryUpload: {
                         Task { await session.retryUpload(recordId: recordingId) }
                     },
-                    onDone: { session.clearFinishedRecording() },
+                    onDone: {
+                        session.clearFinishedRecording()
+                        coachWantsToRecord = false
+                    },
                     onViewPendingUploads: { showPendingUploads = true }
+                )
+            } else if !coachWantsToRecord {
+                CoachHomeView(
+                    currentUsername: session.authenticatedUsername,
+                    pendingCount: session.pendingStore.actionablePendingCount,
+                    webDashboardBaseURL: session.sharedAPIClient.baseURL,
+                    onStartAssessment: { coachWantsToRecord = true },
+                    onViewPendingUploads: { showPendingUploads = true },
+                    onSignOut: { await session.logout() }
                 )
             } else if session.confirmedPlayer == nil {
                 PlayerSelectionView(
@@ -84,7 +97,8 @@ struct RootView: View {
                     searchPlayers: { query in await session.searchPlayers(query) },
                     findByJerseyNumber: { number in await session.findByJerseyNumber(number) },
                     onSignOut: { await session.logout() },
-                    currentUsername: session.authenticatedUsername
+                    currentUsername: session.authenticatedUsername,
+                    onBack: { coachWantsToRecord = false }
                 )
                 .safeAreaInset(edge: .bottom) {
                     // actionablePendingCount excludes FAILED_PERMANENT
