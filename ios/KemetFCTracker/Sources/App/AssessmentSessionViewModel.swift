@@ -40,6 +40,17 @@ public struct BackendDiagnostics: Equatable {
     public var lastLatencyMs: Double?
 }
 
+/// Shared response shape for GET /auth/me and POST /auth/login — both
+/// return {"user": {...}} (main.py get_current_user/login), and the
+/// login view only needs the username back to confirm who signed in.
+private struct AuthUserResponse: Decodable {
+    struct User: Decodable {
+        let username: String
+        let role: String
+    }
+    let user: User
+}
+
 @MainActor
 public final class AssessmentSessionViewModel: ObservableObject {
     private let log = Logger(subsystem: "com.kemetfc.tracker", category: "AssessmentSessionViewModel")
@@ -59,14 +70,25 @@ public final class AssessmentSessionViewModel: ObservableObject {
     /// a new assessment.
     @Published public private(set) var lastFinishedRecordingId: String?
 
-    /// Stopgap coach identity for `created_by` on the video-upload
-    /// metadata (PlayerVideoUploadMetadataSchema.created_by is
-    /// required). There is no native login view yet (see
-    /// VERIFICATION_CHECKLIST.md and this session's report — building
-    /// one is a separate, explicitly tracked gap), so this is set by
-    /// whatever authenticated a WKWebView-hosted /login instead; NEVER
-    /// silently defaulted to a fabricated-looking real name.
-    public var coachIdentifier: String = "ios-app-unidentified-coach"
+    /// Native login (LoginView) — checked once at launch against the
+    /// EXISTING session cookie (GET /auth/me), so a coach who logged in
+    /// on a previous run stays signed in rather than re-entering a
+    /// password every launch (the backend cookie itself is the
+    /// long-lived credential, exactly like the web app).
+    @Published public private(set) var isCheckingSession = true
+    @Published public private(set) var isAuthenticated = false
+    @Published public private(set) var authenticatedUsername: String?
+    /// "coach", "admin", or "guardian" (main.py UserDB.role) — RootView
+    /// uses this to route to either the coach recording flow or
+    /// GuardianHomeView after login. Never assumed — always the real
+    /// value from /auth/me or /auth/login.
+    @Published public private(set) var userRole: String?
+
+    /// Real coach identity for `created_by` on the video-upload metadata
+    /// (PlayerVideoUploadMetadataSchema.created_by is required) — set
+    /// only by a real login (checkExistingSession/login below), never
+    /// defaulted to a fabricated-looking name.
+    public private(set) var coachIdentifier: String = "ios-app-unidentified-coach"
 
     public let dockKitManager = DockKitManager()
     public let cameraCaptureManager = CameraCaptureManager()
@@ -75,6 +97,11 @@ public final class AssessmentSessionViewModel: ObservableObject {
     /// observe it directly.
     public let pendingStore = PendingAssessmentStore()
     private let apiClient: KemetAPIClient
+    /// Exposed so GuardianViewModel (a guardian-role account never
+    /// touches any coach/recording state on this class) can issue
+    /// requests through the SAME authenticated client/cookie session,
+    /// rather than constructing a second one.
+    public var sharedAPIClient: KemetAPIClient { apiClient }
     private var gimbalController: GimbalController?
     /// Published (not private) — AssessmentCameraView binds to THIS
     /// exact instance, not one it constructs itself, so the overlay/HUD
@@ -128,7 +155,61 @@ public final class AssessmentSessionViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
+    /// Checked once at launch (RootView shows LoginView until this
+    /// resolves) — GET /auth/me on the EXISTING session cookie, the same
+    /// endpoint auth-client.js polls on every web dashboard page.
+    public func checkExistingSession() async {
+        do {
+            let response = try await apiClient.get(path: "/auth/me", as: AuthUserResponse.self)
+            authenticatedUsername = response.user.username
+            userRole = response.user.role
+            coachIdentifier = response.user.username
+            apiClient.refreshCSRFToken()
+            isAuthenticated = true
+        } catch {
+            isAuthenticated = false
+        }
+        isCheckingSession = false
+    }
+
+    /// LoginView's Sign In button — POST /auth/login (PUBLIC_PATHS, no
+    /// CSRF token needed pre-login), the same endpoint and credentials
+    /// the web dashboard's /login page uses. Returns nil on success, or
+    /// a coach-facing message on failure (never a generic "login failed").
+    public func login(username: String, password: String) async -> String? {
+        struct LoginBody: Encodable { let username: String; let password: String }
+        do {
+            let response = try await apiClient.post(
+                path: "/auth/login",
+                body: LoginBody(username: username, password: password),
+                as: AuthUserResponse.self
+            )
+            authenticatedUsername = response.user.username
+            userRole = response.user.role
+            coachIdentifier = response.user.username
+            apiClient.refreshCSRFToken()
+            isAuthenticated = true
+            return nil
+        } catch KemetAPIError.server(_, let detail) {
+            return detail
+        } catch {
+            return "Could not reach the KEMET server — check your connection and try again."
+        }
+    }
+
+    /// Sign out (GuardianHomeView) — POST /auth/logout, the same endpoint
+    /// the web dashboard's sign-out button uses; clears the session/CSRF
+    /// cookies server-side, then resets local auth state so RootView
+    /// falls back to LoginView.
+    public func logout() async {
+        try? await apiClient.post(path: "/auth/logout")
+        authenticatedUsername = nil
+        userRole = nil
+        isAuthenticated = false
+    }
+
     public func start() async {
+        await checkExistingSession()
         dockKitManager.startMonitoring()
         do {
             try await cameraCaptureManager.requestPermissionAndConfigure()
@@ -266,31 +347,53 @@ public final class AssessmentSessionViewModel: ObservableObject {
         confirmedPlayer = player
     }
 
-    /// QR Scan tab (spec section 5): resolves an opaque check-in token
-    /// scanned off a player's QR badge to a Player Profile via the
-    /// EXISTING, tested backend endpoint (POST
-    /// /players/checkin-token/resolve, app/routers/player_checkin.py).
-    /// The failure message returned is already the specific,
-    /// coach-facing text the backend crafted per reason (invalid/
-    /// expired/revoked) — never a generic "scan failed."
-    public func resolveCheckInToken(_ token: String) async -> CheckInResolution {
-        struct ResolveBody: Encodable { let token: String }
+    /// Search/Player ID tabs (spec section 5): the full roster is fetched
+    /// once from the EXISTING GET /players endpoint and cached, then
+    /// filtered locally per keystroke — same approach the web dashboard's
+    /// player picker (app/static/add_video.html) uses, and avoids hitting
+    /// the backend on every character typed.
+    private var cachedRoster: [KemetPlayerSummary]?
+
+    public func searchPlayers(_ query: String) async -> [KemetPlayerSummary] {
+        let roster: [KemetPlayerSummary]
+        if let cachedRoster {
+            roster = cachedRoster
+        } else {
+            let start = Date()
+            do {
+                roster = try await apiClient.get(path: "/players", as: [KemetPlayerSummary].self)
+                cachedRoster = roster
+                recordDiagnostics(request: "GET /players", startedAt: start, error: nil)
+            } catch {
+                recordDiagnostics(request: "GET /players", startedAt: start, error: "\(error)")
+                return []
+            }
+        }
+
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !term.isEmpty else { return roster }
+        return roster.filter {
+            $0.fullName.lowercased().contains(term) || $0.playerId.lowercased().contains(term)
+        }
+    }
+
+    /// Shirt Number tab (spec section 5, replacing QR Scan): a jersey
+    /// number is only unique within a team (app/services/player_service.py
+    /// JerseyNumberConflictError), so this returns every match — same
+    /// EXISTING backend query the web dashboard's picker uses (GET
+    /// /players?jersey_number=N, main.py get_all_players).
+    public func findByJerseyNumber(_ number: Int) async -> [KemetPlayerSummary] {
         let start = Date()
         do {
-            apiClient.refreshCSRFToken()
-            let player = try await apiClient.post(
-                path: "/players/checkin-token/resolve",
-                body: ResolveBody(token: token),
-                as: KemetPlayerSummary.self
+            let matches = try await apiClient.get(
+                path: "/players?jersey_number=\(number)",
+                as: [KemetPlayerSummary].self
             )
-            recordDiagnostics(request: "POST /players/checkin-token/resolve", startedAt: start, error: nil)
-            return .success(player)
-        } catch KemetAPIError.server(_, let detail) {
-            recordDiagnostics(request: "POST /players/checkin-token/resolve", startedAt: start, error: detail)
-            return .failure(message: detail)
+            recordDiagnostics(request: "GET /players?jersey_number=\(number)", startedAt: start, error: nil)
+            return matches
         } catch {
-            recordDiagnostics(request: "POST /players/checkin-token/resolve", startedAt: start, error: "\(error)")
-            return .failure(message: "Could not reach the KEMET server — check your connection and try again.")
+            recordDiagnostics(request: "GET /players?jersey_number=\(number)", startedAt: start, error: "\(error)")
+            return []
         }
     }
 

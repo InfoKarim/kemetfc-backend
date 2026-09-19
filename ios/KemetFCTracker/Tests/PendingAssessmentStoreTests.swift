@@ -394,4 +394,79 @@ final class PendingAssessmentStoreTests: XCTestCase {
         record.localVideoRelativePath = relative
         XCTAssertEqual(store.localVideoURL(for: record).path, fileURL.path)
     }
+
+    // MARK: - deleteRecord (coach-initiated delete)
+
+    func testDeleteRecordRemovesBothFileAndQueueEntry() {
+        let store = makeStore()
+        var record = makeRecord()
+        record.uploadState = .localSaved
+        writeMinimalValidVideoFile(for: record, in: store)
+        store.upsert(record)
+
+        let videoURL = store.localVideoURL(for: record)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: videoURL.path))
+
+        let deleted = store.deleteRecord(id: record.id)
+
+        XCTAssertTrue(deleted)
+        XCTAssertNil(store.record(id: record.id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: videoURL.path))
+    }
+
+    func testDeleteRecordWorksForAlreadyUploadedRecords() {
+        // Deleting an UPLOADED record only frees the local copy — the
+        // backend already has its own, independent copy from the real
+        // upload — so this must succeed exactly like any other state.
+        let store = makeStore()
+        var record = makeRecord()
+        record.uploadState = .uploaded
+        record.serverVideoId = "VID000001"
+        writeMinimalValidVideoFile(for: record, in: store)
+        store.upsert(record)
+
+        XCTAssertTrue(store.deleteRecord(id: record.id))
+        XCTAssertNil(store.record(id: record.id))
+    }
+
+    func testDeleteRecordRefusesWhileActivelyRecording() {
+        // .recording means AVFoundation may still be writing this exact
+        // file — deleting it out from under an active capture session
+        // must never be allowed.
+        let store = makeStore()
+        let record = makeRecord()
+        XCTAssertEqual(record.uploadState, .recording)
+        store.upsert(record)
+
+        let deleted = store.deleteRecord(id: record.id)
+
+        XCTAssertFalse(deleted)
+        XCTAssertNotNil(store.record(id: record.id), "the queue entry must survive a refused delete")
+    }
+
+    func testDeleteRecordForUnknownIdReturnsFalseAndDoesNothing() {
+        let store = makeStore()
+        var record = makeRecord()
+        record.uploadState = .localSaved
+        store.upsert(record)
+
+        let deleted = store.deleteRecord(id: "does-not-exist")
+
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(store.records.count, 1, "an unrelated delete must never affect other records")
+    }
+
+    func testDeleteRecordPersistsAcrossFreshStoreInstance() {
+        var record = makeRecord()
+        record.uploadState = .failedPermanent
+
+        do {
+            let store = makeStore()
+            store.upsert(record)
+            XCTAssertTrue(store.deleteRecord(id: record.id))
+        }
+
+        let reloaded = makeStore()
+        XCTAssertNil(reloaded.record(id: record.id), "the delete must be durable, not just in-memory")
+    }
 }

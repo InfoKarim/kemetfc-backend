@@ -22,6 +22,9 @@ import SwiftUI
 struct PendingUploadsView: View {
     @ObservedObject var store: PendingAssessmentStore
     let onRetry: (String) -> Void
+    let onDelete: (String) -> Void
+
+    @State private var pendingDeleteRecord: PendingAssessmentRecord?
 
     private var sortedRecords: [PendingAssessmentRecord] {
         store.records.sorted { $0.startTime > $1.startTime }
@@ -67,11 +70,45 @@ struct PendingUploadsView: View {
                             }
                         }
                         .padding(.vertical, 4)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: record.uploadState != .recording) {
+                            if record.uploadState != .recording {
+                                Button(role: .destructive) {
+                                    pendingDeleteRecord = record
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
                     }
                 }
             }
             .navigationTitle("Pending Assessments")
+            .confirmationDialog(
+                deleteConfirmationTitle,
+                isPresented: Binding(
+                    get: { pendingDeleteRecord != nil },
+                    set: { if !$0 { pendingDeleteRecord = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Delete Video", role: .destructive) {
+                    if let pendingDeleteRecord {
+                        onDelete(pendingDeleteRecord.id)
+                    }
+                    pendingDeleteRecord = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDeleteRecord = nil
+                }
+            }
         }
+    }
+
+    private var deleteConfirmationTitle: String {
+        guard let pendingDeleteRecord else { return "Delete this video?" }
+        return pendingDeleteRecord.uploadState == .uploaded
+            ? "Delete \(pendingDeleteRecord.playerName)'s video? It has already been synced to KEMET FC, but this only removes the copy on this phone."
+            : "Delete \(pendingDeleteRecord.playerName)'s video? It has not finished uploading — this recording will be lost permanently."
     }
 
     /// Truthful wording (spec: "Do not display 'Saved locally' when the

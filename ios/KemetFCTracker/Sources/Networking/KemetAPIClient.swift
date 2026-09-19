@@ -71,6 +71,28 @@ public final class KemetAPIClient: @unchecked Sendable {
         csrfToken = cookies.first(where: { $0.name == "trainingbuddy_pilot2_csrf" })?.value
     }
 
+    /// `URL.appendingPathComponent` percent-encodes its argument as a
+    /// single path segment — a `path` containing a query string (e.g.
+    /// "/players?jersey_number=10") would have its "?" encoded too,
+    /// silently hitting the wrong route. Splitting the query off first
+    /// and attaching it via `URLComponents` keeps existing plain-path
+    /// callers identical while making "path?query" callers actually work.
+    private func url(for path: String) -> URL {
+        guard let queryIndex = path.firstIndex(of: "?") else {
+            return configuration.baseURL.appendingPathComponent(path)
+        }
+
+        let pathOnly = String(path[path.startIndex..<queryIndex])
+        let query = String(path[path.index(after: queryIndex)...])
+        let base = configuration.baseURL.appendingPathComponent(pathOnly)
+
+        guard var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            return base
+        }
+        components.percentEncodedQuery = query
+        return components.url ?? base
+    }
+
     public func post<Body: Encodable, Response: Decodable>(
         path: String,
         body: Body,
@@ -94,7 +116,7 @@ public final class KemetAPIClient: @unchecked Sendable {
     /// base-URL + CSRF-header construction every other request uses,
     /// so multipart uploads authenticate identically to JSON requests.
     public func authenticatedRequest(path: String, method: String) -> URLRequest {
-        var urlRequest = URLRequest(url: configuration.baseURL.appendingPathComponent(path))
+        var urlRequest = URLRequest(url: url(for: path))
         urlRequest.httpMethod = method
         if let csrfToken, method != "GET" {
             urlRequest.setValue(csrfToken, forHTTPHeaderField: "X-CSRF-Token")
@@ -114,7 +136,7 @@ public final class KemetAPIClient: @unchecked Sendable {
         body: Body?,
         as type: Response.Type
     ) async throws -> Response {
-        var urlRequest = URLRequest(url: configuration.baseURL.appendingPathComponent(path))
+        var urlRequest = URLRequest(url: url(for: path))
         urlRequest.httpMethod = method
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let csrfToken, method != "GET" {
@@ -135,7 +157,7 @@ public final class KemetAPIClient: @unchecked Sendable {
     }
 
     private func requestNoBody(path: String, method: String) async throws {
-        var urlRequest = URLRequest(url: configuration.baseURL.appendingPathComponent(path))
+        var urlRequest = URLRequest(url: url(for: path))
         urlRequest.httpMethod = method
         if let csrfToken {
             urlRequest.setValue(csrfToken, forHTTPHeaderField: "X-CSRF-Token")

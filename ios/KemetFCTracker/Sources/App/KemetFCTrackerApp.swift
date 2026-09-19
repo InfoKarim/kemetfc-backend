@@ -53,7 +53,21 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if let recordingId = session.lastFinishedRecordingId, session.pendingStore.record(id: recordingId) != nil {
+            if session.isCheckingSession {
+                ZStack {
+                    Color.kemetNavy.ignoresSafeArea()
+                    ProgressView().tint(.white)
+                }
+            } else if !session.isAuthenticated {
+                LoginView(onLogin: { username, password in
+                    await session.login(username: username, password: password)
+                })
+            } else if session.userRole == "guardian" {
+                GuardianHomeView(
+                    viewModel: GuardianViewModel(apiClient: session.sharedAPIClient),
+                    onSignOut: { await session.logout() }
+                )
+            } else if let recordingId = session.lastFinishedRecordingId, session.pendingStore.record(id: recordingId) != nil {
                 AssessmentSummaryView(
                     store: session.pendingStore,
                     recordId: recordingId,
@@ -65,10 +79,10 @@ struct RootView: View {
                 )
             } else if session.confirmedPlayer == nil {
                 PlayerSelectionView(
-                    capture: session.cameraCaptureManager,
                     onPlayerConfirmed: { session.confirmPlayer($0) },
-                    searchPlayers: { _ in [] }, // wire to GET /players?search=... before shipping
-                    resolveCheckInToken: { token in await session.resolveCheckInToken(token) }
+                    searchPlayers: { query in await session.searchPlayers(query) },
+                    findByJerseyNumber: { number in await session.findByJerseyNumber(number) },
+                    onSignOut: { await session.logout() }
                 )
                 .safeAreaInset(edge: .bottom) {
                     // actionablePendingCount excludes FAILED_PERMANENT
@@ -80,10 +94,15 @@ struct RootView: View {
                             showPendingUploads = true
                         } label: {
                             Label("\(session.pendingStore.actionablePendingCount) Pending Upload(s)", systemImage: "icloud.and.arrow.up")
+                                .bold()
                                 .frame(maxWidth: .infinity)
+                                .padding()
+                                .background(Color.kemetGold)
+                                .foregroundStyle(Color.kemetNavy)
+                                .clipShape(Capsule())
                         }
-                        .buttonStyle(.bordered)
                         .padding()
+                        .background(Color.kemetNavy)
                     }
                 }
             } else if let coordinator = session.trackingCoordinator, let player = session.confirmedPlayer {
@@ -170,7 +189,8 @@ struct RootView: View {
         .sheet(isPresented: $showPendingUploads) {
             PendingUploadsView(
                 store: session.pendingStore,
-                onRetry: { recordId in Task { await session.retryUpload(recordId: recordId) } }
+                onRetry: { recordId in Task { await session.retryUpload(recordId: recordId) } },
+                onDelete: { recordId in session.pendingStore.deleteRecord(id: recordId) }
             )
         }
     }

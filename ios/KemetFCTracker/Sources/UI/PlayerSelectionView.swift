@@ -5,10 +5,18 @@
 //  STATUS: Source implementation, unverified — see TrackTypes.swift header.
 //
 //  The coach's KEMET player identification step (spec section 5) —
-//  QR / Search / Player ID / Assessment Session — happening BEFORE any
-//  tracking begins. Reuses the existing KEMET player model shape
-//  (app/db_models.py PlayerDB: first/last name, team, etc.) via
-//  KemetAPIClient rather than inventing a parallel player concept.
+//  Search / Shirt Number / Player ID / Assessment Session — happening
+//  BEFORE any tracking begins. Reuses the existing KEMET player model
+//  shape (app/db_models.py PlayerDB: first/last name, team, jersey
+//  number, etc.) via KemetAPIClient rather than inventing a parallel
+//  player concept.
+//
+//  QR Scan was removed at the product owner's request in favor of Shirt
+//  Number (a coach reads the jersey number off the player and types it
+//  in — there is no camera-based automatic jersey-number recognition
+//  model, so this is never faked as one). The backend's QR check-in
+//  token endpoints (app/routers/player_checkin.py) are untouched and
+//  still tested — only this screen's use of them was removed.
 //
 
 import SwiftUI
@@ -19,6 +27,7 @@ public struct KemetPlayerSummary: Codable, Identifiable {
     public var lastNameEn: String
     public var teamName: String?
     public var ageGroup: String?
+    public var jerseyNumber: Int?
     public var photoURL: URL?
 
     public var id: String { playerId }
@@ -30,28 +39,18 @@ public struct KemetPlayerSummary: Codable, Identifiable {
         case lastNameEn = "last_name_en"
         case teamName = "team_name"
         case ageGroup = "age_group"
+        case jerseyNumber = "jersey_number"
         case photoURL = "photo_url"
     }
 }
 
 public struct PlayerSelectionView: View {
     public enum SelectionMethod: String, CaseIterable, Identifiable {
-        case qrScan = "QR Scan"
         case search = "Search Player"
+        case shirtNumber = "Shirt Number"
         case playerId = "Player ID"
         case session = "Assessment Session"
         public var id: String { rawValue }
-    }
-
-    /// The QR tab's own confirmation step (spec section 5: "Show player
-    /// confirmation screen ... Add Confirm Player and Choose Different
-    /// Player") — kept separate from `selected`/`currentPlayerCard`
-    /// below, which is Search/Player ID's existing "START TRACKING"
-    /// flow and is left untouched.
-    private enum QRState {
-        case scanning
-        case confirming(KemetPlayerSummary)
-        case error(String)
     }
 
     @State private var method: SelectionMethod = .search
@@ -59,146 +58,111 @@ public struct PlayerSelectionView: View {
     @State private var searchResults: [KemetPlayerSummary] = []
     @State private var selected: KemetPlayerSummary?
     @State private var isSearching = false
-    @State private var qrState: QRState = .scanning
+
+    @State private var jerseyNumberText = ""
+    @State private var jerseyResults: [KemetPlayerSummary] = []
+    @State private var jerseyStatus: String?
+    @State private var isLookingUpJersey = false
 
     let onPlayerConfirmed: (KemetPlayerSummary) -> Void
     let searchPlayers: (String) async -> [KemetPlayerSummary]
-    let capture: CameraCaptureManager
-    let resolveCheckInToken: (String) async -> CheckInResolution
+    let findByJerseyNumber: (Int) async -> [KemetPlayerSummary]
+    let onSignOut: () async -> Void
+
+    @State private var isSigningOut = false
 
     public init(
-        capture: CameraCaptureManager,
         onPlayerConfirmed: @escaping (KemetPlayerSummary) -> Void,
         searchPlayers: @escaping (String) async -> [KemetPlayerSummary],
-        resolveCheckInToken: @escaping (String) async -> CheckInResolution
+        findByJerseyNumber: @escaping (Int) async -> [KemetPlayerSummary],
+        onSignOut: @escaping () async -> Void
     ) {
-        self.capture = capture
         self.onPlayerConfirmed = onPlayerConfirmed
         self.searchPlayers = searchPlayers
-        self.resolveCheckInToken = resolveCheckInToken
+        self.findByJerseyNumber = findByJerseyNumber
+        self.onSignOut = onSignOut
     }
 
     public var body: some View {
-        VStack(spacing: 20) {
-            Text("Select Assessment Player")
-                .font(.title2).bold()
+        ZStack {
+            Color.kemetNavy.ignoresSafeArea()
 
-            Picker("Method", selection: $method) {
-                ForEach(SelectionMethod.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
-
-            switch method {
-            case .search, .playerId:
-                searchSection
-            case .qrScan:
-                qrScanSection
-            case .session:
-                Text("Lists players already on today's Assessment Session roster via GET /players?session_id=... — reuses the existing assessment-session model, no new backend concept.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding()
-            }
-
-            if let selected {
-                currentPlayerCard(selected)
-            }
-
-            Spacer()
-        }
-        .padding()
-        .onChange(of: method) { _, newValue in
-            // Always re-enter the QR tab fresh, even if it was left
-            // mid-confirmation or on an error — never resume scanning
-            // silently into a stale resolved player.
-            if newValue == .qrScan { qrState = .scanning }
-        }
-    }
-
-    @ViewBuilder
-    private var qrScanSection: some View {
-        switch qrState {
-        case .scanning:
-            QRCheckInScanView(
-                capture: capture,
-                resolveCheckInToken: resolveCheckInToken,
-                onResolved: { resolution in
-                    switch resolution {
-                    case .success(let player):
-                        qrState = .confirming(player)
-                    case .failure(let message):
-                        qrState = .error(message)
+            VStack(spacing: 20) {
+                HStack {
+                    Text("Select Assessment Player")
+                        .font(.title2).bold()
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button {
+                        isSigningOut = true
+                        Task {
+                            await onSignOut()
+                            isSigningOut = false
+                        }
+                    } label: {
+                        Text(isSigningOut ? "Signing out..." : "Sign out")
+                            .font(.caption.bold())
                     }
+                    .buttonStyle(.bordered)
+                    .tint(.white)
+                    .disabled(isSigningOut)
                 }
-            )
-        case .confirming(let player):
-            qrConfirmationCard(player)
-        case .error(let message):
-            qrErrorCard(message)
+
+                methodTabs
+
+                switch method {
+                case .search, .playerId:
+                    searchSection
+                case .shirtNumber:
+                    shirtNumberSection
+                case .session:
+                    Text("Lists players already on today's Assessment Session roster via GET /players?session_id=... — reuses the existing assessment-session model, no new backend concept.")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(.white.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 16))
+                }
+
+                if let selected {
+                    currentPlayerCard(selected)
+                }
+
+                Spacer()
+            }
+            .padding()
         }
     }
 
-    private func qrConfirmationCard(_ player: KemetPlayerSummary) -> some View {
-        VStack(spacing: 12) {
-            Text("PLAYER FOUND").font(.caption).bold().foregroundStyle(.secondary)
-
-            AsyncImage(url: player.photoURL) { image in
-                image.resizable().aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Circle().fill(.gray.opacity(0.3))
-            }
-            .frame(width: 96, height: 96)
-            .clipShape(Circle())
-
-            Text(player.fullName).font(.title3).bold()
-            if let ageGroup = player.ageGroup {
-                Text(ageGroup).font(.subheadline).foregroundStyle(.secondary)
-            }
-            if let teamName = player.teamName {
-                Text(teamName).font(.subheadline).foregroundStyle(.secondary)
-            }
-
-            HStack(spacing: 12) {
-                Button("Choose Different Player") {
-                    qrState = .scanning
+    private var methodTabs: some View {
+        HStack(spacing: 8) {
+            ForEach(SelectionMethod.allCases) { candidate in
+                Button {
+                    method = candidate
+                } label: {
+                    Text(candidate.rawValue)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity)
+                        .background(method == candidate ? Color.kemetGold : Color.white.opacity(0.08))
+                        .foregroundStyle(method == candidate ? Color.kemetNavy : .white)
+                        .clipShape(Capsule())
                 }
-                .buttonStyle(.bordered)
-
-                Button("Confirm Player") {
-                    onPlayerConfirmed(player)
-                }
-                .bold()
-                .buttonStyle(.borderedProminent)
             }
-            .padding(.top, 4)
         }
-        .padding()
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func qrErrorCard(_ message: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.largeTitle)
-                .foregroundStyle(.orange)
-            Text(message)
-                .multilineTextAlignment(.center)
-            Button("Scan Again") {
-                qrState = .scanning
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .padding()
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     private var searchSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             TextField("Search by name or ID", text: $searchText)
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .padding(12)
+                .background(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
                 .onChange(of: searchText) { _, newValue in
                     Task {
                         isSearching = true
@@ -208,25 +172,100 @@ public struct PlayerSelectionView: View {
                 }
 
             if isSearching {
-                ProgressView()
+                ProgressView().tint(.white)
             }
 
-            List(searchResults) { player in
-                Button {
-                    selected = player
-                } label: {
-                    HStack {
-                        Text(player.fullName)
-                        Spacer()
-                        if let teamName = player.teamName {
-                            Text(teamName).foregroundStyle(.secondary)
-                        }
+            playerResultsList(searchResults)
+        }
+    }
+
+    /// Shirt Number tab: the coach reads the number off the player's
+    /// jersey and types it in — matches app/static/add_video.html's web
+    /// picker exactly, including that a number is not globally unique
+    /// (only unique within a team), so every match is shown for the
+    /// coach to disambiguate rather than picking one silently.
+    private var shirtNumberSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                TextField("Shirt number, e.g. 10", text: $jerseyNumberText)
+                    .keyboardType(.numberPad)
+                    .textFieldStyle(.plain)
+                    .padding(12)
+                    .background(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+
+                Button("Find") {
+                    lookUpJerseyNumber()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.kemetGold)
+                .foregroundStyle(Color.kemetNavy)
+            }
+
+            if isLookingUpJersey {
+                ProgressView().tint(.white)
+            }
+
+            if let jerseyStatus {
+                Text(jerseyStatus)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+            }
+
+            playerResultsList(jerseyResults)
+        }
+    }
+
+    private func lookUpJerseyNumber() {
+        let trimmed = jerseyNumberText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let number = Int(trimmed), (1...99).contains(number) else {
+            jerseyStatus = "Enter a shirt number between 1 and 99."
+            jerseyResults = []
+            return
+        }
+
+        Task {
+            isLookingUpJersey = true
+            jerseyResults = await findByJerseyNumber(number)
+            isLookingUpJersey = false
+            jerseyStatus = jerseyResults.isEmpty
+                ? "No player is wearing #\(number)."
+                : (jerseyResults.count == 1
+                    ? "1 player found."
+                    : "\(jerseyResults.count) players found wearing #\(number) — pick the right one.")
+        }
+    }
+
+    private func playerResultsList(_ players: [KemetPlayerSummary]) -> some View {
+        List(players) { player in
+            Button {
+                selected = player
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(player.fullName).foregroundStyle(Color.kemetNavy)
+                        Text(playerMetaText(player))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    Spacer()
                 }
             }
-            .listStyle(.plain)
-            .frame(maxHeight: 260)
+            .listRowBackground(Color.white)
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .frame(maxHeight: 260)
+        .background(.white)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func playerMetaText(_ player: KemetPlayerSummary) -> String {
+        var parts: [String] = [player.playerId]
+        if let teamName = player.teamName { parts.append(teamName) }
+        if let ageGroup = player.ageGroup { parts.append(ageGroup) }
+        if let jerseyNumber = player.jerseyNumber { parts.append("#\(jerseyNumber)") }
+        return parts.joined(separator: " · ")
     }
 
     private func currentPlayerCard(_ player: KemetPlayerSummary) -> some View {
@@ -235,12 +274,13 @@ public struct PlayerSelectionView: View {
             AsyncImage(url: player.photoURL) { image in
                 image.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
-                Circle().fill(.gray.opacity(0.3))
+                Circle().fill(Color.kemetNavy.opacity(0.15))
             }
             .frame(width: 72, height: 72)
             .clipShape(Circle())
+            .overlay(Circle().stroke(Color.kemetGold, lineWidth: 2))
 
-            Text(player.fullName).font(.headline)
+            Text(player.fullName).font(.headline).foregroundStyle(Color.kemetNavy)
             if let ageGroup = player.ageGroup {
                 Text(ageGroup).font(.subheadline).foregroundStyle(.secondary)
             }
@@ -255,13 +295,13 @@ public struct PlayerSelectionView: View {
                     .bold()
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(Color.accentColor)
-                    .foregroundStyle(.white)
+                    .background(Color.kemetGold)
+                    .foregroundStyle(Color.kemetNavy)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
             }
         }
         .padding()
-        .background(.thinMaterial)
+        .background(.white)
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }

@@ -299,6 +299,22 @@ public final class PendingAssessmentStore: ObservableObject {
         try? FileManager.default.removeItem(at: localVideoURL(for: record))
     }
 
+    /// Coach-initiated delete (Pending Assessments screen) — unlike
+    /// deleteLocalFile(recordId:) above, this removes BOTH the local
+    /// video file and the queue entry itself, for any record the coach
+    /// explicitly chooses to discard, not just already-uploaded ones.
+    /// Refuses only while a recording is still actively in progress
+    /// (.recording) — AVFoundation may still be writing that file, and
+    /// the file's own path wouldn't even be final yet.
+    @discardableResult
+    public func deleteRecord(id: String) -> Bool {
+        guard let record = self.record(id: id), record.uploadState != .recording else { return false }
+        try? FileManager.default.removeItem(at: localVideoURL(for: record))
+        records.removeAll { $0.id == id }
+        persist()
+        return true
+    }
+
     // MARK: - Persistence
 
     /// Decodes each array element INDEPENDENTLY (via JSONSerialization
