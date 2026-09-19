@@ -52,7 +52,11 @@ struct GuardianHomeView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 10) {
+            Image("kemet_logo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 32, height: 32)
             VStack(alignment: .leading, spacing: 2) {
                 Text("KEMET FC").font(.headline.bold()).foregroundStyle(.white)
                 Text("GUARDIAN PORTAL")

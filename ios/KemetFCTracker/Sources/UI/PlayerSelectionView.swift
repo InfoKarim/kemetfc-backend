@@ -112,9 +112,16 @@ public struct PlayerSelectionView: View {
                                 .padding(.trailing, 4)
                         }
                     }
+                    Image("kemet_logo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 28, height: 28)
+                        .padding(.trailing, 4)
                     Text("Select Assessment Player")
                         .font(.title2).bold()
                         .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                     Spacer()
                     AccountAvatarControl(
                         username: currentUsername,

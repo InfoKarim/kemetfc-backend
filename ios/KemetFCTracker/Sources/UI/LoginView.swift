@@ -29,6 +29,10 @@ struct LoginView: View {
                 Spacer()
 
                 VStack(spacing: 4) {
+                    Image("kemet_logo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 96, height: 96)
                     Text("KEMET FC")
                         .font(.largeTitle.bold())
                         .foregroundStyle(Color.kemetGold)
