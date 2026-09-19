@@ -22,6 +22,9 @@ struct GuardianHomeView: View {
     @StateObject var viewModel: GuardianViewModel
     let onSignOut: () async -> Void
     var currentUsername: String? = nil
+    var avatarURL: URL? = nil
+    var onUploadAvatar: (Data) async -> String? = { _ in nil }
+    var onRemoveAvatar: () async -> Void = {}
 
     @State private var expandedPillar: String?
     @State private var isSigningOut = false
@@ -48,28 +51,6 @@ struct GuardianHomeView: View {
         .task { await viewModel.loadChildren() }
     }
 
-    /// Matches the web dashboard's own `#account-avatar` treatment
-    /// (auth_client.js ensureAccountWidget): a white circle with the
-    /// signed-in user's initials in bold navy.
-    @ViewBuilder
-    private var accountBadge: some View {
-        if let currentUsername, !currentUsername.isEmpty {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(.white)
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Text(String(currentUsername.prefix(2)).uppercased())
-                            .font(.caption2.bold())
-                            .foregroundStyle(Color.kemetNavy)
-                    )
-                Text(currentUsername)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-            }
-        }
-    }
-
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
@@ -79,7 +60,12 @@ struct GuardianHomeView: View {
                     .foregroundStyle(.white.opacity(0.6))
             }
             Spacer()
-            accountBadge
+            AccountAvatarControl(
+                username: currentUsername,
+                avatarURL: avatarURL,
+                onUpload: onUploadAvatar,
+                onRemove: onRemoveAvatar
+            )
             Button {
                 isSigningOut = true
                 Task {

@@ -69,6 +69,9 @@ public struct PlayerSelectionView: View {
     let findByJerseyNumber: (Int) async -> [KemetPlayerSummary]
     let onSignOut: () async -> Void
     let currentUsername: String?
+    let avatarURL: URL?
+    let onUploadAvatar: (Data) async -> String?
+    let onRemoveAvatar: () async -> Void
     let onBack: (() -> Void)?
 
     @State private var isSigningOut = false
@@ -79,6 +82,9 @@ public struct PlayerSelectionView: View {
         findByJerseyNumber: @escaping (Int) async -> [KemetPlayerSummary],
         onSignOut: @escaping () async -> Void,
         currentUsername: String? = nil,
+        avatarURL: URL? = nil,
+        onUploadAvatar: @escaping (Data) async -> String? = { _ in nil },
+        onRemoveAvatar: @escaping () async -> Void = {},
         onBack: (() -> Void)? = nil
     ) {
         self.onPlayerConfirmed = onPlayerConfirmed
@@ -86,6 +92,9 @@ public struct PlayerSelectionView: View {
         self.findByJerseyNumber = findByJerseyNumber
         self.onSignOut = onSignOut
         self.currentUsername = currentUsername
+        self.avatarURL = avatarURL
+        self.onUploadAvatar = onUploadAvatar
+        self.onRemoveAvatar = onRemoveAvatar
         self.onBack = onBack
     }
 
@@ -107,7 +116,12 @@ public struct PlayerSelectionView: View {
                         .font(.title2).bold()
                         .foregroundStyle(.white)
                     Spacer()
-                    accountBadge
+                    AccountAvatarControl(
+                        username: currentUsername,
+                        avatarURL: avatarURL,
+                        onUpload: onUploadAvatar,
+                        onRemove: onRemoveAvatar
+                    )
                     Button {
                         isSigningOut = true
                         Task {
@@ -147,29 +161,6 @@ public struct PlayerSelectionView: View {
                 Spacer()
             }
             .padding()
-        }
-    }
-
-    /// Matches the web dashboard's own `#account-avatar` treatment
-    /// (auth_client.js ensureAccountWidget): a white circle with the
-    /// signed-in user's initials in bold navy — same visual identity
-    /// element on both platforms, never a fabricated photo.
-    @ViewBuilder
-    private var accountBadge: some View {
-        if let currentUsername, !currentUsername.isEmpty {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(.white)
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Text(String(currentUsername.prefix(2)).uppercased())
-                            .font(.caption2.bold())
-                            .foregroundStyle(Color.kemetNavy)
-                    )
-                Text(currentUsername)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-            }
         }
     }
 

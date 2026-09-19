@@ -47,6 +47,11 @@ private struct AuthUserResponse: Decodable {
     struct User: Decodable {
         let username: String
         let role: String
+        let avatarURL: String?
+        enum CodingKeys: String, CodingKey {
+            case username, role
+            case avatarURL = "avatar_url"
+        }
     }
     let user: User
 }
@@ -78,6 +83,12 @@ public final class AssessmentSessionViewModel: ObservableObject {
     @Published public private(set) var isCheckingSession = true
     @Published public private(set) var isAuthenticated = false
     @Published public private(set) var authenticatedUsername: String?
+    /// GET /auth/me's/POST /auth/login's avatar_url, resolved against
+    /// apiClient's own baseURL — same field the web dashboard's
+    /// #account-avatar reads, updated locally after a successful
+    /// uploadAvatar()/removeAvatar() so the UI never waits on a second
+    /// round trip to reflect its own change.
+    @Published public private(set) var avatarURL: URL?
     /// "coach", "admin", or "guardian" (main.py UserDB.role) — RootView
     /// uses this to route to either the coach recording flow or
     /// GuardianHomeView after login. Never assumed — always the real
@@ -164,12 +175,21 @@ public final class AssessmentSessionViewModel: ObservableObject {
             authenticatedUsername = response.user.username
             userRole = response.user.role
             coachIdentifier = response.user.username
+            avatarURL = resolveAvatarURL(response.user.avatarURL)
             apiClient.refreshCSRFToken()
             isAuthenticated = true
         } catch {
             isAuthenticated = false
         }
         isCheckingSession = false
+    }
+
+    /// avatar_url from the backend is root-relative (e.g.
+    /// "/uploads/avatars/…") — resolved against apiClient's own baseURL,
+    /// never a second guessed host.
+    private func resolveAvatarURL(_ path: String?) -> URL? {
+        guard let path, !path.isEmpty else { return nil }
+        return URL(string: path, relativeTo: apiClient.baseURL)?.absoluteURL
     }
 
     /// LoginView's Sign In button — POST /auth/login (PUBLIC_PATHS, no
@@ -187,6 +207,7 @@ public final class AssessmentSessionViewModel: ObservableObject {
             authenticatedUsername = response.user.username
             userRole = response.user.role
             coachIdentifier = response.user.username
+            avatarURL = resolveAvatarURL(response.user.avatarURL)
             apiClient.refreshCSRFToken()
             isAuthenticated = true
             return nil
@@ -205,7 +226,57 @@ public final class AssessmentSessionViewModel: ObservableObject {
         try? await apiClient.post(path: "/auth/logout")
         authenticatedUsername = nil
         userRole = nil
+        avatarURL = nil
         isAuthenticated = false
+    }
+
+    /// Profile-picture control (AccountAvatarControl, used on
+    /// CoachHomeView/GuardianHomeView/PlayerSelectionView) — POST
+    /// /auth/me/avatar, the SAME endpoint and multipart shape
+    /// (VideoUploadManager already established the pattern for videos)
+    /// the web dashboard's own avatar upload button uses. Re-encodes to
+    /// JPEG regardless of the photo library's source format (often
+    /// HEIC), since the backend only accepts JPEG/PNG/WebP by content
+    /// type — never uploads bytes the server would reject outright.
+    public func uploadAvatar(imageData: Data) async -> String? {
+        guard let uiImage = UIImage(data: imageData),
+              let jpegData = uiImage.jpegData(compressionQuality: 0.85) else {
+            return "Could not process the selected photo."
+        }
+
+        let boundary = "KemetFCBoundary-\(UUID().uuidString)"
+        var body = Data()
+        body.append("--\(boundary)\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"avatar\"; filename=\"avatar.jpg\"\r\n".data(using: .utf8)!)
+        body.append("Content-Type: image/jpeg\r\n\r\n".data(using: .utf8)!)
+        body.append(jpegData)
+        body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
+
+        var request = apiClient.authenticatedRequest(path: "/auth/me/avatar", method: "POST")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        struct AvatarResponse: Decodable {
+            let avatarURL: String
+            enum CodingKeys: String, CodingKey { case avatarURL = "avatar_url" }
+        }
+
+        do {
+            let (data, response) = try await apiClient.underlyingSession.upload(for: request, from: body)
+            try KemetAPIClient.validate(response: response, data: data)
+            let decoded = try JSONDecoder.kemet.decode(AvatarResponse.self, from: data)
+            avatarURL = resolveAvatarURL(decoded.avatarURL)
+            return nil
+        } catch KemetAPIError.server(_, let detail) {
+            return detail
+        } catch {
+            return "Could not upload the photo — check your connection and try again."
+        }
+    }
+
+    public func removeAvatar() async {
+        let request = apiClient.authenticatedRequest(path: "/auth/me/avatar", method: "DELETE")
+        _ = try? await apiClient.underlyingSession.data(for: request)
+        avatarURL = nil
     }
 
     public func start() async {

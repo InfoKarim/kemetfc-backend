@@ -67,7 +67,10 @@ struct RootView: View {
                 GuardianHomeView(
                     viewModel: GuardianViewModel(apiClient: session.sharedAPIClient),
                     onSignOut: { await session.logout() },
-                    currentUsername: session.authenticatedUsername
+                    currentUsername: session.authenticatedUsername,
+                    avatarURL: session.avatarURL,
+                    onUploadAvatar: { data in await session.uploadAvatar(imageData: data) },
+                    onRemoveAvatar: { await session.removeAvatar() }
                 )
             } else if let recordingId = session.lastFinishedRecordingId, session.pendingStore.record(id: recordingId) != nil {
                 AssessmentSummaryView(
@@ -85,6 +88,9 @@ struct RootView: View {
             } else if !coachWantsToRecord {
                 CoachHomeView(
                     currentUsername: session.authenticatedUsername,
+                    avatarURL: session.avatarURL,
+                    onUploadAvatar: { data in await session.uploadAvatar(imageData: data) },
+                    onRemoveAvatar: { await session.removeAvatar() },
                     pendingCount: session.pendingStore.actionablePendingCount,
                     webDashboardBaseURL: session.sharedAPIClient.baseURL,
                     onStartAssessment: { coachWantsToRecord = true },
@@ -98,6 +104,9 @@ struct RootView: View {
                     findByJerseyNumber: { number in await session.findByJerseyNumber(number) },
                     onSignOut: { await session.logout() },
                     currentUsername: session.authenticatedUsername,
+                    avatarURL: session.avatarURL,
+                    onUploadAvatar: { data in await session.uploadAvatar(imageData: data) },
+                    onRemoveAvatar: { await session.removeAvatar() },
                     onBack: { coachWantsToRecord = false }
                 )
                 .safeAreaInset(edge: .bottom) {

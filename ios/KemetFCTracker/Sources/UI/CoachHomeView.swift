@@ -16,6 +16,9 @@ import SwiftUI
 
 struct CoachHomeView: View {
     let currentUsername: String?
+    let avatarURL: URL?
+    let onUploadAvatar: (Data) async -> String?
+    let onRemoveAvatar: () async -> Void
     let pendingCount: Int
     let webDashboardBaseURL: URL
     let onStartAssessment: () -> Void
@@ -110,7 +113,12 @@ struct CoachHomeView: View {
                     .foregroundStyle(.white.opacity(0.6))
             }
             Spacer()
-            accountBadge
+            AccountAvatarControl(
+                username: currentUsername,
+                avatarURL: avatarURL,
+                onUpload: onUploadAvatar,
+                onRemove: onRemoveAvatar
+            )
             Button {
                 isSigningOut = true
                 Task {
@@ -128,24 +136,4 @@ struct CoachHomeView: View {
         .padding()
     }
 
-    /// Matches the web dashboard's own `#account-avatar` treatment and
-    /// GuardianHomeView/PlayerSelectionView's identical badge on this app.
-    @ViewBuilder
-    private var accountBadge: some View {
-        if let currentUsername, !currentUsername.isEmpty {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(.white)
-                    .frame(width: 28, height: 28)
-                    .overlay(
-                        Text(String(currentUsername.prefix(2)).uppercased())
-                            .font(.caption2.bold())
-                            .foregroundStyle(Color.kemetNavy)
-                    )
-                Text(currentUsername)
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.85))
-            }
-        }
-    }
 }
