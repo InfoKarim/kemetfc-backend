@@ -65,7 +65,8 @@ struct RootView: View {
             } else if session.userRole == "guardian" {
                 GuardianHomeView(
                     viewModel: GuardianViewModel(apiClient: session.sharedAPIClient),
-                    onSignOut: { await session.logout() }
+                    onSignOut: { await session.logout() },
+                    currentUsername: session.authenticatedUsername
                 )
             } else if let recordingId = session.lastFinishedRecordingId, session.pendingStore.record(id: recordingId) != nil {
                 AssessmentSummaryView(
@@ -82,7 +83,8 @@ struct RootView: View {
                     onPlayerConfirmed: { session.confirmPlayer($0) },
                     searchPlayers: { query in await session.searchPlayers(query) },
                     findByJerseyNumber: { number in await session.findByJerseyNumber(number) },
-                    onSignOut: { await session.logout() }
+                    onSignOut: { await session.logout() },
+                    currentUsername: session.authenticatedUsername
                 )
                 .safeAreaInset(edge: .bottom) {
                     // actionablePendingCount excludes FAILED_PERMANENT

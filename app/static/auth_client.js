@@ -332,8 +332,64 @@
     return response;
   };
 
+  // Feather-style stroke icons, keyed by the nav link's pathname — the
+  // sidebar `<nav>` markup itself is duplicated across ~26 static pages
+  // with no shared template, so icons are injected here once rather
+  // than hand-edited into every file.
+  const NAV_ICON_PATHS = {
+    "/dashboard": '<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>',
+    "/players-dashboard": '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    "/teams-dashboard": '<path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6z"/>',
+    "/assessments-dashboard": '<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M8 12l3 3 5-6"/>',
+    "/training-plans-dashboard": '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+    "/drill-library": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+    "/videos-dashboard": '<circle cx="12" cy="12" r="9"/><polygon points="10 8 16 12 10 16 10 8"/>',
+    "/matches-dashboard": '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
+    "/reports-dashboard": '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+    "/calendar-dashboard": '<rect x="3" y="4" width="18" height="17" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+    "/admin/users": '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
+    "/registrations-dashboard": '<path d="M15 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="18" y1="8" x2="18" y2="14"/><line x1="15" y1="11" x2="21" y2="11"/>',
+    "/payment-control": '<rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
+    "/payment-settings": '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+    "/billing": '<rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/>',
+    "/messages-page": '<path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/><polyline points="22 6 12 13 2 6"/>',
+    "/ml-dataset-registry": '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
+  };
+  const NAV_ICON_FALLBACK = '<circle cx="12" cy="12" r="3"/>';
+
+  function iconSvg(pathname) {
+    const inner = NAV_ICON_PATHS[pathname] || NAV_ICON_FALLBACK;
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+  }
+
+  /// Adds a leading icon to every sidebar nav link and a "MAIN" section
+  /// label above the list — purely cosmetic, runs once per page load,
+  /// safe to run before /auth/me resolves since it doesn't depend on
+  /// the signed-in user.
+  function enhanceSidebarNav() {
+    const nav = document.querySelector(".layout aside nav");
+    if (!nav || nav.dataset.enhanced) return;
+    nav.dataset.enhanced = "true";
+
+    for (const link of nav.querySelectorAll("a[href]")) {
+      if (link.querySelector(".nav-icon")) continue;
+      const pathname = new URL(link.href, location.origin).pathname;
+      const icon = document.createElement("span");
+      icon.className = "nav-icon";
+      icon.innerHTML = iconSvg(pathname);
+      link.prepend(icon);
+    }
+
+    const label = document.createElement("div");
+    label.className = "nav-group-label";
+    label.textContent = "Main";
+    nav.prepend(label);
+  }
+
   window.addEventListener("DOMContentLoaded", () => {
     if (window.location.pathname === "/login") return;
+
+    enhanceSidebarNav();
 
     const pageFeatures = new Map([
       ["/dashboard", "dashboard"],

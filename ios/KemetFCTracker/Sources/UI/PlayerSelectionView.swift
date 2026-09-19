@@ -68,6 +68,7 @@ public struct PlayerSelectionView: View {
     let searchPlayers: (String) async -> [KemetPlayerSummary]
     let findByJerseyNumber: (Int) async -> [KemetPlayerSummary]
     let onSignOut: () async -> Void
+    let currentUsername: String?
 
     @State private var isSigningOut = false
 
@@ -75,12 +76,14 @@ public struct PlayerSelectionView: View {
         onPlayerConfirmed: @escaping (KemetPlayerSummary) -> Void,
         searchPlayers: @escaping (String) async -> [KemetPlayerSummary],
         findByJerseyNumber: @escaping (Int) async -> [KemetPlayerSummary],
-        onSignOut: @escaping () async -> Void
+        onSignOut: @escaping () async -> Void,
+        currentUsername: String? = nil
     ) {
         self.onPlayerConfirmed = onPlayerConfirmed
         self.searchPlayers = searchPlayers
         self.findByJerseyNumber = findByJerseyNumber
         self.onSignOut = onSignOut
+        self.currentUsername = currentUsername
     }
 
     public var body: some View {
@@ -93,6 +96,7 @@ public struct PlayerSelectionView: View {
                         .font(.title2).bold()
                         .foregroundStyle(.white)
                     Spacer()
+                    accountBadge
                     Button {
                         isSigningOut = true
                         Task {
@@ -132,6 +136,29 @@ public struct PlayerSelectionView: View {
                 Spacer()
             }
             .padding()
+        }
+    }
+
+    /// Matches the web dashboard's own `#account-avatar` treatment
+    /// (auth_client.js ensureAccountWidget): a white circle with the
+    /// signed-in user's initials in bold navy — same visual identity
+    /// element on both platforms, never a fabricated photo.
+    @ViewBuilder
+    private var accountBadge: some View {
+        if let currentUsername, !currentUsername.isEmpty {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(.white)
+                    .frame(width: 28, height: 28)
+                    .overlay(
+                        Text(String(currentUsername.prefix(2)).uppercased())
+                            .font(.caption2.bold())
+                            .foregroundStyle(Color.kemetNavy)
+                    )
+                Text(currentUsername)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+            }
         }
     }
 

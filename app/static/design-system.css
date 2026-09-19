@@ -380,6 +380,8 @@ tbody tr:hover { background: rgba(244, 247, 250, .04) !important; }
 
 .layout nav a {
   position: relative;
+  display: flex !important;
+  align-items: center !important;
   border: 1px solid transparent;
   border-radius: 10px !important;
   color: var(--muted) !important;
@@ -401,6 +403,39 @@ tbody tr:hover { background: rgba(244, 247, 250, .04) !important; }
   font-weight: 700;
 }
 
+/* Per-item icon badge + section labels — injected by auth_client.js's
+   enhanceSidebarNav() (nav markup is duplicated across ~26 static pages
+   with no shared template, so this is applied once in JS rather than by
+   hand-editing every file). */
+.layout nav a .nav-icon {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 10px;
+  border-radius: 8px;
+  background: rgba(244, 247, 250, .08);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.layout nav a:hover .nav-icon { color: var(--ink); }
+.layout nav a.active .nav-icon {
+  background: rgba(255, 255, 255, .2);
+  color: #fff;
+}
+.layout nav a .nav-icon svg { width: 15px; height: 15px; }
+
+.layout .nav-group-label {
+  margin: 14px 12px 6px !important;
+  color: var(--muted) !important;
+  font-size: 10.5px !important;
+  font-weight: 800 !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase !important;
+}
+.layout .nav-group-label:first-child { margin-top: 4px !important; }
+
 .nav-badge {
   display: inline-flex;
   align-items: center;
@@ -408,7 +443,7 @@ tbody tr:hover { background: rgba(244, 247, 250, .04) !important; }
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  margin-inline-start: 6px;
+  margin-inline-start: auto;
   border-radius: 999px;
   color: #fff !important;
   background: #E1685C !important;
