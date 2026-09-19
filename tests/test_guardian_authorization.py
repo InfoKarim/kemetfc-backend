@@ -108,7 +108,13 @@ def make_player(db, player_id: str) -> PlayerDB:
     return player
 
 
-def make_user(db, user_id: str, username: str, role: str) -> UserDB:
+def make_user(
+    db,
+    user_id: str,
+    username: str,
+    role: str,
+    feature_permissions: list[str] | None = None,
+) -> UserDB:
     now = utcnow()
     user = UserDB(
         user_id=user_id,
@@ -116,6 +122,7 @@ def make_user(db, user_id: str, username: str, role: str) -> UserDB:
         password_hash=hash_password(f"{username}Password123!"),
         role=role,
         active=True,
+        feature_permissions=feature_permissions,
         created_at=now,
         updated_at=now,
     )
@@ -475,6 +482,59 @@ def test_guardian_can_view_own_linked_development_report(seeded):
     assert response.status_code == 200
     assert response.json()["player_id"] == "P_GUARD_A"
     assert "score" not in response.json()
+
+
+def test_guardian_with_assessments_feature_but_not_players_can_still_view_report(seeded):
+    """Regression test: an account created via app/static/user_management.html's
+    "Create user" form submits an EXPLICIT feature_permissions list (never
+    omitted), so a guardian given only "Assessments & snapshots" there has
+    feature_permissions == ["assessments"] literally, NOT the DEFAULT_ROLE_
+    FEATURES["guardian"] fallback (which happens to include "players" too,
+    masking this gap for every guardian left at the true default). Found
+    via a real production account (test_guardian, linked to P000001) that
+    got exactly this 403 — "Players access is not enabled for this
+    account" — on both development-report and assessments, because
+    required_feature_for_path mapped those paths to "players" instead of
+    "assessments" despite GUARDIAN_ALLOWED_PLAYER_SUFFIXES already
+    structurally allowing a guardian onto them for their own child.
+    """
+    db = TestingSessionLocal()
+    make_user(
+        db,
+        "GUARDIAN_ASSESSMENTS_ONLY",
+        "guardaudit.parent.assessments_only",
+        "guardian",
+        feature_permissions=["assessments"],
+    )
+    db.commit()
+    db.close()
+
+    link = seeded["admin"].post(
+        "/guardian-player-links",
+        json={
+            "guardian_user_id": "GUARDIAN_ASSESSMENTS_ONLY",
+            "player_id": "P_GUARD_A",
+        },
+    )
+    assert link.status_code == 201
+
+    guardian = TestClient(app)
+    login = guardian.post(
+        "/auth/login",
+        json={
+            "username": "guardaudit.parent.assessments_only",
+            "password": "guardaudit.parent.assessments_onlyPassword123!",
+        },
+    )
+    assert login.status_code == 200
+    guardian.headers.update({"X-CSRF-Token": guardian.cookies.get(CSRF_COOKIE_NAME)})
+
+    report = guardian.get("/players/P_GUARD_A/development-report")
+    assert report.status_code == 200
+    assert report.json()["player_id"] == "P_GUARD_A"
+
+    assessments = guardian.get("/players/P_GUARD_A/assessments")
+    assert assessments.status_code == 200
 
 
 def test_guardian_cannot_set_coach_message_for_own_or_other_child(seeded):

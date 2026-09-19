@@ -399,7 +399,15 @@ def required_feature_for_path(path: str) -> str | None:
         path.endswith("/analyses")
         or path.endswith("/development-plan")
         or path.endswith("/development-snapshot")
+        or path.endswith("/development-report")
+        or path.endswith("/assessments")
     ):
+        # Guardian-facing report/history views (GUARDIAN_ALLOWED_PLAYER_
+        # SUFFIXES already structurally allows a guardian onto these
+        # paths for their own linked child) — "assessments", not
+        # "players", since guardians are never granted the staff-only
+        # "players" feature, which would otherwise make these endpoints
+        # permanently unreachable for every guardian account.
         return "assessments"
     if path.startswith("/players"):
         return "players"
