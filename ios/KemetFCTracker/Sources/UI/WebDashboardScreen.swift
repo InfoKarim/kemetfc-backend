@@ -68,6 +68,7 @@ private struct WebDashboardWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView()
         webView.navigationDelegate = context.coordinator
+        webView.uiDelegate = context.coordinator
         syncCookiesAndLoad(into: webView)
         return webView
     }
@@ -96,7 +97,7 @@ private struct WebDashboardWebView: UIViewRepresentable {
         }
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         @Binding var isLoading: Bool
 
         init(isLoading: Binding<Bool>) {
@@ -113,6 +114,75 @@ private struct WebDashboardWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             isLoading = false
+        }
+
+        // Without a WKUIDelegate, WKWebView has no default presentation
+        // for JS alert()/confirm()/prompt() — it just no-ops the
+        // completion handler, which is why "Delete Plan" (window.confirm)
+        // on the embedded web dashboard silently did nothing. These three
+        // present the real native dialog and forward the user's choice
+        // back to the page's own JS exactly like a real browser would.
+        func webView(
+            _ webView: WKWebView,
+            runJavaScriptAlertPanelWithMessage message: String,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping () -> Void
+        ) {
+            presentAlert(message: message, hasCancel: false) { _ in completionHandler() }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            runJavaScriptConfirmPanelWithMessage message: String,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping (Bool) -> Void
+        ) {
+            presentAlert(message: message, hasCancel: true) { confirmed in
+                completionHandler(confirmed)
+            }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            runJavaScriptTextInputPanelWithPrompt prompt: String,
+            defaultText: String?,
+            initiatedByFrame frame: WKFrameInfo,
+            completionHandler: @escaping (String?) -> Void
+        ) {
+            let alert = UIAlertController(title: nil, message: prompt, preferredStyle: .alert)
+            alert.addTextField { $0.text = defaultText }
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
+                completionHandler(nil)
+            })
+            alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in
+                completionHandler(alert.textFields?.first?.text)
+            })
+            Self.topViewController()?.present(alert, animated: true)
+        }
+
+        private func presentAlert(message: String, hasCancel: Bool, completion: @escaping (Bool) -> Void) {
+            let alert = UIAlertController(title: nil, message: message, preferredStyle: .alert)
+            if hasCancel {
+                alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completion(false) })
+            }
+            alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completion(true) })
+
+            guard let presenter = Self.topViewController() else {
+                completion(hasCancel ? false : true)
+                return
+            }
+            presenter.present(alert, animated: true)
+        }
+
+        private static func topViewController() -> UIViewController? {
+            let scene = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first { $0.activationState == .foregroundActive }
+            guard var top = scene?.keyWindow?.rootViewController else { return nil }
+            while let presented = top.presentedViewController {
+                top = presented
+            }
+            return top
         }
     }
 }
