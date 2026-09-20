@@ -7,7 +7,15 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base
 from app.data_models import VideoData
-from app.db_models import DataRecordDB, PlayerDB, VideoAnalysisJobDB
+from app.db_models import (
+    DataRecordDB,
+    GuardianConsentDB,
+    MLDatasetEntryDB,
+    PlayerDB,
+    TrackingSessionDB,
+    UserDB,
+    VideoAnalysisJobDB,
+)
 from app.services.video_service import VideoDeletionError, VideoService
 
 
@@ -195,6 +203,94 @@ def test_delete_video_rejects_processing_job(service):
     service.db.commit()
 
     with pytest.raises(VideoDeletionError, match="while analysis is processing"):
+        service.delete_video(video.video_id)
+
+    assert service.get_video(video.video_id) is not None
+
+
+def test_delete_video_unlinks_tracking_session_instead_of_blocking(service):
+    video = make_video()
+    video.video_id = "VID_WITH_TRACKING_SESSION"
+    service.add_video(video)
+
+    service.db.add(UserDB(
+        user_id="COACH001",
+        username="coach001",
+        password_hash="x",
+        role="coach",
+        active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+    ))
+    service.db.commit()
+
+    service.db.add(TrackingSessionDB(
+        session_id="TRK001",
+        player_id="P001",
+        coach_user_id="COACH001",
+        video_id=video.video_id,
+        tracking_mode="smart_soccer",
+        status="completed",
+        started_at=datetime.now(),
+        created_at=datetime.now(),
+    ))
+    service.db.commit()
+
+    assert service.delete_video(video.video_id) is True
+    assert service.get_video(video.video_id) is None
+
+    # The session and its telemetry survive — only the raw video link is
+    # cleared, since tracking_sessions.video_id is nullable and the
+    # session's data remains valuable after the video is gone.
+    session = service.db.get(TrackingSessionDB, "TRK001")
+    assert session is not None
+    assert session.video_id is None
+
+
+def test_delete_video_blocked_when_flagged_for_ml_dataset(service):
+    video = make_video()
+    video.video_id = "VID_FLAGGED_FOR_ML"
+    service.add_video(video)
+
+    service.db.add(UserDB(
+        user_id="ADMIN001",
+        username="admin001",
+        password_hash="x",
+        role="admin",
+        active=True,
+        created_at=datetime.now(),
+        updated_at=datetime.now(),
+    ))
+    service.db.commit()
+
+    service.db.add(GuardianConsentDB(
+        consent_id="CONSENT001",
+        player_id="P001",
+        guardian_name="Test Guardian",
+        guardian_email="guardian@example.com",
+        verification_method="email",
+        purposes=["ml_training"],
+        granted_at=datetime.now(),
+        recorded_by_user_id="ADMIN001",
+    ))
+    service.db.commit()
+
+    service.db.add(MLDatasetEntryDB(
+        entry_id="ENTRY001",
+        video_id=video.video_id,
+        team_id=None,
+        age_band="U10",
+        sex_cohort="male",
+        camera_id="cam1",
+        lighting="daylight",
+        consent_id="CONSENT001",
+        status="pending_review",
+        flagged_by_user_id="ADMIN001",
+        flagged_at=datetime.now(),
+    ))
+    service.db.commit()
+
+    with pytest.raises(VideoDeletionError, match="flagged for the ML training dataset"):
         service.delete_video(video.video_id)
 
     assert service.get_video(video.video_id) is not None

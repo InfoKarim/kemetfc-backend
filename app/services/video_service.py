@@ -5,6 +5,8 @@ from app.analysis_result_storage import get_analysis_result_storage
 from app.db_models import (
     AnalysisDB,
     DataRecordDB,
+    MLDatasetEntryDB,
+    TrackingSessionDB,
     TrainingPlanDB,
     VideoAnalysisJobDB,
     VideoDB,
@@ -120,6 +122,14 @@ class VideoService:
                 "Video cannot be deleted while analysis is processing"
             )
 
+        if self.db.query(MLDatasetEntryDB).filter(
+            MLDatasetEntryDB.video_id == video_id
+        ).first() is not None:
+            raise VideoDeletionError(
+                "This video is flagged for the ML training dataset. "
+                "Remove that flag before deleting it."
+            )
+
         analysis_ids = [
             analysis_id for (analysis_id,) in (
                 self.db.query(AnalysisDB.analysis_id)
@@ -151,6 +161,17 @@ class VideoService:
             self.db.query(VideoAnalysisJobDB).filter(
                 VideoAnalysisJobDB.video_id == video_id
             ).delete(synchronize_session=False)
+
+            # tracking_sessions.video_id is nullable and independent of the
+            # raw video file — a tracking session's telemetry (samples,
+            # events, computed features) stays valuable even after its
+            # source video is deleted, so this decouples the reference
+            # rather than deleting or blocking on the session. Left
+            # unhandled, deleting db_video would hit an unhandled foreign
+            # key violation here instead.
+            self.db.query(TrackingSessionDB).filter(
+                TrackingSessionDB.video_id == video_id
+            ).update({"video_id": None}, synchronize_session=False)
 
             record_id = db_video.record_id
             self.db.delete(db_video)
