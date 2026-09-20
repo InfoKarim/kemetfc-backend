@@ -122,7 +122,11 @@ from app.services.auth_service import (
 )
 from app.services.drill_service import DrillService
 from app.services.id_service import next_entity_id
-from app.services.player_service import JerseyNumberConflictError, PlayerService
+from app.services.player_service import (
+    JerseyNumberConflictError,
+    PlayerDeletionBlockedError,
+    PlayerService,
+)
 from app.services.privacy_service import PrivacyService
 from app.services.contact_message_service import ContactMessageService
 from app.services.registration_service import (
@@ -1808,7 +1812,10 @@ def delete_player(
 ):
     require_guardian_player_access(request, db, player_id)
     service = PlayerService(db=db)
-    deleted = service.delete_player(player_id)
+    try:
+        deleted = service.delete_player(player_id)
+    except PlayerDeletionBlockedError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     if not deleted:
         raise HTTPException(

@@ -1183,6 +1183,31 @@ def test_delete_unknown_player_returns_404():
     assert response.status_code == 404
     assert response.json() == {"detail": "Player not found"}
 
+
+def test_delete_player_blocked_by_linked_training_plan_returns_409():
+    create_test_player("P610")
+    create_test_analysis("AN610", player_id="P610")
+
+    create_plan_response = client.post(
+        "/analyses/AN610/training-plans",
+        json={
+            "plan_id": "PLAN610",
+            "player_difficulty": "beginner",
+            "target_duration": 30,
+            "available_equipment": [],
+        },
+    )
+    assert create_plan_response.status_code == 201
+
+    response = client.delete("/players/P610")
+
+    assert response.status_code == 409
+    assert "P610" in response.json()["detail"]
+
+    # The blocked delete must not leave the player half-deleted.
+    get_response = client.get("/players/P610")
+    assert get_response.status_code == 200
+
 def test_create_match():
     match_data = create_test_match("M200")
 

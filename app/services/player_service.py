@@ -1,3 +1,4 @@
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -64,6 +65,22 @@ class JerseyNumberConflictError(ValueError):
         super().__init__(
             f"Jersey number {jersey_number} is already worn by another "
             f"player ({other_player_id}) on this team."
+        )
+
+
+class PlayerDeletionBlockedError(ValueError):
+    """Raised when a player still has linked rows (videos, analyses,
+    training plans, matches, guardian links, etc.) that reference it by
+    foreign key. Deleting the player in that state would otherwise hit an
+    unhandled IntegrityError and surface as a raw 500 with no explanation
+    of what to remove first."""
+
+    def __init__(self, player_id: str):
+        self.player_id = player_id
+        super().__init__(
+            f"Cannot delete player {player_id}: it still has linked "
+            "videos, assessments, training plans, or other records. "
+            "Remove those first, then delete the player."
         )
 
 
@@ -206,7 +223,11 @@ class PlayerService:
             return False
 
         self.db.delete(db_player)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise PlayerDeletionBlockedError(player_id) from exc
         return True
 
     def update_player(self, player: Player) -> bool:
