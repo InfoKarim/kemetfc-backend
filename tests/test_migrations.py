@@ -47,6 +47,7 @@ EXPECTED_TABLES = {
     "player_memberships",
     "player_metrics",
     "players",
+    "prediction_outcomes",
     "privacy_requests",
     "promo_code_redemptions",
     "promo_codes",
@@ -98,7 +99,7 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert revision == "c4e8b1a63f27"
+    assert revision == "d5f9a2c74e18"
     job_columns = {
         column["name"]
         for column in inspect(engine).get_columns("video_analysis_jobs")
@@ -135,9 +136,15 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
     assert "p05" in simulation_columns
     assert "p95" in simulation_columns
     assert "uncertainty_level" in simulation_columns
+    outcome_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("prediction_outcomes")
+    }
+    assert "prediction_error" in outcome_columns
+    assert "absolute_error" in outcome_columns
 
     with engine.connect() as connection:
-        assert require_database_at_head(connection) == ("c4e8b1a63f27",)
+        assert require_database_at_head(connection) == ("d5f9a2c74e18",)
 
 
 def test_migration_health_rejects_database_without_migrations(tmp_path):

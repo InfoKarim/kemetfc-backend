@@ -21,6 +21,7 @@ from app.db_models import (
     PlayerAssessmentDB,
     PlayerCheckInTokenDB,
     PlayerDB,
+    PredictionOutcomeDB,
     PrivacyRequestDB,
     PromoCodeDB,
     PromoCodeRedemptionDB,
@@ -66,6 +67,7 @@ ENTITY_CONFIG = {
     "player_checkin_token": ("CHKTOK", PlayerCheckInTokenDB),
     "ml_prediction": ("PRED", MLPredictionDB),
     "monte_carlo_simulation": ("SIM", MonteCarloSimulationDB),
+    "prediction_outcome": ("OUT", PredictionOutcomeDB),
 }
 
 

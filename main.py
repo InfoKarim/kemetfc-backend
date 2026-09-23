@@ -411,6 +411,7 @@ def required_feature_for_path(path: str) -> str | None:
         or path.endswith("/predictions")
         or path.endswith("/model-validation")
         or path.endswith("/monte-carlo")
+        or path.endswith("/actual-vs-predicted")
         or path.endswith("/assessments")
     ):
         # Guardian-facing report/history views (GUARDIAN_ALLOWED_PLAYER_

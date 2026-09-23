@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.routers.player_assessments as player_assessments_router
 from app.database import Base, get_db
-from app.db_models import PlayerAssessmentDB, PlayerDB, PlayerMetricDB, UserDB
+from app.db_models import MLPredictionDB, PlayerAssessmentDB, PlayerDB, PlayerMetricDB, UserDB
 from app.services.auth_service import hash_password, utcnow
 from app.services.player_metric_service import PlayerMetricService
 from main import CSRF_COOKIE_NAME, app
@@ -941,6 +941,92 @@ def test_monte_carlo_default_simulation_count_is_ten_thousand(client):
 
     assert response.status_code == 201
     assert response.json()["num_simulations"] == 10_000
+
+
+# --- Actual vs Predicted API (Step 8) ---------------------------------
+
+
+def test_actual_vs_predicted_requires_authentication(anonymous_client):
+    response = anonymous_client.get("/players/P001/actual-vs-predicted")
+    assert response.status_code == 401
+
+
+def test_actual_vs_predicted_rejects_unknown_player(client):
+    response = client.get("/players/NOPE/actual-vs-predicted")
+    assert response.status_code == 404
+
+
+def test_actual_vs_predicted_empty_when_nothing_to_reconcile(client):
+    create_extra_player("P_AVP_EMPTY")
+    response = client.get("/players/P_AVP_EMPTY/actual-vs-predicted")
+    assert response.status_code == 200
+    assert response.json()["outcomes"] == []
+
+
+def test_actual_vs_predicted_reconciles_a_due_prediction_against_a_later_reading(client):
+    create_extra_player("P_AVP_OK")
+    for i in range(5):
+        client.post(
+            "/players/P_AVP_OK/technical-assessments/ball-mastery",
+            json=ball_mastery_payload(
+                test_date=(date(2026, 1, 1) + timedelta(days=i * 10)).isoformat(),
+                sole_rolls=min(5, 1 + i),
+            ),
+        )
+
+    prediction_response = client.post(
+        "/players/P_AVP_OK/predictions",
+        json={
+            "metric_name": "ball_mastery_sole_rolls",
+            "forecast_days": 30,
+            "model_scope": "player_specific",
+        },
+    )
+    assert prediction_response.status_code == 201
+    prediction_id = prediction_response.json()["prediction_id"]
+
+    # The API always predicts from "today," so the real prediction/target
+    # dates are backdated directly here to simulate time having passed —
+    # this is the only way to exercise reconciliation without an actual
+    # 30-day wait in a test.
+    db = TestingSessionLocal()
+    prediction = db.get(MLPredictionDB, prediction_id)
+    backdated_prediction_date = date.today() - timedelta(days=40)
+    backdated_target_date = backdated_prediction_date + timedelta(days=30)
+    prediction.prediction_date = backdated_prediction_date
+    prediction.target_date = backdated_target_date
+    db.commit()
+    db.close()
+
+    client.post(
+        "/players/P_AVP_OK/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(
+            test_date=backdated_target_date.isoformat(),
+            sole_rolls=5,
+        ),
+    )
+
+    response = client.get("/players/P_AVP_OK/actual-vs-predicted")
+
+    assert response.status_code == 200
+    outcomes = response.json()["outcomes"]
+    matching = [o for o in outcomes if o["prediction_id"] == prediction_id]
+    assert len(matching) == 1
+    outcome = matching[0]
+    assert outcome["actual_score"] == 5
+    assert outcome["actual_date"] == backdated_target_date.isoformat()
+    assert "prediction_error" in outcome
+    assert "absolute_error" in outcome
+
+
+def test_actual_vs_predicted_filters_by_metric_name(client):
+    create_extra_player("P_AVP_FILTER")
+    response = client.get(
+        "/players/P_AVP_FILTER/actual-vs-predicted",
+        params={"metric_name": "ball_mastery_sole_rolls"},
+    )
+    assert response.status_code == 200
+    assert response.json()["outcomes"] == []
 
 
 # --- AI video analysis (Ball Mastery) --------------------------------------

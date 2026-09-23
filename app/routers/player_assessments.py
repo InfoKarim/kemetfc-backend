@@ -29,6 +29,7 @@ from app.services.ml_prediction_service import MLPredictionService, NoRecordedMe
 from app.services.ml_validation_service import MLValidationService
 from app.services.monte_carlo_service import MonteCarloService
 from app.services.player_assessment_service import PlayerAssessmentService
+from app.services.prediction_outcome_service import PredictionOutcomeService
 from app.services.player_metric_service import PlayerMetricService
 from app.services.player_service import PlayerService
 from app.services.smart_recommendation_service import (
@@ -477,6 +478,33 @@ def list_monte_carlo_simulations(
 
     return {
         "simulations": MonteCarloService(db).list_for_player(
+            player_id, metric_name=metric_name
+        )
+    }
+
+
+@router.get("/players/{player_id}/actual-vs-predicted")
+def get_actual_vs_predicted(
+    player_id: str,
+    request: Request,
+    metric_name: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Step 8: reconciles any predictions whose forecast horizon has
+    passed against real, later PlayerMetricDB readings (see
+    PredictionOutcomeService for the matching rule), then returns every
+    outcome recorded so far — the data source for an "Actual vs
+    Predicted Over Time" chart. A prediction with no matching real
+    reading yet simply does not appear here; nothing is guessed at.
+    """
+    _require_staff(request)
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    return {
+        "outcomes": PredictionOutcomeService(db).list_for_player(
             player_id, metric_name=metric_name
         )
     }

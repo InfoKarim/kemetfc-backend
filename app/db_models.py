@@ -1275,6 +1275,40 @@ class MonteCarloSimulationDB(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
+class PredictionOutcomeDB(Base):
+    """One real "actual vs predicted" reconciliation (Step 8) — created
+    only when a real PlayerMetricDB reading, recorded AFTER the
+    prediction was made, lands within
+    app/services/prediction_outcome_service.py's matching window of a
+    prediction's target_date. Never fabricated: a prediction whose
+    forecast horizon has passed but has no matching real reading simply
+    stays unreconciled (no row here), rather than being guessed at.
+    """
+
+    __tablename__ = "prediction_outcomes"
+
+    outcome_id: Mapped[str] = mapped_column(String, primary_key=True)
+    prediction_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("ml_predictions.prediction_id"),
+        index=True,
+        unique=True,  # at most one outcome per prediction
+    )
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    metric_name: Mapped[str] = mapped_column(String, index=True)
+    actual_score: Mapped[float] = mapped_column(Float)
+    actual_date: Mapped[date] = mapped_column(Date, index=True)
+    # actual - predicted (signed) — "+2 points" in the product spec's
+    # own example, never turned into a percentage.
+    prediction_error: Mapped[float] = mapped_column(Float)
+    absolute_error: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class CoachMessageDB(Base):
     """The coach's current personal note + next-focus list for one player,
     shown on that player's Guardian development report. One row per
