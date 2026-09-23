@@ -1147,6 +1147,52 @@ class PlayerAssessmentDB(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 
+class PlayerMetricDB(Base):
+    """One named, numeric measurement extracted from a PlayerAssessmentDB
+    row's own ``raw_data`` — never invented, converted, or scored where no
+    validated formula exists (see player_assessment_service.py's
+    YOYO_KIDS_METHODOLOGY_VERSION comment on why Yo-Yo Kids has no fitness
+    score, only a raw, real, trendable distance).
+
+    This is the normalized time series every later development-trend/ML/
+    Monte-Carlo feature queries against, instead of every consumer having
+    to know each test_type's own raw_data shape. A plain autoincrement
+    integer primary key, matching TrackingSampleDB's precedent: high-volume,
+    generated automatically per assessment, never referenced individually
+    by a human or a URL, so id_service's human/URL-facing ID minting would
+    be pure overhead here.
+    """
+
+    __tablename__ = "player_metrics"
+
+    metric_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    assessment_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("player_assessments.assessment_id"),
+        index=True,
+    )
+    metric_name: Mapped[str] = mapped_column(String, index=True)
+    category: Mapped[str] = mapped_column(String, index=True)
+    metric_score: Mapped[float] = mapped_column(Float)
+    # nullable: only populated where the source assessment carries a real,
+    # meaningful per-measurement confidence (e.g. an AI-assisted rating) —
+    # never backfilled with an invented number.
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Denormalized copy of the parent assessment's test_date, so a trend
+    # query over one metric_name never needs to join player_assessments —
+    # the parent row remains the single source of truth for who/when/how;
+    # this is a read-optimization copy, not a second place to edit it.
+    recorded_at: Mapped[date] = mapped_column(Date, index=True)
+    source: Mapped[str] = mapped_column(String)
+    notes: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class CoachMessageDB(Base):
     """The coach's current personal note + next-focus list for one player,
     shown on that player's Guardian development report. One row per

@@ -8,8 +8,9 @@ from sqlalchemy.pool import StaticPool
 
 import app.routers.player_assessments as player_assessments_router
 from app.database import Base, get_db
-from app.db_models import PlayerDB, UserDB
+from app.db_models import PlayerDB, PlayerMetricDB, UserDB
 from app.services.auth_service import hash_password, utcnow
+from app.services.player_metric_service import PlayerMetricService
 from main import CSRF_COOKIE_NAME, app
 
 cv2 = pytest.importorskip("cv2")
@@ -380,6 +381,100 @@ def test_delete_unknown_player_assessment_returns_404(client):
     response = client.delete("/player-assessments/ASSESS_NOPE")
 
     assert response.status_code == 404
+
+
+# --- PlayerMetricDB (normalized, trend-queryable metric rows) -------------
+
+
+def test_record_yoyo_kids_creates_a_real_distance_metric_not_an_invented_score(client):
+    created = client.post(
+        "/players/P001/physical-assessments/yoyo-kids",
+        json=yoyo_payload(total_distance_m=640.0),
+    ).json()
+
+    metrics = PlayerMetricService(TestingSessionLocal()).list_for_player("P001")
+    yoyo_metrics = [m for m in metrics if m.assessment_id == created["assessment_id"]]
+
+    # Exactly one metric: the raw, objective, measured distance — never a
+    # fabricated "fitness score" (no validated pediatric conversion exists,
+    # see player_assessment_service.py).
+    assert len(yoyo_metrics) == 1
+    assert yoyo_metrics[0].metric_name == "yoyo_kids_distance_m"
+    assert yoyo_metrics[0].category == "physical"
+    assert yoyo_metrics[0].metric_score == 640.0
+    assert yoyo_metrics[0].source == "field_test"
+
+
+def test_record_ball_mastery_creates_four_skill_metrics(client):
+    created = client.post(
+        "/players/P001/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(
+            sole_rolls=4, inside_outside_cuts=3, l_turn=3, drag_back=2
+        ),
+    ).json()
+
+    metrics = PlayerMetricService(TestingSessionLocal()).list_for_player("P001")
+    ball_mastery_metrics = {
+        m.metric_name: m for m in metrics if m.assessment_id == created["assessment_id"]
+    }
+
+    assert set(ball_mastery_metrics) == {
+        "ball_mastery_sole_rolls",
+        "ball_mastery_inside_outside_cuts",
+        "ball_mastery_l_turn",
+        "ball_mastery_drag_back",
+    }
+    assert ball_mastery_metrics["ball_mastery_sole_rolls"].metric_score == 4
+    assert ball_mastery_metrics["ball_mastery_drag_back"].metric_score == 2
+    assert all(m.category == "technical" for m in ball_mastery_metrics.values())
+    assert all(m.source == "coach_rating" for m in ball_mastery_metrics.values())
+
+
+def test_record_ball_mastery_ai_assisted_marks_metric_source(client):
+    created = client.post(
+        "/players/P001/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(ai_assisted=True),
+    ).json()
+
+    metrics = PlayerMetricService(TestingSessionLocal()).list_for_player("P001")
+    assessment_metrics = [m for m in metrics if m.assessment_id == created["assessment_id"]]
+
+    assert all(m.source == "ai_assisted" for m in assessment_metrics)
+
+
+def test_delete_player_assessment_also_deletes_its_metrics(client):
+    created = client.post(
+        "/players/P001/physical-assessments/yoyo-kids",
+        json=yoyo_payload(),
+    ).json()
+
+    response = client.delete(f"/player-assessments/{created['assessment_id']}")
+    assert response.status_code == 200
+
+    db = TestingSessionLocal()
+    remaining = (
+        db.query(PlayerMetricDB)
+        .filter(PlayerMetricDB.assessment_id == created["assessment_id"])
+        .all()
+    )
+    assert remaining == []
+
+
+def test_list_metric_names_returns_distinct_sorted_names(client):
+    client.post(
+        "/players/P001/physical-assessments/yoyo-kids",
+        json=yoyo_payload(),
+    )
+    client.post(
+        "/players/P001/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(),
+    )
+
+    names = PlayerMetricService(TestingSessionLocal()).list_metric_names("P001")
+
+    assert names == sorted(names)
+    assert "yoyo_kids_distance_m" in names
+    assert "ball_mastery_sole_rolls" in names
 
 
 # --- AI video analysis (Ball Mastery) --------------------------------------

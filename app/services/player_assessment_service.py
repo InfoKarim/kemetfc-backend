@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.api_schemas import RecordBallMasterySchema, RecordYoYoKidsSchema
-from app.db_models import PlayerAssessmentDB
+from app.db_models import PlayerAssessmentDB, PlayerMetricDB
 from app.development_snapshot import calculate_player_age
 from app.player import Player
 from app.services.auth_service import utcnow
@@ -52,7 +52,18 @@ class PlayerAssessmentService:
         calculated_metrics: dict,
         notes: str | None,
         ai_assisted: bool = False,
+        metrics: list[dict] | None = None,
     ) -> PlayerAssessmentDB:
+        """``metrics`` (optional) are real, already-measured numbers pulled
+        straight out of ``raw_data`` by the caller — e.g. a Yo-Yo Kids
+        distance in meters, or a coach's own 1-5 skill rating — projected
+        into PlayerMetricDB's normalized, trend-queryable shape. Never a
+        derived/converted score where no validated formula exists (see
+        this module's YOYO_KIDS_METHODOLOGY_VERSION comment): a test_type
+        with no defensible per-metric number simply passes no ``metrics``.
+        Each dict: {"name", "category", "score", "confidence" (optional),
+        "source"}.
+        """
         assessment = PlayerAssessmentDB(
             assessment_id=next_entity_id(self.db, "player_assessment"),
             player_id=player.player_id,
@@ -72,6 +83,22 @@ class PlayerAssessmentService:
             created_at=utcnow(),
         )
         self.db.add(assessment)
+        self.db.flush()
+
+        for metric in metrics or []:
+            self.db.add(PlayerMetricDB(
+                player_id=player.player_id,
+                assessment_id=assessment.assessment_id,
+                metric_name=metric["name"],
+                category=metric["category"],
+                metric_score=metric["score"],
+                confidence_score=metric.get("confidence"),
+                recorded_at=test_date,
+                source=metric["source"],
+                notes=None,
+                created_at=utcnow(),
+            ))
+
         self.db.commit()
         self.db.refresh(assessment)
         return assessment
@@ -97,6 +124,12 @@ class PlayerAssessmentService:
             },
             calculated_metrics={},
             notes=payload.notes,
+            metrics=[{
+                "name": "yoyo_kids_distance_m",
+                "category": "physical",
+                "score": payload.total_distance_m,
+                "source": "field_test",
+            }],
         )
 
     def record_ball_mastery(
@@ -122,6 +155,15 @@ class PlayerAssessmentService:
             calculated_metrics={},
             notes=payload.notes,
             ai_assisted=payload.ai_assisted,
+            metrics=[
+                {
+                    "name": f"ball_mastery_{skill}",
+                    "category": "technical",
+                    "score": getattr(payload, skill),
+                    "source": "ai_assisted" if payload.ai_assisted else "coach_rating",
+                }
+                for skill in BALL_MASTERY_SKILLS
+            ],
         )
 
     def list_for_player(
@@ -141,6 +183,16 @@ class PlayerAssessmentService:
 
         if assessment is None:
             return False
+
+        # PlayerMetricDB.assessment_id is a non-nullable FK — without this,
+        # deleting an assessment with any extracted metric rows would hit
+        # an unhandled IntegrityError (the same class of bug already fixed
+        # this session for player/video deletion). Metrics have no
+        # independent meaning once their source assessment is gone, so
+        # deleting them here (not just unlinking) is correct.
+        self.db.query(PlayerMetricDB).filter(
+            PlayerMetricDB.assessment_id == assessment_id
+        ).delete(synchronize_session=False)
 
         self.db.delete(assessment)
         self.db.commit()
