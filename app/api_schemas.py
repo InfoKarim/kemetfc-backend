@@ -751,3 +751,15 @@ class CreatePredictionSchema(BaseModel):
     # ml_prediction_service.py's module docstring for why requesting
     # either must raise, not silently fall back to population.
     model_scope: Literal["population", "player_specific"] = "population"
+
+
+class CreateMonteCarloSimulationSchema(BaseModel):
+    metric_name: str = Field(min_length=1, max_length=120)
+    # 4 weeks / 8 weeks / 12 weeks / 6 months, in days — any positive
+    # value up to a year is accepted rather than a fixed enum.
+    forecast_days: int = Field(gt=0, le=365)
+    model_scope: Literal["population", "player_specific"] = "population"
+    num_simulations: int = Field(default=10_000, gt=0, le=100_000)
+    # Set only by tests that need a reproducible result — production
+    # calls omit this so each run draws fresh randomness.
+    seed: int | None = None

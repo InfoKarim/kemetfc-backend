@@ -1224,8 +1224,54 @@ class MLPredictionDB(Base):
     model_version: Mapped[str] = mapped_column(String)
     training_sample_count: Mapped[int] = mapped_column(Integer)
     confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Populated (p05/p95 of the Step 7 Monte Carlo simulation) only when
+    # a simulation has actually been run for this prediction — see
+    # MonteCarloSimulationDB below. confidence_score deliberately stays
+    # NULL forever in this implementation: there is no defensible single
+    # scalar "confidence" number to put there (see
+    # app/monte_carlo_simulation.py's header) — MonteCarloSimulationDB's
+    # own uncertainty_level is the honest, qualitative signal instead.
     lower_bound: Mapped[float | None] = mapped_column(Float, nullable=True)
     upper_bound: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
+class MonteCarloSimulationDB(Base):
+    """One Monte Carlo run's percentile summary for one MLPredictionDB
+    row (see app/monte_carlo_simulation.py). Never a substitute for the
+    prediction itself — ``prediction_id`` always points at a real,
+    already-persisted point prediction, and this row only characterizes
+    how uncertain that point prediction is, using REAL residuals this
+    model produced on real held-out data (walk-forward validation), not
+    an invented distribution.
+    """
+
+    __tablename__ = "monte_carlo_simulations"
+
+    simulation_id: Mapped[str] = mapped_column(String, primary_key=True)
+    prediction_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("ml_predictions.prediction_id"),
+        index=True,
+    )
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    metric_name: Mapped[str] = mapped_column(String, index=True)
+    num_simulations: Mapped[int] = mapped_column(Integer)
+    median: Mapped[float] = mapped_column(Float)
+    p05: Mapped[float] = mapped_column(Float)
+    p10: Mapped[float] = mapped_column(Float)
+    p25: Mapped[float] = mapped_column(Float)
+    p50: Mapped[float] = mapped_column(Float)
+    p75: Mapped[float] = mapped_column(Float)
+    p90: Mapped[float] = mapped_column(Float)
+    p95: Mapped[float] = mapped_column(Float)
+    simulation_method: Mapped[str] = mapped_column(String)
+    uncertainty_level: Mapped[str] = mapped_column(String)
+    residual_sample_count: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
 
 

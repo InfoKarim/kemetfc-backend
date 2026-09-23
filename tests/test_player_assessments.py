@@ -807,6 +807,142 @@ def test_model_validation_end_to_end(client):
     assert "quality_label" not in body
 
 
+# --- Monte Carlo simulation API (Step 7) ------------------------------
+
+
+def test_monte_carlo_requires_authentication(anonymous_client):
+    response = anonymous_client.post(
+        "/players/P001/monte-carlo",
+        json={"metric_name": "ball_mastery_sole_rolls", "forecast_days": 30},
+    )
+    assert response.status_code == 401
+
+
+def test_monte_carlo_rejects_unknown_player(client):
+    response = client.post(
+        "/players/NOPE/monte-carlo",
+        json={"metric_name": "ball_mastery_sole_rolls", "forecast_days": 30},
+    )
+    assert response.status_code == 404
+
+
+def test_monte_carlo_returns_422_with_insufficient_training_data(client):
+    create_extra_player("P_MC_INSUFFICIENT")
+    client.post(
+        "/players/P_MC_INSUFFICIENT/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-01-01"),
+    )
+
+    response = client.post(
+        "/players/P_MC_INSUFFICIENT/monte-carlo",
+        json={
+            "metric_name": "ball_mastery_sole_rolls",
+            "forecast_days": 30,
+            "model_scope": "player_specific",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Insufficient historical data" in response.json()["detail"]
+
+
+def test_monte_carlo_returns_422_with_insufficient_uncertainty_data(client):
+    create_extra_player("P_MC_NO_RESIDUALS")
+    # Exactly enough for a Step 5 point prediction, not enough for
+    # Step 7's walk-forward residuals.
+    for i in range(5):
+        client.post(
+            "/players/P_MC_NO_RESIDUALS/technical-assessments/ball-mastery",
+            json=ball_mastery_payload(
+                test_date=(date(2026, 1, 1) + timedelta(days=i * 10)).isoformat(),
+                sole_rolls=min(5, 1 + i),
+            ),
+        )
+
+    response = client.post(
+        "/players/P_MC_NO_RESIDUALS/monte-carlo",
+        json={
+            "metric_name": "ball_mastery_sole_rolls",
+            "forecast_days": 30,
+            "model_scope": "player_specific",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Insufficient validated measurement uncertainty data" in response.json()["detail"]
+
+    # The prediction itself should still have been created.
+    predictions = client.get("/players/P_MC_NO_RESIDUALS/predictions").json()["predictions"]
+    assert len(predictions) == 1
+
+
+def test_monte_carlo_end_to_end_and_updates_prediction_bounds(client):
+    create_extra_player("P_MC_OK")
+    for i in range(9):
+        client.post(
+            "/players/P_MC_OK/technical-assessments/ball-mastery",
+            json=ball_mastery_payload(
+                test_date=(date(2026, 1, 1) + timedelta(days=i * 10)).isoformat(),
+                sole_rolls=min(5, 1 + (i % 5)),
+            ),
+        )
+
+    response = client.post(
+        "/players/P_MC_OK/monte-carlo",
+        json={
+            "metric_name": "ball_mastery_sole_rolls",
+            "forecast_days": 30,
+            "model_scope": "player_specific",
+            "num_simulations": 500,
+            "seed": 42,
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["player_id"] == "P_MC_OK"
+    assert body["num_simulations"] == 500
+    assert body["p05"] <= body["median"] <= body["p95"]
+    assert "uncertainty_level" in body
+    assert body["simulation_method"] == "bootstrap_walk_forward_residual_resampling"
+
+    list_response = client.get("/players/P_MC_OK/monte-carlo")
+    assert list_response.status_code == 200
+    simulations = list_response.json()["simulations"]
+    assert len(simulations) == 1
+    assert simulations[0]["simulation_id"] == body["simulation_id"]
+
+    predictions = client.get("/players/P_MC_OK/predictions").json()["predictions"]
+    prediction = next(p for p in predictions if p["prediction_id"] == body["prediction_id"])
+    assert prediction["lower_bound"] == body["p05"]
+    assert prediction["upper_bound"] == body["p95"]
+    assert prediction["confidence_score"] is None
+
+
+def test_monte_carlo_default_simulation_count_is_ten_thousand(client):
+    create_extra_player("P_MC_DEFAULT_COUNT")
+    for i in range(9):
+        client.post(
+            "/players/P_MC_DEFAULT_COUNT/technical-assessments/ball-mastery",
+            json=ball_mastery_payload(
+                test_date=(date(2026, 1, 1) + timedelta(days=i * 10)).isoformat(),
+                sole_rolls=min(5, 1 + (i % 5)),
+            ),
+        )
+
+    response = client.post(
+        "/players/P_MC_DEFAULT_COUNT/monte-carlo",
+        json={
+            "metric_name": "ball_mastery_sole_rolls",
+            "forecast_days": 30,
+            "model_scope": "player_specific",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["num_simulations"] == 10_000
+
+
 # --- AI video analysis (Ball Mastery) --------------------------------------
 
 FAKE_AI_SUGGESTION = {

@@ -17,6 +17,7 @@ from app.db_models import (
     MLDatasetEntryDB,
     MLModelRegistryDB,
     MLPredictionDB,
+    MonteCarloSimulationDB,
     PlayerAssessmentDB,
     PlayerCheckInTokenDB,
     PlayerDB,
@@ -64,6 +65,7 @@ ENTITY_CONFIG = {
     "coach_validation_label": ("CVL", CoachValidationLabelDB),
     "player_checkin_token": ("CHKTOK", PlayerCheckInTokenDB),
     "ml_prediction": ("PRED", MLPredictionDB),
+    "monte_carlo_simulation": ("SIM", MonteCarloSimulationDB),
 }
 
 

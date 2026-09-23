@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from sqlalchemy.orm import Session
 
 from app.api_schemas import (
+    CreateMonteCarloSimulationSchema,
     CreatePredictionSchema,
     RecordBallMasterySchema,
     RecordYoYoKidsSchema,
@@ -23,8 +24,10 @@ from app.services.development_report_service import (
 from app.services.development_trend_service import DevelopmentTrendService
 from app.ml_prediction import InsufficientTrainingDataError
 from app.ml_validation import InsufficientValidationDataError
+from app.monte_carlo_simulation import InsufficientUncertaintyDataError
 from app.services.ml_prediction_service import MLPredictionService, NoRecordedMetricError
 from app.services.ml_validation_service import MLValidationService
+from app.services.monte_carlo_service import MonteCarloService
 from app.services.player_assessment_service import PlayerAssessmentService
 from app.services.player_metric_service import PlayerMetricService
 from app.services.player_service import PlayerService
@@ -421,6 +424,62 @@ def get_model_validation(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/players/{player_id}/monte-carlo", status_code=201)
+def create_monte_carlo_simulation(
+    player_id: str,
+    payload: CreateMonteCarloSimulationSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Step 7: a real point prediction (Step 5) plus a Monte Carlo
+    uncertainty range built from this exact model's own real,
+    out-of-sample walk-forward errors — never an invented distribution
+    (see app/monte_carlo_simulation.py's header). Staff-only, same as
+    /predictions.
+    """
+    _require_staff(request)
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    try:
+        return MonteCarloService(db).simulate(
+            player_id=player_id,
+            metric_name=payload.metric_name,
+            forecast_days=payload.forecast_days,
+            model_scope=payload.model_scope,
+            num_simulations=payload.num_simulations,
+            seed=payload.seed,
+        )
+    except NoRecordedMetricError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InsufficientTrainingDataError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except InsufficientUncertaintyDataError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.get("/players/{player_id}/monte-carlo")
+def list_monte_carlo_simulations(
+    player_id: str,
+    request: Request,
+    metric_name: str | None = None,
+    db: Session = Depends(get_db),
+):
+    _require_staff(request)
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    return {
+        "simulations": MonteCarloService(db).list_for_player(
+            player_id, metric_name=metric_name
+        )
+    }
 
 
 @router.put("/players/{player_id}/coach-message")
