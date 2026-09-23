@@ -22,7 +22,9 @@ from app.services.development_report_service import (
 )
 from app.services.development_trend_service import DevelopmentTrendService
 from app.ml_prediction import InsufficientTrainingDataError
+from app.ml_validation import InsufficientValidationDataError
 from app.services.ml_prediction_service import MLPredictionService, NoRecordedMetricError
+from app.services.ml_validation_service import MLValidationService
 from app.services.player_assessment_service import PlayerAssessmentService
 from app.services.player_metric_service import PlayerMetricService
 from app.services.player_service import PlayerService
@@ -385,6 +387,40 @@ def list_player_predictions(
             player_id, metric_name=metric_name
         )
     }
+
+
+@router.get("/players/{player_id}/model-validation")
+def get_model_validation(
+    player_id: str,
+    request: Request,
+    metric_name: str,
+    model_scope: str = "population",
+    db: Session = Depends(get_db),
+):
+    """Step 6: a genuine held-out evaluation (MAE/RMSE/R² on a
+    chronological train/validation/test split) of the same baseline
+    model /predictions trains — read-only, nothing persisted. For
+    model_scope="population" the path's player_id is only used for the
+    existence/auth check; the population fit and its evaluation pool
+    every player's own history for this metric, same as
+    POST /predictions' population scope.
+    """
+    _require_staff(request)
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    try:
+        return MLValidationService(db).validate(
+            metric_name=metric_name,
+            model_scope=model_scope,
+            player_id=player_id,
+        )
+    except InsufficientValidationDataError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 
 @router.put("/players/{player_id}/coach-message")

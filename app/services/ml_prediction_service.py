@@ -2,11 +2,15 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from app.db_models import MLPredictionDB, PlayerMetricDB
-from app.ml_prediction import TrainingExample, predict_future_score
+from app.db_models import MLPredictionDB
+from app.ml_prediction import predict_future_score
 from app.services.auth_service import utcnow
 from app.services.id_service import next_entity_id
 from app.services.player_metric_service import PlayerMetricService
+from app.services.training_examples import (
+    player_specific_training_examples,
+    population_training_examples,
+)
 
 
 MODEL_SCOPE_POPULATION = "population"
@@ -40,30 +44,6 @@ class MLPredictionService:
         self.db = db
         self._metrics = PlayerMetricService(db)
 
-    def _population_training_examples(self, metric_name: str) -> list[TrainingExample]:
-        """Pools every player's own (days-since-THEIR-OWN-first-reading,
-        score) pairs for this metric — never raw calendar dates, since
-        players started being assessed at different, unrelated times.
-        This is what makes it a real population model of "how this
-        metric tends to move over a player's own tenure," rather than a
-        meaningless fit against an arbitrary shared calendar origin."""
-        rows = (
-            self.db.query(PlayerMetricDB)
-            .filter(PlayerMetricDB.metric_name == metric_name)
-            .order_by(PlayerMetricDB.player_id, PlayerMetricDB.recorded_at.asc())
-            .all()
-        )
-
-        first_date_by_player: dict[str, date] = {}
-        examples: list[TrainingExample] = []
-        for row in rows:
-            first_date = first_date_by_player.setdefault(row.player_id, row.recorded_at)
-            examples.append(TrainingExample(
-                days_since_first=(row.recorded_at - first_date).days,
-                score=row.metric_score,
-            ))
-        return examples
-
     def predict(
         self,
         player_id: str,
@@ -89,15 +69,11 @@ class MLPredictionService:
         target_days_since_first = player_elapsed_days + forecast_days
 
         if model_scope == MODEL_SCOPE_PLAYER_SPECIFIC:
-            training_examples = [
-                TrainingExample(
-                    days_since_first=(row.recorded_at - own_first_date).days,
-                    score=row.metric_score,
-                )
-                for row in player_rows
-            ]
+            training_examples = player_specific_training_examples(
+                self.db, player_id, metric_name
+            )
         else:
-            training_examples = self._population_training_examples(metric_name)
+            training_examples = population_training_examples(self.db, metric_name)
 
         # Raises InsufficientTrainingDataError to the caller when the
         # chosen scope's pool is too small — never silently falls back

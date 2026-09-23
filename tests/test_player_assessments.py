@@ -736,6 +736,77 @@ def test_create_and_list_prediction_end_to_end(client):
     assert predictions[0]["prediction_id"] == body["prediction_id"]
 
 
+# --- Model validation API (Step 6) -----------------------------------------
+
+
+def test_model_validation_requires_authentication(anonymous_client):
+    response = anonymous_client.get(
+        "/players/P001/model-validation",
+        params={"metric_name": "ball_mastery_sole_rolls"},
+    )
+    assert response.status_code == 401
+
+
+def test_model_validation_rejects_unknown_player(client):
+    response = client.get(
+        "/players/NOPE/model-validation",
+        params={"metric_name": "ball_mastery_sole_rolls"},
+    )
+    assert response.status_code == 404
+
+
+def test_model_validation_returns_422_with_insufficient_data(client):
+    create_extra_player("P_VALIDATE_INSUFFICIENT")
+    client.post(
+        "/players/P_VALIDATE_INSUFFICIENT/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-01-01"),
+    )
+
+    response = client.get(
+        "/players/P_VALIDATE_INSUFFICIENT/model-validation",
+        params={
+            "metric_name": "ball_mastery_sole_rolls",
+            "model_scope": "player_specific",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Insufficient historical data" in response.json()["detail"]
+
+
+def test_model_validation_end_to_end(client):
+    create_extra_player("P_VALIDATE_OK")
+    for i in range(10):
+        client.post(
+            "/players/P_VALIDATE_OK/technical-assessments/ball-mastery",
+            json=ball_mastery_payload(
+                test_date=(date(2026, 1, 1) + timedelta(days=i * 10)).isoformat(),
+                sole_rolls=min(5, 1 + (i % 5)),
+            ),
+        )
+
+    response = client.get(
+        "/players/P_VALIDATE_OK/model-validation",
+        params={
+            "metric_name": "ball_mastery_sole_rolls",
+            "model_scope": "player_specific",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_sample_count"] == 10
+    assert body["train"]["sample_count"] >= 2
+    assert body["validation"]["sample_count"] >= 2
+    assert body["test"]["sample_count"] >= 2
+    assert "overfitting_detected" in body
+    assert "data_quality" in body
+    # No verdict field anywhere — the API must not derive "the model is
+    # good" from R^2 for the client.
+    assert "verdict" not in body
+    assert "quality_label" not in body
+
+
 # --- AI video analysis (Ball Mastery) --------------------------------------
 
 FAKE_AI_SUGGESTION = {
