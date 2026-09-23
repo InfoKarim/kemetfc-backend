@@ -1,8 +1,9 @@
 import os
 import tempfile
+from datetime import date, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api_schemas import (
@@ -18,7 +19,9 @@ from app.services.development_report_service import (
     build_development_report,
     set_coach_message,
 )
+from app.services.development_trend_service import DevelopmentTrendService
 from app.services.player_assessment_service import PlayerAssessmentService
+from app.services.player_metric_service import PlayerMetricService
 from app.services.player_service import PlayerService
 from app.services.smart_recommendation_service import (
     RecommendationError,
@@ -231,6 +234,103 @@ def get_player_development_report(
     require_guardian_player_access(request, db, player_id)
 
     return build_development_report(db, player_id)
+
+
+# Day-based approximations, not calendar-precise months — documented
+# here rather than silently rounded, since "6 months" varies 181-184
+# real calendar days depending on which months it spans.
+DEVELOPMENT_HISTORY_PERIODS: dict[str, int | None] = {
+    "30d": 30,
+    "90d": 90,
+    "6m": 180,
+    "12m": 365,
+    "all": None,
+}
+
+
+@router.get("/players/{player_id}/development-history")
+def get_player_development_history(
+    player_id: str,
+    request: Request,
+    period: str = "all",
+    metric_name: list[str] | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Chart-ready time series for the Development Trend Chart: one
+    ordered (date, score) list per metric. Returns every metric the
+    player has recorded data for when ``metric_name`` is omitted, so the
+    frontend can offer "which metrics appear on the chart" as a client-
+    side filter over real data rather than a second round trip.
+    """
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
+
+    if period not in DEVELOPMENT_HISTORY_PERIODS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Invalid period. Choose one of: "
+                f"{', '.join(DEVELOPMENT_HISTORY_PERIODS)}"
+            ),
+        )
+
+    since = None
+    period_days = DEVELOPMENT_HISTORY_PERIODS[period]
+    if period_days is not None:
+        since = date.today() - timedelta(days=period_days)
+
+    metric_service = PlayerMetricService(db)
+    names = metric_name or metric_service.list_metric_names(player_id)
+
+    return {
+        "player_id": player_id,
+        "period": period,
+        "metrics": {
+            name: [
+                {"recorded_at": row.recorded_at, "score": row.metric_score}
+                for row in metric_service.list_for_player(
+                    player_id, metric_name=name, since=since
+                )
+            ]
+            for name in names
+        },
+    }
+
+
+@router.get("/players/{player_id}/development-trends")
+def get_player_development_trends(
+    player_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Per-metric direction/velocity/plateau/acceleration summary (see
+    DevelopmentTrendService). ``metrics_without_trend`` names any metric
+    the player has real recorded data for but that has no configured,
+    defensible minimum_meaningful_change yet — surfaced explicitly
+    rather than silently dropped, so the frontend/coach can see the gap
+    instead of wondering why a metric with data has no trend.
+    """
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
+
+    trend_service = DevelopmentTrendService(db)
+    all_metric_names = set(PlayerMetricService(db).list_metric_names(player_id))
+    trends = trend_service.get_all_trends(player_id)
+    trended_names = {trend.metric_name for trend in trends}
+
+    return {
+        "player_id": player_id,
+        "trends": trends,
+        "metrics_without_trend": sorted(all_metric_names - trended_names),
+    }
 
 
 @router.put("/players/{player_id}/coach-message")

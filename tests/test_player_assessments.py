@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 import app.routers.player_assessments as player_assessments_router
 from app.database import Base, get_db
-from app.db_models import PlayerDB, PlayerMetricDB, UserDB
+from app.db_models import PlayerAssessmentDB, PlayerDB, PlayerMetricDB, UserDB
 from app.services.auth_service import hash_password, utcnow
 from app.services.player_metric_service import PlayerMetricService
 from main import CSRF_COOKIE_NAME, app
@@ -475,6 +475,178 @@ def test_list_metric_names_returns_distinct_sorted_names(client):
     assert names == sorted(names)
     assert "yoyo_kids_distance_m" in names
     assert "ball_mastery_sole_rolls" in names
+
+
+# --- Development history / trends API (Step 4: chart data) ----------------
+
+
+def create_extra_player(player_id: str):
+    db = TestingSessionLocal()
+    db.add(PlayerDB(
+        player_id=player_id,
+        first_name_ar="ك", last_name_ar="س",
+        first_name_en="Extra", last_name_en="Player",
+        date_of_birth=date(2015, 5, 10),
+        sex="male",
+        **PLAYER_PROFILE_KWARGS,
+    ))
+    db.commit()
+    db.close()
+
+
+def test_development_history_requires_authentication(anonymous_client):
+    response = anonymous_client.get("/players/P001/development-history")
+    assert response.status_code == 401
+
+
+def test_development_history_rejects_unknown_player(client):
+    response = client.get("/players/NOPE/development-history")
+    assert response.status_code == 404
+
+
+def test_development_history_rejects_invalid_period(client):
+    response = client.get(
+        "/players/P001/development-history", params={"period": "3 weeks"}
+    )
+    assert response.status_code == 422
+
+
+def test_development_history_returns_all_metrics_by_default(client):
+    create_extra_player("P_HISTORY")
+    client.post(
+        "/players/P_HISTORY/physical-assessments/yoyo-kids",
+        json=yoyo_payload(test_date="2026-01-01", total_distance_m=500.0),
+    )
+    client.post(
+        "/players/P_HISTORY/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-01-05"),
+    )
+
+    response = client.get("/players/P_HISTORY/development-history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_id"] == "P_HISTORY"
+    assert body["period"] == "all"
+    assert body["metrics"]["yoyo_kids_distance_m"] == [
+        {"recorded_at": "2026-01-01", "score": 500.0}
+    ]
+    assert body["metrics"]["ball_mastery_sole_rolls"] == [
+        {"recorded_at": "2026-01-05", "score": 4}
+    ]
+
+
+def test_development_history_can_filter_to_one_metric(client):
+    create_extra_player("P_HISTORY_FILTER")
+    client.post(
+        "/players/P_HISTORY_FILTER/physical-assessments/yoyo-kids",
+        json=yoyo_payload(test_date="2026-01-01"),
+    )
+    client.post(
+        "/players/P_HISTORY_FILTER/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-01-01"),
+    )
+
+    response = client.get(
+        "/players/P_HISTORY_FILTER/development-history",
+        params={"metric_name": "yoyo_kids_distance_m"},
+    )
+
+    body = response.json()
+    assert list(body["metrics"].keys()) == ["yoyo_kids_distance_m"]
+
+
+def test_development_history_period_excludes_old_points(client):
+    create_extra_player("P_HISTORY_PERIOD")
+    old_date = (date.today() - timedelta(days=400)).isoformat()
+    recent_date = (date.today() - timedelta(days=5)).isoformat()
+    client.post(
+        "/players/P_HISTORY_PERIOD/physical-assessments/yoyo-kids",
+        json=yoyo_payload(test_date=old_date, total_distance_m=300.0),
+    )
+    client.post(
+        "/players/P_HISTORY_PERIOD/physical-assessments/yoyo-kids",
+        json=yoyo_payload(test_date=recent_date, total_distance_m=600.0),
+    )
+
+    response = client.get(
+        "/players/P_HISTORY_PERIOD/development-history",
+        params={"period": "30d"},
+    )
+
+    points = response.json()["metrics"]["yoyo_kids_distance_m"]
+    assert len(points) == 1
+    assert points[0]["recorded_at"] == recent_date
+
+
+def test_development_trends_requires_authentication(anonymous_client):
+    response = anonymous_client.get("/players/P001/development-trends")
+    assert response.status_code == 401
+
+
+def test_development_trends_rejects_unknown_player(client):
+    response = client.get("/players/NOPE/development-trends")
+    assert response.status_code == 404
+
+
+def test_development_trends_returns_direction_for_a_configured_metric(client):
+    create_extra_player("P_TRENDS")
+    client.post(
+        "/players/P_TRENDS/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-01-01", sole_rolls=2),
+    )
+    client.post(
+        "/players/P_TRENDS/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-02-01", sole_rolls=4),
+    )
+
+    response = client.get("/players/P_TRENDS/development-trends")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_id"] == "P_TRENDS"
+    trend_by_name = {t["metric_name"]: t for t in body["trends"]}
+    assert trend_by_name["ball_mastery_sole_rolls"]["direction"] == "improving"
+    assert trend_by_name["ball_mastery_sole_rolls"]["current_score"] == 4
+
+
+def test_development_trends_lists_metrics_with_no_configured_threshold(client):
+    create_extra_player("P_TRENDS_UNCONFIGURED")
+    # Simulates a future metric name that has real recorded data but no
+    # defensible minimum_meaningful_change yet — inserted directly since
+    # no wired assessment type produces one today.
+    db = TestingSessionLocal()
+    db.add(PlayerAssessmentDB(
+        assessment_id="ASSESS_UNCONFIGURED",
+        player_id="P_TRENDS_UNCONFIGURED",
+        pillar="tactical",
+        test_category="vision",
+        test_type="vision_rating",
+        methodology_version="v1",
+        test_date=date(2026, 1, 1),
+        age_at_assessment_years=11,
+        raw_data={}, calculated_metrics={},
+        created_at=datetime.now(),
+    ))
+    db.commit()
+    db.add(PlayerMetricDB(
+        player_id="P_TRENDS_UNCONFIGURED",
+        assessment_id="ASSESS_UNCONFIGURED",
+        metric_name="vision_rating",
+        category="tactical",
+        metric_score=70,
+        recorded_at=date(2026, 1, 1),
+        source="coach_rating",
+        created_at=datetime.now(),
+    ))
+    db.commit()
+    db.close()
+
+    response = client.get("/players/P_TRENDS_UNCONFIGURED/development-trends")
+
+    body = response.json()
+    assert body["metrics_without_trend"] == ["vision_rating"]
+    assert "vision_rating" not in {t["metric_name"] for t in body["trends"]}
 
 
 # --- AI video analysis (Ball Mastery) --------------------------------------

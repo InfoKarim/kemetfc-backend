@@ -1,3 +1,5 @@
+from datetime import date
+
 from sqlalchemy.orm import Session
 
 from app.db_models import PlayerMetricDB
@@ -18,6 +20,7 @@ class PlayerMetricService:
         player_id: str,
         metric_name: str | None = None,
         category: str | None = None,
+        since: date | None = None,
     ) -> list[PlayerMetricDB]:
         query = self.db.query(PlayerMetricDB).filter(
             PlayerMetricDB.player_id == player_id
@@ -26,6 +29,8 @@ class PlayerMetricService:
             query = query.filter(PlayerMetricDB.metric_name == metric_name)
         if category is not None:
             query = query.filter(PlayerMetricDB.category == category)
+        if since is not None:
+            query = query.filter(PlayerMetricDB.recorded_at >= since)
         return query.order_by(PlayerMetricDB.recorded_at.asc()).all()
 
     def list_metric_names(self, player_id: str) -> list[str]:

@@ -363,6 +363,8 @@ GUARDIAN_ALLOWED_PLAYER_SUFFIXES = {
     "weak-foot-assessment",
     "assessments",
     "development-report",
+    "development-history",
+    "development-trends",
 }
 
 
@@ -404,6 +406,8 @@ def required_feature_for_path(path: str) -> str | None:
         or path.endswith("/development-plan")
         or path.endswith("/development-snapshot")
         or path.endswith("/development-report")
+        or path.endswith("/development-history")
+        or path.endswith("/development-trends")
         or path.endswith("/assessments")
     ):
         # Guardian-facing report/history views (GUARDIAN_ALLOWED_PLAYER_
