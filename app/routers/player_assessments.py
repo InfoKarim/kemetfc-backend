@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFil
 from sqlalchemy.orm import Session
 
 from app.api_schemas import (
+    CreatePredictionSchema,
     RecordBallMasterySchema,
     RecordYoYoKidsSchema,
     UpdateCoachMessageSchema,
@@ -20,6 +21,8 @@ from app.services.development_report_service import (
     set_coach_message,
 )
 from app.services.development_trend_service import DevelopmentTrendService
+from app.ml_prediction import InsufficientTrainingDataError
+from app.services.ml_prediction_service import MLPredictionService, NoRecordedMetricError
 from app.services.player_assessment_service import PlayerAssessmentService
 from app.services.player_metric_service import PlayerMetricService
 from app.services.player_service import PlayerService
@@ -330,6 +333,57 @@ def get_player_development_trends(
         "player_id": player_id,
         "trends": trends,
         "metrics_without_trend": sorted(all_metric_names - trended_names),
+    }
+
+
+@router.post("/players/{player_id}/predictions", status_code=201)
+def create_player_prediction(
+    player_id: str,
+    payload: CreatePredictionSchema,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Baseline ML prediction (Step 5 — see app/ml_prediction.py's
+    header for the model, its features, and what it deliberately does
+    not claim). Staff-only: this trains/evaluates a model on demand, not
+    a passive read like development-history/trends.
+    """
+    _require_staff(request)
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    try:
+        return MLPredictionService(db).predict(
+            player_id=player_id,
+            metric_name=payload.metric_name,
+            forecast_days=payload.forecast_days,
+            model_scope=payload.model_scope,
+        )
+    except NoRecordedMetricError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except InsufficientTrainingDataError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.get("/players/{player_id}/predictions")
+def list_player_predictions(
+    player_id: str,
+    request: Request,
+    metric_name: str | None = None,
+    db: Session = Depends(get_db),
+):
+    _require_staff(request)
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    return {
+        "predictions": MLPredictionService(db).list_for_player(
+            player_id, metric_name=metric_name
+        )
     }
 
 

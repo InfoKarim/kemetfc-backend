@@ -742,3 +742,12 @@ class RegisterMLModelSchema(BaseModel):
 
 class UpdateMLModelStatusSchema(BaseModel):
     status: Literal["experimental", "active", "inactive", "deprecated"]
+
+
+class CreatePredictionSchema(BaseModel):
+    metric_name: str = Field(min_length=1, max_length=120)
+    forecast_days: int = Field(gt=0, le=365)
+    # age_group / position scopes are not implemented yet — see
+    # ml_prediction_service.py's module docstring for why requesting
+    # either must raise, not silently fall back to population.
+    model_scope: Literal["population", "player_specific"] = "population"

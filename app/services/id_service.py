@@ -16,6 +16,7 @@ from app.db_models import (
     MembershipPlanDB,
     MLDatasetEntryDB,
     MLModelRegistryDB,
+    MLPredictionDB,
     PlayerAssessmentDB,
     PlayerCheckInTokenDB,
     PlayerDB,
@@ -62,6 +63,7 @@ ENTITY_CONFIG = {
     "ml_model": ("MODEL", MLModelRegistryDB),
     "coach_validation_label": ("CVL", CoachValidationLabelDB),
     "player_checkin_token": ("CHKTOK", PlayerCheckInTokenDB),
+    "ml_prediction": ("PRED", MLPredictionDB),
 }
 
 

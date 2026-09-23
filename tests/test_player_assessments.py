@@ -649,6 +649,93 @@ def test_development_trends_lists_metrics_with_no_configured_threshold(client):
     assert "vision_rating" not in {t["metric_name"] for t in body["trends"]}
 
 
+# --- Predictions API (Step 5: baseline ML model) ---------------------------
+
+
+def test_create_prediction_requires_authentication(anonymous_client):
+    response = anonymous_client.post(
+        "/players/P001/predictions",
+        json={"metric_name": "ball_mastery_sole_rolls", "forecast_days": 30},
+    )
+    assert response.status_code == 401
+
+
+def test_create_prediction_rejects_unknown_player(client):
+    response = client.post(
+        "/players/NOPE/predictions",
+        json={"metric_name": "ball_mastery_sole_rolls", "forecast_days": 30},
+    )
+    assert response.status_code == 404
+
+
+def test_create_prediction_rejects_unimplemented_model_scope(client):
+    response = client.post(
+        "/players/P001/predictions",
+        json={
+            "metric_name": "ball_mastery_sole_rolls",
+            "forecast_days": 30,
+            "model_scope": "age_group",
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_create_prediction_returns_422_with_insufficient_data(client):
+    create_extra_player("P_PRED_INSUFFICIENT")
+    client.post(
+        "/players/P_PRED_INSUFFICIENT/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-01-01"),
+    )
+
+    response = client.post(
+        "/players/P_PRED_INSUFFICIENT/predictions",
+        json={
+            "metric_name": "ball_mastery_sole_rolls",
+            "forecast_days": 30,
+            "model_scope": "player_specific",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Insufficient historical data" in response.json()["detail"]
+
+
+def test_create_and_list_prediction_end_to_end(client):
+    create_extra_player("P_PRED_OK")
+    for i in range(5):
+        client.post(
+            "/players/P_PRED_OK/technical-assessments/ball-mastery",
+            json=ball_mastery_payload(
+                test_date=(date(2026, 1, 1) + timedelta(days=i * 10)).isoformat(),
+                sole_rolls=min(5, 1 + i),
+            ),
+        )
+
+    create_response = client.post(
+        "/players/P_PRED_OK/predictions",
+        json={
+            "metric_name": "ball_mastery_sole_rolls",
+            "forecast_days": 30,
+            "model_scope": "player_specific",
+        },
+    )
+
+    assert create_response.status_code == 201
+    body = create_response.json()
+    assert body["player_id"] == "P_PRED_OK"
+    assert body["model_scope"] == "player_specific"
+    assert body["training_sample_count"] == 5
+    assert body["confidence_score"] is None
+    assert body["lower_bound"] is None
+    assert body["upper_bound"] is None
+
+    list_response = client.get("/players/P_PRED_OK/predictions")
+    assert list_response.status_code == 200
+    predictions = list_response.json()["predictions"]
+    assert len(predictions) == 1
+    assert predictions[0]["prediction_id"] == body["prediction_id"]
+
+
 # --- AI video analysis (Ball Mastery) --------------------------------------
 
 FAKE_AI_SUGGESTION = {

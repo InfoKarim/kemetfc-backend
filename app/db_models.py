@@ -1193,6 +1193,42 @@ class PlayerMetricDB(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class MLPredictionDB(Base):
+    """One baseline-model point prediction for one metric (see
+    app/ml_prediction.py). ``lower_bound``/``upper_bound``/``confidence_score``
+    are nullable and left unset by the Step 5 baseline model — real
+    uncertainty estimation is Step 7's Monte Carlo layer, not this one,
+    so this row never carries an interval this module cannot defend.
+    ``model_scope`` records whether the fit used every player's history
+    for this metric ("population") or only this one player's own
+    ("player_specific") — age_group/position scopes are not implemented
+    yet and must never appear here until they really are.
+    """
+
+    __tablename__ = "ml_predictions"
+
+    prediction_id: Mapped[str] = mapped_column(String, primary_key=True)
+    player_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("players.player_id"),
+        index=True,
+    )
+    metric_name: Mapped[str] = mapped_column(String, index=True)
+    model_scope: Mapped[str] = mapped_column(String)
+    current_score: Mapped[float] = mapped_column(Float)
+    predicted_score: Mapped[float] = mapped_column(Float)
+    prediction_date: Mapped[date] = mapped_column(Date)
+    target_date: Mapped[date] = mapped_column(Date)
+    forecast_days: Mapped[int] = mapped_column(Integer)
+    model_name: Mapped[str] = mapped_column(String)
+    model_version: Mapped[str] = mapped_column(String)
+    training_sample_count: Mapped[int] = mapped_column(Integer)
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lower_bound: Mapped[float | None] = mapped_column(Float, nullable=True)
+    upper_bound: Mapped[float | None] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+
 class CoachMessageDB(Base):
     """The coach's current personal note + next-focus list for one player,
     shown on that player's Guardian development report. One row per

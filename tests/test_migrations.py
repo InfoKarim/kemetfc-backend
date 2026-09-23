@@ -36,6 +36,7 @@ EXPECTED_TABLES = {
     "membership_plans",
     "ml_dataset_entries",
     "ml_model_registry",
+    "ml_predictions",
     "messages",
     "notifications",
     "password_reset_codes",
@@ -96,7 +97,7 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert revision == "f1a2c9d84e6b"
+    assert revision == "a7c3f4e2d915"
     job_columns = {
         column["name"]
         for column in inspect(engine).get_columns("video_analysis_jobs")
@@ -120,9 +121,15 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
     }
     assert "metric_name" in metric_columns
     assert "metric_score" in metric_columns
+    prediction_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("ml_predictions")
+    }
+    assert "predicted_score" in prediction_columns
+    assert "model_scope" in prediction_columns
 
     with engine.connect() as connection:
-        assert require_database_at_head(connection) == ("f1a2c9d84e6b",)
+        assert require_database_at_head(connection) == ("a7c3f4e2d915",)
 
 
 def test_migration_health_rejects_database_without_migrations(tmp_path):

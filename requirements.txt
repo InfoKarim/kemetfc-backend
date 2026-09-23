@@ -31,3 +31,4 @@ psycopg[binary]==3.3.4
 boto3==1.40.61
 stripe==15.6.1
 requests==2.34.2
+scikit-learn==1.9.1
