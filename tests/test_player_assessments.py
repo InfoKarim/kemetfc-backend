@@ -1029,6 +1029,94 @@ def test_actual_vs_predicted_filters_by_metric_name(client):
     assert response.json()["outcomes"] == []
 
 
+# --- Recommended drills from trends API (Step 9) ---------------------
+
+
+def test_recommended_drills_requires_authentication(anonymous_client):
+    response = anonymous_client.get("/players/P001/recommended-drills")
+    assert response.status_code == 401
+
+
+def test_recommended_drills_rejects_unknown_player(client):
+    response = client.get("/players/NOPE/recommended-drills")
+    assert response.status_code == 404
+
+
+def test_recommended_drills_empty_when_nothing_declining(client):
+    create_extra_player("P_DRILLS_EMPTY")
+    client.post(
+        "/players/P_DRILLS_EMPTY/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-01-01"),
+    )
+
+    response = client.get("/players/P_DRILLS_EMPTY/recommended-drills")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["player_id"] == "P_DRILLS_EMPTY"
+    assert body["recommendations"] == []
+    assert body["unranked_training_needs"] == []
+
+
+def test_recommended_drills_end_to_end_for_a_declining_metric(client):
+    create_extra_player("P_DRILLS_OK")
+    client.post(
+        "/players/P_DRILLS_OK/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-01-01", sole_rolls=4),
+    )
+    client.post(
+        "/players/P_DRILLS_OK/technical-assessments/ball-mastery",
+        json=ball_mastery_payload(test_date="2026-02-01", sole_rolls=2),
+    )
+    drill_response = client.post(
+        "/drills",
+        json={
+            "drill_id": "DRILL_BALL_CONTROL_1",
+            "name": "Cone Weave",
+            "category": "Ball Control",
+            "description": "Weave through cones.",
+            "min_age": 5,
+            "max_age": 18,
+            "difficulty": "beginner",
+            "duration_minutes": 15,
+            "equipment": ["cones"],
+            "video_url": "https://example.com/video.mp4",
+            "active": True,
+        },
+    )
+    assert drill_response.status_code == 201
+
+    response = client.get("/players/P_DRILLS_OK/recommended-drills")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["recommendations"]) == 1
+    group = body["recommendations"][0]
+    assert group["weakness"] == "Ball Control"
+    assert group["source_metrics"] == ["ball_mastery_sole_rolls"]
+    assert any(d["drill_id"] == "DRILL_BALL_CONTROL_1" for d in group["drills"])
+
+
+def test_recommended_drills_flags_unrankable_need_for_unscaled_metric(client):
+    create_extra_player("P_DRILLS_UNRANKED")
+    client.post(
+        "/players/P_DRILLS_UNRANKED/physical-assessments/yoyo-kids",
+        json=yoyo_payload(test_date="2026-01-01", total_distance_m=600.0),
+    )
+    client.post(
+        "/players/P_DRILLS_UNRANKED/physical-assessments/yoyo-kids",
+        json=yoyo_payload(test_date="2026-02-01", total_distance_m=400.0),
+    )
+
+    response = client.get("/players/P_DRILLS_UNRANKED/recommended-drills")
+
+    body = response.json()
+    assert body["recommendations"] == []
+    assert len(body["unranked_training_needs"]) == 1
+    assert body["unranked_training_needs"][0]["metric_name"] == "yoyo_kids_distance_m"
+    assert body["unranked_training_needs"][0]["reason"] == "declining"
+
+
 # --- AI video analysis (Ball Mastery) --------------------------------------
 
 FAKE_AI_SUGGESTION = {

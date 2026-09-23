@@ -30,6 +30,7 @@ from app.services.ml_validation_service import MLValidationService
 from app.services.monte_carlo_service import MonteCarloService
 from app.services.player_assessment_service import PlayerAssessmentService
 from app.services.prediction_outcome_service import PredictionOutcomeService
+from app.services.trend_drill_recommendation_service import TrendDrillRecommendationService
 from app.services.player_metric_service import PlayerMetricService
 from app.services.player_service import PlayerService
 from app.services.smart_recommendation_service import (
@@ -508,6 +509,39 @@ def get_actual_vs_predicted(
             player_id, metric_name=metric_name
         )
     }
+
+
+@router.get("/players/{player_id}/recommended-drills")
+def get_player_recommended_drills(
+    player_id: str,
+    request: Request,
+    player_difficulty: str | None = None,
+    target_duration: int | None = None,
+    db: Session = Depends(get_db),
+):
+    """Step 9: Player Assessment -> Weakness Detection -> Development
+    Trend Analysis -> Training Need -> Drill Library -> Rank
+    Recommended Drills, via the SAME rule-based ranking engine
+    (app/drill_ranking.py) POST /analyses/{id}/training-plans already
+    uses for a manually-entered analysis — see
+    TrendDrillRecommendationService for exactly how a real declining or
+    plateaued metric becomes a ranked drill list. Same access pattern
+    as the existing /players/{id}/recommended-drill (singular, AI-based)
+    and /development-plan endpoints — a guardian may view their own
+    child's.
+    """
+    player = PlayerService(db=db).get_player(player_id)
+
+    if player is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    require_guardian_player_access(request, db, player_id)
+
+    return TrendDrillRecommendationService(db).recommend(
+        player_id,
+        player_difficulty=player_difficulty,
+        target_duration=target_duration,
+    )
 
 
 @router.put("/players/{player_id}/coach-message")

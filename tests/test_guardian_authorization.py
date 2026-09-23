@@ -294,6 +294,9 @@ def test_guardian_b_can_access_own_player_and_no_other(seeded):
     "/players/P_GUARD_B/recommended-drill",
     "/players/P_GUARD_B/assessments",
     "/players/P_GUARD_B/development-report",
+    "/players/P_GUARD_B/development-history",
+    "/players/P_GUARD_B/development-trends",
+    "/players/P_GUARD_B/recommended-drills",
 ])
 def test_guardian_cannot_reach_unrelated_player_subresources(seeded, path):
     response = seeded["guardian_a"].get(path)
@@ -482,6 +485,17 @@ def test_guardian_can_view_own_linked_development_report(seeded):
     assert response.status_code == 200
     assert response.json()["player_id"] == "P_GUARD_A"
     assert "score" not in response.json()
+
+
+@pytest.mark.parametrize("suffix", [
+    "development-history",
+    "development-trends",
+    "recommended-drills",
+])
+def test_guardian_can_view_own_linked_development_analytics_endpoints(seeded, suffix):
+    response = seeded["guardian_a"].get(f"/players/P_GUARD_A/{suffix}")
+    assert response.status_code == 200
+    assert response.json()["player_id"] == "P_GUARD_A"
 
 
 def test_guardian_with_assessments_feature_but_not_players_can_still_view_report(seeded):

@@ -356,6 +356,7 @@ GUARDIAN_ALLOWED_PLAYER_SUFFIXES = {
     "sports-medicine-notes",
     "coaching-insights",
     "recommended-drill",
+    "recommended-drills",
     "tactical-assessment",
     "technical-assessment",
     "mental-assessment",
