@@ -164,6 +164,14 @@ public struct TrackingSample: Codable, Sendable {
     public var gimbalState: String
     public var trackingMode: String
     public var trackingStatus: String
+    /// Per-session, monotonic identity assigned ONCE by TelemetryQueueStore when the
+    /// sample is durably queued and unchanged on every retry — the backend's
+    /// idempotency key (UNIQUE(session_id, sequence_number)). Nil only for a sample
+    /// that has not been queued yet.
+    public var sequenceNumber: Int? = nil
+    /// PlayerTracker.lastMatchWasAmbiguous for this frame: the match to the selected player
+    /// could not be told apart from another candidate. nil = not applicable / unknown.
+    public var identityAmbiguous: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
         case tSeconds = "t_seconds"
@@ -179,6 +187,8 @@ public struct TrackingSample: Codable, Sendable {
         case gimbalState = "gimbal_state"
         case trackingMode = "tracking_mode"
         case trackingStatus = "tracking_status"
+        case sequenceNumber = "sequence_number"
+        case identityAmbiguous = "identity_ambiguous"
     }
 }
 

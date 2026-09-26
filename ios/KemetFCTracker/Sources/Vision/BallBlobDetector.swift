@@ -127,15 +127,28 @@ public enum BallBlobDetector {
     /// top-left) of the best-scoring candidate blob, or nil if nothing in
     /// the frame plausibly resembles a ball by this heuristic's
     /// deliberately narrow criteria.
-    public static func findBrightRoughlyCircularBlob(
+    /// One blob that passed every gate, with the measurements the caller can
+    /// turn into an honest per-candidate confidence.
+    public struct Candidate: Sendable {
+        public var rect: CGRect
+        /// pixels / bounding-box area — closer to pi/4 (~0.79) for a disc, 1.0 for a filled box.
+        public var fillRatio: Double
+        /// narrower side / wider side, 1.0 = square bounding box.
+        public var aspectRatio: Double
+    }
+
+    /// Every bright, roughly circular blob that passes the gates, best fill ratio
+    /// first (ties keep scan order). Cones, socks and chalk that happen to pass are
+    /// returned too — telling them from the ball is the tracker's job, using motion.
+    public static func findBrightRoughlyCircularBlobs(
         in buffer: RGBAPixelBuffer,
-        parameters: Parameters = .default
-    ) -> CGRect? {
-        guard buffer.width > 0, buffer.height > 0 else { return nil }
+        parameters: Parameters = .default,
+        maxCandidates: Int = 5
+    ) -> [Candidate] {
+        guard buffer.width > 0, buffer.height > 0 else { return [] }
 
         var visited = [Bool](repeating: false, count: buffer.width * buffer.height)
-        var best: Component?
-        var bestFillRatio = 0.0
+        var found: [Candidate] = []
         let frameArea = Double(buffer.width * buffer.height)
 
         for y in 0..<buffer.height {
@@ -145,9 +158,6 @@ public enum BallBlobDetector {
                 visited[idx] = true
                 guard isCandidate(buffer.pixel(x, y), parameters) else { continue }
 
-                // Iterative flood fill (4-connectivity) — recursive
-                // flood fill risks a stack overflow on a large connected
-                // bright region (e.g. an overexposed sky patch).
                 var component = Component()
                 var stack: [(Int, Int)] = [(x, y)]
                 while let (cx, cy) = stack.popLast() {
@@ -176,19 +186,25 @@ public enum BallBlobDetector {
                 let fillRatio = Double(component.pixelCount) / boxArea
                 guard fillRatio >= parameters.minFillRatio else { continue }
 
-                if fillRatio > bestFillRatio {
-                    bestFillRatio = fillRatio
-                    best = component
-                }
+                found.append(Candidate(
+                    rect: CGRect(x: component.minX, y: component.minY, width: boxWidth, height: boxHeight),
+                    fillRatio: fillRatio, aspectRatio: aspectRatio
+                ))
             }
         }
 
-        guard let winner = best else { return nil }
-        return CGRect(
-            x: winner.minX,
-            y: winner.minY,
-            width: winner.maxX - winner.minX + 1,
-            height: winner.maxY - winner.minY + 1
-        )
+        let ranked = found.enumerated().sorted { lhs, rhs in
+            lhs.element.fillRatio != rhs.element.fillRatio ? lhs.element.fillRatio > rhs.element.fillRatio : lhs.offset < rhs.offset
+        }
+        return ranked.prefix(maxCandidates).map(\.element)
+    }
+
+    /// The single best blob (highest fill ratio). Behavior unchanged; kept for the
+    /// existing single-candidate callers and tests.
+    public static func findBrightRoughlyCircularBlob(
+        in buffer: RGBAPixelBuffer,
+        parameters: Parameters = .default
+    ) -> CGRect? {
+        findBrightRoughlyCircularBlobs(in: buffer, parameters: parameters, maxCandidates: 1).first?.rect
     }
 }

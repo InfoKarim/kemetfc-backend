@@ -100,8 +100,17 @@ public final class TrackingCoordinator: ObservableObject {
     private var isInferring = false
     private var inferenceTimestamps: [CFTimeInterval] = []
 
-    public var framingPadding: Double = 0.08
-    public var leadRoomMaxOffsetFraction: Double = 0.15
+    /// The production framing path (dead zone + damping via FramingCalculator.dampedCorrection,
+    /// hold-while-unobserved, confidence-aware ball influence). See FramingPipeline.
+    private var framingPipeline = FramingPipeline()
+    public var framingPadding: Double {
+        get { framingPipeline.padding }
+        set { framingPipeline.padding = newValue }
+    }
+    public var leadRoomMaxOffsetFraction: Double {
+        get { framingPipeline.leadRoomMaxOffsetFraction }
+        set { framingPipeline.leadRoomMaxOffsetFraction = newValue }
+    }
 
     public init(
         gimbalController: GimbalController,
@@ -175,6 +184,7 @@ public final class TrackingCoordinator: ObservableObject {
 
         let signature = Self.appearanceSignature(for: chosen.boundingBox, in: pixelBuffer)
         playerTracker = PlayerTracker(targetTrackId: 1, initialBoundingBox: chosen.boundingBox, appearance: signature)
+        framingPipeline.reset()
         playerState = .locked
         telemetryUploader.recordEvent(type: "player_locked", details: ["target_track_id": 1])
     }
@@ -257,8 +267,8 @@ public final class TrackingCoordinator: ObservableObject {
 
     private struct InferenceResult {
         var people: [PersonDetection]
-        var ball: BallDetection?
-        var pose: [PoseKeypoint]
+        var balls: [BallDetection]
+        var poses: [[PoseKeypoint]]
         var timing: StageTiming
     }
 
@@ -280,8 +290,8 @@ public final class TrackingCoordinator: ObservableObject {
     nonisolated private func runInference(pixelBuffer: CVPixelBuffer) async -> InferenceResult {
         let stageStart = CACurrentMediaTime()
         var people: [PersonDetection] = []
-        var ball: BallDetection?
-        var pose: [PoseKeypoint] = []
+        var balls: [BallDetection] = []
+        var poses: [[PoseKeypoint]] = []
 
         let playerStart = CACurrentMediaTime()
         do {
@@ -294,9 +304,7 @@ public final class TrackingCoordinator: ObservableObject {
         let playerEnd = CACurrentMediaTime()
 
         do {
-            if let detection = try ballDetector.detectBall(in: pixelBuffer) {
-                ball = detection
-            }
+            balls = try ballDetector.detectBallCandidates(in: pixelBuffer)
         } catch {
             // Ball-model failure: continue recording and player
             // tracking regardless (spec section 24).
@@ -304,7 +312,7 @@ public final class TrackingCoordinator: ObservableObject {
         let ballEnd = CACurrentMediaTime()
 
         do {
-            pose = try playerDetector.detectPose(in: pixelBuffer, orientation: .right)
+            poses = try playerDetector.detectPoses(in: pixelBuffer, orientation: .right)
         } catch {
             // Pose-model failure: mark pose metrics unavailable for this
             // sample, never fail the whole frame (spec section 24).
@@ -318,7 +326,7 @@ public final class TrackingCoordinator: ObservableObject {
             totalMs: (poseEnd - stageStart) * 1000
         )
 
-        return InferenceResult(people: people, ball: ball, pose: pose, timing: timing)
+        return InferenceResult(people: people, balls: balls, poses: poses, timing: timing)
     }
 
     private func apply(result: InferenceResult, pixelBuffer: CVPixelBuffer, captureDevice: AVCaptureDevice, sessionElapsedSeconds: Double) {
@@ -338,7 +346,7 @@ public final class TrackingCoordinator: ObservableObject {
         let appearanceSignatures = result.people.map { Self.appearanceSignature(for: $0.boundingBox, in: pixelBuffer) }
 
         playerTracker?.update(detections: result.people, appearanceSignatures: appearanceSignatures, at: sessionElapsedSeconds)
-        ballTracker.update(detections: result.ball.map { [$0] } ?? [], at: sessionElapsedSeconds)
+        ballTracker.update(detections: result.balls, at: sessionElapsedSeconds)
 
         playerState = playerTracker?.state ?? .lost
         ballState = ballTracker.state
@@ -348,9 +356,36 @@ public final class TrackingCoordinator: ObservableObject {
 
         if playerState == .lost {
             gimbalController.pauseMotorCorrection()
+            framingPipeline.reset()
         }
 
-        let framingTarget = computeFramingTarget()
+        // ONE place decides what this frame's telemetry may claim: a player/ball
+        // measurement only when it was observed THIS frame, the ball's real track
+        // id, and a pose only if it geometrically belongs to the selected player
+        // (PoseAssociator) — otherwise nil, never someone else's pose.
+        let frame = FrameTelemetryAssembler.assemble(
+            playerState: playerTracker?.state,
+            playerBox: playerTracker?.currentBoundingBox,
+            playerConfidence: playerTracker?.currentConfidence ?? 0,
+            playerTargetTrackId: playerTracker?.targetTrackId,
+            playerMatchWasAmbiguous: playerTracker?.lastMatchWasAmbiguous ?? false,
+            ballBox: ballTracker.currentBoundingBox,
+            ballConfidence: ballTracker.currentConfidence,
+            ballTrackId: ballTracker.currentTrackId,
+            poses: result.poses,
+            personBoxes: result.people.map(\.boundingBox),
+            mode: mode
+        )
+
+        let playerObserved = frame.playerBox != nil
+        let framingTarget = framingPipeline.nextTarget(
+            mode: mode,
+            playerBox: playerTracker?.currentBoundingBox,
+            playerObserved: playerObserved,
+            ballBox: ballTracker.heldBoundingBox(at: sessionElapsedSeconds),
+            ballConfidence: ballTracker.lastObservedConfidence,
+            playerVelocity: playerTracker?.currentVelocity ?? .init(x: 0, y: 0)
+        )
         lastFramingTarget = framingTarget
 
         if let framingTarget, playerState != .lost {
@@ -364,53 +399,18 @@ public final class TrackingCoordinator: ObservableObject {
 
         telemetryUploader.recordSample(
             tSeconds: sessionElapsedSeconds,
-            playerBox: playerTracker?.currentBoundingBox,
-            playerConfidence: playerTracker?.currentConfidence,
-            playerTrackId: playerTracker?.targetTrackId,
-            ballBox: ballTracker.currentBoundingBox,
-            ballConfidence: ballTracker.currentConfidence,
-            poseKeypoints: result.pose,
+            playerBox: frame.playerBox,
+            playerConfidence: frame.playerConfidence,
+            playerTrackId: frame.playerTrackId,
+            ballBox: frame.ballBox,
+            ballConfidence: frame.ballConfidence,
+            ballTrackId: frame.ballTrackId,
+            poseKeypoints: frame.poseKeypoints,
             gimbalState: "tracking_active",
-            trackingMode: mode.rawValue,
-            trackingStatus: playerState.rawValue
+            trackingMode: frame.trackingMode,
+            trackingStatus: frame.trackingStatus,
+            identityAmbiguous: frame.identityAmbiguous
         )
-    }
-
-    /// The framing-target selection per spec section 9: PLAYER_LOCK
-    /// frames the player only; BALL_TRACK frames the ball only;
-    /// SMART_SOCCER combines both via FramingCalculator, with lead room
-    /// applied in the player's direction of travel (spec section 15).
-    private func computeFramingTarget() -> NormalizedRect? {
-        let playerBox = playerTracker?.currentBoundingBox
-        let ballBox = ballTracker.currentBoundingBox
-
-        let raw: NormalizedRect?
-        switch mode {
-        case .playerLock:
-            raw = playerBox
-        case .ballTrack:
-            raw = ballBox
-        case .smartSoccer:
-            // Ball loss never drops the player (spec section 14) — a
-            // nil ballBox here just means combinedFramingTarget falls
-            // back to the player box alone.
-            raw = FramingCalculator.combinedFramingTarget(player: playerBox, ball: ballBox, padding: framingPadding)
-        }
-
-        guard let target = raw else { return nil }
-        // playerTracker.currentVelocity — NOT predictedCenter(dt:),
-        // which returns a POSITION. An earlier draft passed the wrong
-        // one here; caught before this was ever the "verified" claim
-        // extended to this file (see TrackTypes.swift header — this
-        // whole file is unverified source, but this specific mistake is
-        // exactly the kind that would have shipped a silently-wrong
-        // lead-room direction if not caught by review).
-        let withLeadRoom = FramingCalculator.applyLeadRoom(
-            to: target,
-            playerVelocity: playerTracker?.currentVelocity ?? .init(x: 0, y: 0),
-            maxOffsetFraction: leadRoomMaxOffsetFraction
-        )
-        return FramingCalculator.enforceMinimumFrameSize(withLeadRoom)
     }
 
     private func recordInferenceTimestamp(_ time: CFTimeInterval) {

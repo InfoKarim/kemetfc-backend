@@ -61,7 +61,7 @@ public final class DockKitManager: ObservableObject {
 
     private var stateChangeTask: Task<Void, Never>?
     private var batteryTask: Task<Void, Never>?
-    private var reconnectAttempt = 0
+    private var reconnectTask: Task<Void, Never>?
 
     public init() {}
 
@@ -93,6 +93,8 @@ public final class DockKitManager: ObservableObject {
         stateChangeTask = nil
         batteryTask?.cancel()
         batteryTask = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
     }
 
     private func handle(stateChange: DockAccessory.StateChange) async {
@@ -130,7 +132,8 @@ public final class DockKitManager: ObservableObject {
             connectedAccessory = accessory
             connectionState = .connected
             lastError = nil
-            reconnectAttempt = 0
+            reconnectTask?.cancel()   // the gimbal is back: end any reconnect sequence
+            reconnectTask = nil
             firmwareVersion = accessory.firmwareVersion
             observeBattery(for: accessory)
             log.info("Dock accessory docked: \(accessory.identifier.name, privacy: .public)")
@@ -153,20 +156,29 @@ public final class DockKitManager: ObservableObject {
         }
     }
 
-    /// A brief grace period before declaring the gimbal truly gone — a
-    /// physical gimbal can report a momentary undock during vibration/
-    /// bump without the coach actually having removed the phone.
+    /// Bounded, cancellation-safe reconnect (see GimbalReconnect for why this is a
+    /// passive, windowed wait and what the old code got wrong). A new undock
+    /// restarts the sequence; `.docked` and stopMonitoring() cancel it.
     private func attemptReconnect() {
-        reconnectAttempt += 1
-        guard reconnectAttempt <= 3 else {
-            connectionState = .disconnected
-            lastError = "Gimbal not found after 3 reconnect attempts"
-            return
-        }
-        Task {
-            try? await Task.sleep(for: .seconds(2))
-            if connectedAccessory == nil && connectionState == .reconnecting {
-                connectionState = .disconnected
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            let outcome = await GimbalReconnect.run(
+                isReconnected: { [weak self] in await MainActor.run { self?.connectedAccessory != nil } },
+                onAttempt: { [weak self] attempt in
+                    await MainActor.run { self?.log.info("Gimbal reconnect window \(attempt) started") }
+                }
+            )
+            guard let self, !Task.isCancelled else { return }
+            switch outcome {
+            case .reconnected(let attempt):
+                self.log.info("Gimbal reconnected during window \(attempt)")
+            case .exhausted(let attempts):
+                if self.connectedAccessory == nil {
+                    self.connectionState = .disconnected
+                    self.lastError = "Gimbal not found after \(attempts) reconnect attempts"
+                }
+            case .cancelled:
+                break
             }
         }
     }

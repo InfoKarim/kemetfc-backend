@@ -85,34 +85,26 @@ public final class PlayerDetector {
         }
     }
 
-    /// Body-pose keypoints for the region roughly matching the
-    /// currently-locked player's bounding box — run only on the locked
-    /// player, not on every person in frame, to keep pose inference
-    /// cheap (spec section 26).
-    public func detectPose(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) throws -> [PoseKeypoint] {
+    /// EVERY pose Vision finds in the frame, in Vision's own (arbitrary) order,
+    /// as top-left-origin normalized keypoints. Which of them — if any — belongs
+    /// to the coach-selected player is decided by PoseAssociator; the order here
+    /// carries no meaning. (This replaces detectPose(in:), which returned only
+    /// `results.first` and let the wrong child's pose reach the target's telemetry.)
+    public func detectPoses(in pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) throws -> [[PoseKeypoint]] {
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation, options: [:])
         try handler.perform([bodyPoseRequest])
 
-        guard let observation = bodyPoseRequest.results?.first else { return [] }
-        // recognizedPoints(_:) takes JointsGroupName positionally, not a
-        // keyword argument — verified against Apple's live docs.
-        let points = try observation.recognizedPoints(.all)
-
-        return Self.trackedJointNames.compactMap { jointName in
-            guard let point = points[jointName], point.confidence > 0.1 else { return nil }
-            return PoseKeypoint(
-                // JointName.rawValue is a VNRecognizedPointKey, itself a
-                // thin String wrapper (confirmed: JointName.init(rawValue:
-                // VNRecognizedPointKey)) — this is the one API chain in
-                // this module verified two levels deep rather than
-                // directly against a documented .rawValue String type;
-                // double-check this line first if pose keypoint names
-                // come back wrong when this is actually compiled.
-                name: jointName.rawValue.rawValue,
-                x: point.location.x,
-                y: 1 - point.location.y, // Vision is bottom-left origin
-                confidence: Double(point.confidence)
-            )
+        return try (bodyPoseRequest.results ?? []).map { observation in
+            let points = try observation.recognizedPoints(.all)
+            return Self.trackedJointNames.compactMap { jointName in
+                guard let point = points[jointName], point.confidence > 0.1 else { return nil }
+                return PoseKeypoint(
+                    name: jointName.rawValue.rawValue,
+                    x: point.location.x,
+                    y: 1 - point.location.y, // Vision is bottom-left origin
+                    confidence: Double(point.confidence)
+                )
+            }
         }
     }
 }

@@ -95,7 +95,7 @@ public final class PlayerTracker: ObservableObject {
     /// algorithm changes materially (e.g. this Phase 2 two-region
     /// appearance + dynamic reweighting rewrite), so past sessions stay
     /// attributable to the exact algorithm that produced them.
-    public static let algorithmVersion = "player-tracker-appearance-v2-dynamic-reweight"
+    public static let algorithmVersion = "player-tracker-v4-motion-reacquisition"
 
     @Published public private(set) var state: PlayerTrackState = .lost
     @Published public private(set) var currentBoundingBox: NormalizedRect?
@@ -146,12 +146,95 @@ public final class PlayerTracker: ObservableObject {
     /// farther person), independent of position/appearance.
     private let maxPlausibleAreaRatioChange = 1.8
 
+    // Identity-safety tuning (v3): losing the target briefly is always
+    // preferred over committing to another child. Documented, not learned.
+    /// A detection below this is not a candidate at all — a 0.15-confidence
+    /// ghost near the predicted spot must never become the selected player.
+    private let minDetectionConfidence = 0.30
+    /// Another person within this many body-widths of the target is a
+    /// "rival": the tracker can no longer prove identity by proximity alone
+    /// if the rival (or the target) then drops out of the detections.
+    private let contestRadiusScale = 1.5
+    /// Two people closer than this many body-widths, with indistinguishable
+    /// appearance, cannot be told apart by position — flagged ambiguous even
+    /// when one scores slightly higher.
+    private let confusableDistanceScale = 0.5
+    private let appearanceDiscriminationGap = 0.15
+    /// A committed-while-ambiguous match must at least be an unbroken
+    /// frame-to-frame continuation of the previous box.
+    private let ambiguousCommitMinIoU = 0.5
+    /// After a contested frame, a lone surviving detection is accepted only
+    /// if it is at least this much nearer the target's last position than
+    /// the rival's (ratio of distances).
+    private let survivorNearnessRatio = 0.5
+
+    // Motion prediction + safe reacquisition tuning (v4). Prediction is
+    // SEARCH GUIDANCE ONLY: it decides where to look and how far to look,
+    // never whether a candidate IS the target.
+    /// How far the constant-velocity prediction is trusted, in seconds since
+    /// the last trusted observation — the existing temporary-loss window.
+    /// Past it the predicted position stops advancing (never extrapolated
+    /// indefinitely) and identity trust does not grow.
+    private var maxPredictionHorizonSeconds: TimeInterval { maxTemporaryLossSeconds }
+    /// While the target is missing, a candidate must fall within this many
+    /// body-widths of the predicted position...
+    private let predictionBaseRadiusScale = 0.5
+    /// ...plus this many body-widths per second of elapsed time (capped at
+    /// the horizon): the search area grows carefully as the prediction ages.
+    private let predictionRadiusGrowthScale = 0.25
+    /// A detection must be at least this confident to be a REACQUISITION
+    /// candidate (stricter than the general floor above): re-establishing a
+    /// lost identity needs a clearer observation than following it.
+    private let reacquisitionMinConfidence = 0.50
+    /// Minimum composite score to reacquire (ordinary tracking only needs 0.3).
+    private let reacquisitionMinScore = 0.55
+    /// A reacquisition candidate must persist and move consistently with the
+    /// target's last trusted velocity for this many processed frames before
+    /// it is committed — one frame on the predicted path is not identity.
+    private let reacquisitionConfirmFrames = 3
+    private let reacquisitionProbationMaxGapSeconds: TimeInterval = 0.5
+    /// Allowed difference between a candidate's own velocity and the last
+    /// trusted velocity: this many body-widths/second plus this fraction
+    /// of the trusted speed.
+    private let velocityToleranceScale = 1.5
+    private let velocityToleranceFraction = 0.3
+    /// Exponential smoothing of the trusted velocity (weight of the newest sample).
+    private let velocitySmoothing = 0.3
+
+    /// The nearest other person within contestRadius at the last commit,
+    /// or nil if the target was alone. Non-nil while state is temporarily
+    /// lost / searching means the loss happened in a contested situation.
+    private var rivalBox: NormalizedRect?
+    /// A cheap constant-velocity estimate of that rival, from consecutive
+    /// commits only (nil until two samples exist) — negative evidence:
+    /// "this candidate fits the rival better than the target".
+    private var rivalVelocity: NormalizedPoint?
+    private var rivalSeenAt: TimeInterval?
+    /// Time of the last TRUSTED observation (a committed detection).
+    private var lastCommitTime: TimeInterval?
+    /// Velocity smoothed from committed, unambiguous, frame-to-frame
+    /// observations only. Never fed by rejected, ambiguous, low-confidence
+    /// or predicted positions. Drives the search prediction while lost.
+    private var trustedVelocity: NormalizedPoint?
+
+    private struct PendingReacquisition {
+        var startCenter: NormalizedPoint
+        var startTime: TimeInterval
+        var lastTime: TimeInterval
+        var count: Int
+    }
+    private var pendingReacquisition: PendingReacquisition?
+    /// Width of the box the coach locked — a stable scale for the radii
+    /// above even when a partially occluded box shrinks.
+    private var referenceWidth: Double
+
     public init(targetTrackId: Int, initialBoundingBox: NormalizedRect, appearance: AppearanceSignature) {
         self.targetTrackId = targetTrackId
         self.currentBoundingBox = initialBoundingBox
         self.appearance = appearance
         self.lastKnownCenter = initialBoundingBox.center
         self.lastKnownArea = initialBoundingBox.width * initialBoundingBox.height
+        self.referenceWidth = initialBoundingBox.width
         self.state = .locked
     }
 
@@ -173,21 +256,38 @@ public final class PlayerTracker: ObservableObject {
         defer { lastUpdateTime = time }
         let dt = lastUpdateTime > 0 ? max(time - lastUpdateTime, 1.0 / 120.0) : 0
 
-        let predictedCenter = predictedCenter(dt: dt)
+        // v4: while the target is missing, the prediction advances with the
+        // time since the LAST TRUSTED observation (not one frame's dt), and
+        // the search radius is a bounded, slowly growing function of that
+        // same elapsed time. The predicted position is never stored as an
+        // observation — lastKnownCenter/currentBoundingBox only change in commit().
+        let isMissing = state == .temporarilyLost || state == .searching
+        let elapsed = max(time - (lastCommitTime ?? time), 0)
+        let predictedCenter = predictedCenter(dt: isMissing ? elapsed : dt)
+        let searchRadius = isMissing ? reacquisitionRadius(elapsed: elapsed) : plausibleStepDistance(dt: dt)
+        let minimumConfidence = isMissing ? reacquisitionMinConfidence : minDetectionConfidence
+        // Where the last trusted box would be if the target kept moving
+        // (search guidance for IoU only — not an observation).
+        let referenceBox: NormalizedRect? = currentBoundingBox.map { box in
+            isMissing
+                ? NormalizedRect(x: predictedCenter.x - box.width / 2, y: predictedCenter.y - box.height / 2, width: box.width, height: box.height)
+                : box
+        }
         var candidates: [(index: Int, score: Double, appearanceScore: Double)] = []
 
         for (index, detection) in detections.enumerated() {
             guard index < appearanceSignatures.count else { continue }
+            guard detection.confidence >= minimumConfidence else { continue }
             let candidateCenter = detection.boundingBox.center
             let distance = predictedCenter.distance(to: candidateCenter)
             // A candidate far outside plausible motion for this dt is
             // never matched, however good its IoU looks in isolation —
             // this is what stops an instantaneous "teleport" to a
             // different, similarly-dressed player crossing through.
-            let maxPlausibleDistance = 0.05 + dt * 1.2
+            let maxPlausibleDistance = searchRadius
             guard distance <= maxPlausibleDistance else { continue }
 
-            let iou = (currentBoundingBox ?? detection.boundingBox).iou(with: detection.boundingBox)
+            let iou = (referenceBox ?? detection.boundingBox).iou(with: detection.boundingBox)
             let appearanceScore = appearance?.similarity(to: appearanceSignatures[index]) ?? 0.5
             let motionScore = 1 - min(distance / maxPlausibleDistance, 1)
             let scaleScore = scaleContinuityScore(for: detection.boundingBox)
@@ -206,6 +306,7 @@ public final class PlayerTracker: ObservableObject {
 
         guard let best = candidates.first, best.score > 0.3 else {
             lastMatchWasAmbiguous = false
+            pendingReacquisition = nil
             handleMiss(at: time)
             return
         }
@@ -215,23 +316,215 @@ public final class PlayerTracker: ObservableObject {
         // — require a HIGHER bar to accept the top candidate than usual,
         // and if it doesn't clear that bar, prefer a miss (which can
         // still recover via TEMPORARILY_LOST/SEARCHING) over guessing.
-        let isAmbiguous = candidates.count > 1 && (candidates[0].score - candidates[1].score) < ambiguityScoreGap
+        let scoreAmbiguous = candidates.count > 1 && (candidates[0].score - candidates[1].score) < ambiguityScoreGap
+        // v3: a near-tie in SCORE is not the only kind of ambiguity — two
+        // same-looking people standing within half a body-width of each
+        // other cannot be separated by position, however the scores fall.
+        let isAmbiguous = scoreAmbiguous || hasConfusableNeighbor(
+            of: best.index, detections: detections, appearanceSignatures: appearanceSignatures
+        )
         lastMatchWasAmbiguous = isAmbiguous
         let acceptanceThreshold = isAmbiguous ? 0.62 : 0.3
         guard best.score >= acceptanceThreshold else {
+            pendingReacquisition = nil
             handleMiss(at: time)
             return
         }
 
         let matched = detections[best.index]
-        if let iouOk = currentBoundingBox?.iou(with: matched.boundingBox), iouOk < iouMatchThreshold, best.score < 0.55 {
-            // Weak match — treat as a miss rather than risk drifting
-            // onto a neighboring player. Conservative on purpose.
+
+        if isAmbiguous {
+            // Identity is not provable this frame. Never (re)acquire on an
+            // ambiguous frame; an already-locked track may only continue
+            // if this is an unbroken continuation of the previous box.
+            let continuous = (currentBoundingBox?.iou(with: matched.boundingBox) ?? 0) >= ambiguousCommitMinIoU
+            if isMissing || !continuous {
+                pendingReacquisition = nil
+                handleMiss(at: time)
+                return
+            }
+        }
+
+        if isMissing {
+            // Reacquisition needs stronger evidence than ordinary tracking
+            // (see reacquisitionVerdict). Prediction only chose WHERE to look.
+            switch reacquisitionVerdict(
+                for: matched, score: best.score, hasCompetitor: candidates.count > 1, elapsed: elapsed, at: time
+            ) {
+            case .accept:
+                break
+            case .confirming:
+                handleMiss(at: time)   // still not locked: the timers keep running
+                return
+            case .refuse:
+                pendingReacquisition = nil
+                handleMiss(at: time)
+                return
+            case .refuseAmbiguous:
+                lastMatchWasAmbiguous = true
+                pendingReacquisition = nil
+                handleMiss(at: time)
+                return
+            }
+        } else if survivorIsUnverifiable(matchedIndex: best.index, detections: detections) {
+            // The person who was next to the target has just vanished from
+            // the detections, and the lone survivor is not clearly the
+            // target — it may be the rival. Lose the target, don't guess.
+            lastMatchWasAmbiguous = true
             handleMiss(at: time)
             return
         }
 
-        commit(detection: matched, appearance: appearanceSignatures[best.index], at: time, dt: dt)
+        if let iouOk = referenceBox?.iou(with: matched.boundingBox), iouOk < iouMatchThreshold, best.score < 0.55 {
+            // Weak match — treat as a miss rather than risk drifting
+            // onto a neighboring player. Conservative on purpose.
+            pendingReacquisition = nil
+            handleMiss(at: time)
+            return
+        }
+
+        commit(
+            detection: matched, appearance: appearanceSignatures[best.index], at: time, dt: dt,
+            rival: nearestRival(of: best.index, detections: detections),
+            isReacquisition: isMissing
+        )
+    }
+
+    // MARK: - Motion prediction + reacquisition (v4)
+
+    /// The per-frame plausibility gate used for ordinary (not-missing) tracking.
+    private func plausibleStepDistance(dt: TimeInterval) -> Double { 0.05 + dt * 1.2 }
+
+    /// Body-relative search radius while the target is missing: a base
+    /// tolerance that grows slowly with the (horizon-capped) elapsed time.
+    /// Growth widens WHERE we look; it never lowers the evidence required.
+    private func reacquisitionRadius(elapsed: TimeInterval) -> Double {
+        let width = max(referenceWidth, currentBoundingBox?.width ?? 0)
+        let cappedElapsed = min(elapsed, maxPredictionHorizonSeconds)
+        return width * (predictionBaseRadiusScale + predictionRadiusGrowthScale * cappedElapsed)
+    }
+
+    /// Past the horizon the prediction is only meaningful for a target that
+    /// was (nearly) stationary: a moving target's position after this long
+    /// is unknowable, so proximity to a stale extrapolation proves nothing.
+    private func predictionIsTrustworthy(elapsed: TimeInterval) -> Bool {
+        if elapsed <= maxPredictionHorizonSeconds { return true }
+        let speed = trustedVelocity.map { ($0.x * $0.x + $0.y * $0.y).squareRoot() } ?? 0
+        let width = max(referenceWidth, currentBoundingBox?.width ?? 0)
+        return speed * maxPredictionHorizonSeconds <= predictionBaseRadiusScale * width
+    }
+
+    private enum ReacquisitionVerdict { case accept, confirming, refuse, refuseAmbiguous }
+
+    /// Everything a returning candidate must satisfy before it becomes the
+    /// selected player again. Prediction alone never suffices: it only got
+    /// the candidate INTO this function.
+    private func reacquisitionVerdict(
+        for matched: PersonDetection, score: Double, hasCompetitor: Bool, elapsed: TimeInterval, at time: TimeInterval
+    ) -> ReacquisitionVerdict {
+        let center = matched.boundingBox.center
+        // Bounded horizon: an aged prediction of a moving target is not evidence.
+        guard predictionIsTrustworthy(elapsed: elapsed) else { return .refuse }
+        // Competition: another plausible candidate near the predicted spot
+        // means position cannot say which one is the target.
+        guard !hasCompetitor else { return .refuseAmbiguous }
+        guard score >= reacquisitionMinScore else { return .refuse }
+
+        // Rival history (Fix #1): a loss that began next to another person is
+        // recovered only when the candidate fits the target's trajectory
+        // clearly better than the rival's — otherwise it may BE the rival.
+        if let rival = rivalBox {
+            guard let rivalV = rivalVelocity, let seenAt = rivalSeenAt else { return .refuseAmbiguous }
+            let rivalElapsed = min(max(time - seenAt, 0), maxPredictionHorizonSeconds)
+            let rivalPredicted = NormalizedPoint(
+                x: rival.center.x + rivalV.x * rivalElapsed, y: rival.center.y + rivalV.y * rivalElapsed
+            )
+            let targetPredicted = predictedCenter(dt: elapsed)
+            guard center.distance(to: targetPredicted) < survivorNearnessRatio * center.distance(to: rivalPredicted) else {
+                return .refuseAmbiguous
+            }
+        }
+
+        // Probation: the candidate must persist for reacquisitionConfirmFrames
+        // consecutive frames AND move like the target did (trusted velocity).
+        // A stranger who merely stands near the predicted spot fails the second test.
+        guard var pending = pendingReacquisition, time - pending.lastTime <= reacquisitionProbationMaxGapSeconds,
+              time > pending.lastTime else {
+            pendingReacquisition = PendingReacquisition(startCenter: center, startTime: time, lastTime: time, count: 1)
+            return .confirming
+        }
+        let span = time - pending.startTime
+        let candidateVelocity = NormalizedPoint(
+            x: (center.x - pending.startCenter.x) / span, y: (center.y - pending.startCenter.y) / span
+        )
+        let trusted = trustedVelocity ?? NormalizedPoint(x: 0, y: 0)
+        let trustedSpeed = (trusted.x * trusted.x + trusted.y * trusted.y).squareRoot()
+        let width = max(referenceWidth, currentBoundingBox?.width ?? 0)
+        let tolerance = velocityToleranceScale * width + velocityToleranceFraction * trustedSpeed
+        pending.count += 1
+        pending.lastTime = time
+        if pending.count >= reacquisitionConfirmFrames {
+            guard candidateVelocity.distance(to: trusted) <= tolerance else {
+                pendingReacquisition = PendingReacquisition(startCenter: center, startTime: time, lastTime: time, count: 1)
+                return .refuse
+            }
+            pendingReacquisition = nil
+            return .accept
+        }
+        pendingReacquisition = pending
+        return .confirming
+    }
+
+    // MARK: - Identity-safety helpers (v3)
+
+    private func contestRadius(forWidth width: Double) -> Double {
+        contestRadiusScale * max(referenceWidth, width)
+    }
+
+    /// Another confident detection standing near enough to the chosen one,
+    /// looking similar enough to the locked player, that position cannot
+    /// separate them.
+    private func hasConfusableNeighbor(
+        of index: Int, detections: [PersonDetection], appearanceSignatures: [AppearanceSignature]
+    ) -> Bool {
+        let chosen = detections[index].boundingBox
+        let chosenSimilarity = appearance?.similarity(to: appearanceSignatures[index]) ?? 0.5
+        for (i, other) in detections.enumerated() where i != index && i < appearanceSignatures.count {
+            guard other.confidence >= minDetectionConfidence else { continue }
+            guard chosen.center.distance(to: other.boundingBox.center) <= confusableDistanceScale * chosen.width else { continue }
+            let otherSimilarity = appearance?.similarity(to: appearanceSignatures[i]) ?? 0.5
+            if abs(chosenSimilarity - otherSimilarity) < appearanceDiscriminationGap { return true }
+        }
+        return false
+    }
+
+    /// The nearest other confident person within contestRadius of the
+    /// chosen detection, remembered so a later frame can tell whether the
+    /// person it now sees is the target or that rival.
+    private func nearestRival(of index: Int, detections: [PersonDetection]) -> NormalizedRect? {
+        let chosen = detections[index].boundingBox
+        let radius = contestRadius(forWidth: chosen.width)
+        return detections.enumerated()
+            .filter { $0.offset != index && $0.element.confidence >= minDetectionConfidence
+                && chosen.center.distance(to: $0.element.boundingBox.center) <= radius }
+            .min { chosen.center.distance(to: $0.element.boundingBox.center) < chosen.center.distance(to: $1.element.boundingBox.center) }?
+            .element.boundingBox
+    }
+
+    /// Locked/reacquired only: true when a rival was adjacent at the last
+    /// commit, no other detection is still near that rival (so it — or the
+    /// target — has dropped out), and the survivor is not clearly nearer
+    /// the target's last position than the rival's.
+    private func survivorIsUnverifiable(matchedIndex: Int, detections: [PersonDetection]) -> Bool {
+        guard let rival = rivalBox, let targetCenter = lastKnownCenter else { return false }
+        let radius = contestRadius(forWidth: rival.width)
+        let rivalStillVisible = detections.enumerated().contains { i, d in
+            i != matchedIndex && d.confidence >= minDetectionConfidence
+                && d.boundingBox.center.distance(to: rival.center) <= radius
+        }
+        if rivalStillVisible { return false }
+        let survivor = detections[matchedIndex].boundingBox.center
+        return !(survivor.distance(to: targetCenter) < survivorNearnessRatio * survivor.distance(to: rival.center))
     }
 
     /// Documented weighting (spec section 9: "Document weights and
@@ -265,7 +558,7 @@ public final class PlayerTracker: ObservableObject {
     private func appearanceIsDiscriminative(_ scores: [Double]) -> Bool {
         guard scores.count >= 2 else { return true }
         let sorted = scores.sorted(by: >)
-        return (sorted[0] - sorted[1]) >= 0.15
+        return (sorted[0] - sorted[1]) >= appearanceDiscriminationGap
     }
 
     private func scaleContinuityScore(for box: NormalizedRect) -> Double {
@@ -277,14 +570,64 @@ public final class PlayerTracker: ObservableObject {
         return 1 - (ratio - 1) / (maxPlausibleAreaRatioChange - 1)
     }
 
-    private func commit(detection: PersonDetection, appearance newAppearance: AppearanceSignature, at time: TimeInterval, dt: TimeInterval) {
-        if let previousCenter = lastKnownCenter, dt > 0 {
-            let newCenter = detection.boundingBox.center
-            currentVelocity = NormalizedPoint(
-                x: (newCenter.x - previousCenter.x) / dt,
-                y: (newCenter.y - previousCenter.y) / dt
-            )
+    private func commit(
+        detection: PersonDetection, appearance newAppearance: AppearanceSignature, at time: TimeInterval, dt: TimeInterval,
+        rival: NormalizedRect?, isReacquisition: Bool
+    ) {
+        let newCenter = detection.boundingBox.center
+        // Velocity is measured over the time since the previous TRUSTED
+        // observation. (Before v4 this divided a possibly multi-frame
+        // displacement by a single frame's dt, spiking the velocity right
+        // after any reacquisition.) In ordinary tracking the gap equals dt,
+        // so the published value is unchanged there.
+        if let previousCenter = lastKnownCenter, let previousTime = lastCommitTime, time - previousTime > 0 {
+            let gap = time - previousTime
+            let measured = NormalizedPoint(x: (newCenter.x - previousCenter.x) / gap, y: (newCenter.y - previousCenter.y) / gap)
+            currentVelocity = measured
+            // The trusted (prediction) velocity is fed only by unambiguous,
+            // frame-to-frame observations — never by an ambiguous match or
+            // by the multi-frame jump of a reacquisition.
+            if !lastMatchWasAmbiguous && !isReacquisition {
+                if let existing = trustedVelocity {
+                    trustedVelocity = NormalizedPoint(
+                        x: existing.x * (1 - velocitySmoothing) + measured.x * velocitySmoothing,
+                        y: existing.y * (1 - velocitySmoothing) + measured.y * velocitySmoothing
+                    )
+                } else {
+                    trustedVelocity = measured
+                }
+            }
         }
+
+        // Rival memory: position now, and velocity when the same rival was
+        // seen at the previous commit (plausible step) — from existing
+        // detections only, no separate tracker.
+        if let newRival = rival {
+            if let previous = rivalBox, let previousAt = rivalSeenAt, time - previousAt > 0,
+               newRival.center.distance(to: previous.center) <= plausibleStepDistance(dt: time - previousAt) {
+                let gap = time - previousAt
+                let measured = NormalizedPoint(
+                    x: (newRival.center.x - previous.center.x) / gap, y: (newRival.center.y - previous.center.y) / gap
+                )
+                if let existing = rivalVelocity {
+                    rivalVelocity = NormalizedPoint(
+                        x: existing.x * (1 - velocitySmoothing) + measured.x * velocitySmoothing,
+                        y: existing.y * (1 - velocitySmoothing) + measured.y * velocitySmoothing
+                    )
+                } else {
+                    rivalVelocity = measured
+                }
+            } else {
+                rivalVelocity = nil
+            }
+            rivalSeenAt = time
+        } else {
+            rivalVelocity = nil
+            rivalSeenAt = nil
+        }
+        rivalBox = rival
+        lastCommitTime = time
+        pendingReacquisition = nil
         lastKnownCenter = detection.boundingBox.center
         lastKnownArea = detection.boundingBox.width * detection.boundingBox.height
         currentBoundingBox = detection.boundingBox
@@ -347,17 +690,20 @@ public final class PlayerTracker: ObservableObject {
         }
     }
 
-    /// Dead-reckoning position estimate used both for re-acquisition
-    /// matching above and, during TEMPORARILY_LOST, to keep the gimbal
-    /// gently following the player's last known heading rather than
-    /// freezing or searching wildly (spec section 13: "During short
-    /// occlusions, use predicted motion").
+    /// Dead-reckoning SEARCH position: where the target would be `dt`
+    /// seconds after its last trusted observation at its last trusted
+    /// velocity, with `dt` capped at the prediction horizon. While the
+    /// target is missing, callers pass the time since the last trusted
+    /// observation (not one frame's dt). It is search guidance — never
+    /// stored as, or reported as, a measured position.
     public func predictedCenter(dt: TimeInterval) -> NormalizedPoint {
         guard let center = lastKnownCenter else { return NormalizedPoint(x: 0.5, y: 0.5) }
         guard state == .temporarilyLost || state == .searching else { return center }
+        let velocity = trustedVelocity ?? NormalizedPoint(x: 0, y: 0)
+        let horizon = min(max(dt, 0), maxPredictionHorizonSeconds)
         return NormalizedPoint(
-            x: center.x + currentVelocity.x * dt,
-            y: center.y + currentVelocity.y * dt
+            x: center.x + velocity.x * horizon,
+            y: center.y + velocity.y * horizon
         )
     }
 
@@ -368,6 +714,13 @@ public final class PlayerTracker: ObservableObject {
         appearance = newAppearance
         lastKnownCenter = boundingBox.center
         lastKnownArea = boundingBox.width * boundingBox.height
+        referenceWidth = boundingBox.width
+        rivalBox = nil
+        rivalVelocity = nil
+        rivalSeenAt = nil
+        lastCommitTime = nil
+        trustedVelocity = nil
+        pendingReacquisition = nil
         currentVelocity = .init(x: 0, y: 0)
         consecutiveMisses = 0
         lostSince = nil

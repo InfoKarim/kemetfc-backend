@@ -66,6 +66,17 @@ public protocol BallDetecting {
     var ballModelStatus: String { get }
 
     func detectBall(in pixelBuffer: CVPixelBuffer) throws -> BallDetection?
+
+    /// Every plausible ball in the frame, so BallTracker can associate them over
+    /// time instead of the detector prematurely choosing one. Detectors that only
+    /// ever produce one candidate inherit the default below.
+    func detectBallCandidates(in pixelBuffer: CVPixelBuffer) throws -> [BallDetection]
+}
+
+extension BallDetecting {
+    public func detectBallCandidates(in pixelBuffer: CVPixelBuffer) throws -> [BallDetection] {
+        try detectBall(in: pixelBuffer).map { [$0] } ?? []
+    }
 }
 
 /// Color/circularity heuristic — NOT a trained model. See file header.
@@ -78,43 +89,44 @@ public final class ClassicalCVBallDetector: BallDetecting {
     public init() {}
 
     public func detectBall(in pixelBuffer: CVPixelBuffer) throws -> BallDetection? {
+        try detectBallCandidates(in: pixelBuffer).first
+    }
+
+    public func detectBallCandidates(in pixelBuffer: CVPixelBuffer) throws -> [BallDetection] {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let width = ciImage.extent.width
         let height = ciImage.extent.height
-        guard width > 0, height > 0 else { return nil }
+        guard width > 0, height > 0 else { return [] }
 
         // Downscale aggressively before any per-pixel work — this is a
         // cheap heuristic, not a neural network, and must stay cheap to
         // avoid competing with player/pose inference for the same frame
         // budget (spec section 26).
-        //
-        // Phase 2 fix: this previously called the non-existent API
-        // `CIImage.cgImage(context:)` (CIImage has no such method —
-        // CGImage rendering is done via `CIContext.createCGImage`).
-        // Caught only now, by finally typechecking this file with the
-        // real Swift compiler while wiring in the actual blob-search
-        // algorithm — it had never been typechecked before (see this
-        // file's original "unverified" status).
         let scale: CGFloat = 240 / max(width, height)
         let scaledImage = ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-        guard let small = context.createCGImage(scaledImage, from: scaledImage.extent) else { return nil }
+        guard let small = context.createCGImage(scaledImage, from: scaledImage.extent),
+              let buffer = Self.rgbaPixelBuffer(from: small) else { return [] }
 
-        guard let buffer = Self.rgbaPixelBuffer(from: small),
-              let candidate = BallBlobDetector.findBrightRoughlyCircularBlob(in: buffer) else { return nil }
+        return BallBlobDetector.findBrightRoughlyCircularBlobs(in: buffer).map { candidate in
+            BallDetection(
+                boundingBox: NormalizedRect(
+                    x: candidate.rect.origin.x / CGFloat(small.width),
+                    y: candidate.rect.origin.y / CGFloat(small.height),
+                    width: candidate.rect.width / CGFloat(small.width),
+                    height: candidate.rect.height / CGFloat(small.height)
+                ),
+                confidence: Self.confidence(for: candidate)
+            )
+        }
+    }
 
-        return BallDetection(
-            boundingBox: NormalizedRect(
-                x: candidate.origin.x / CGFloat(small.width),
-                y: candidate.origin.y / CGFloat(small.height),
-                width: candidate.width / CGFloat(small.width),
-                height: candidate.height / CGFloat(small.height)
-            ),
-            // Deliberately capped well below 1.0 — a classical heuristic
-            // should never claim the same certainty a trained detector
-            // could; downstream quality gating (tracking_quality.py)
-            // treats this conservatively.
-            confidence: 0.4
-        )
+    /// Honest, deliberately low confidence: a classical heuristic must never claim
+    /// the certainty of a trained detector (tracking_quality.py treats it
+    /// conservatively). It only ranks candidates by how disc-like they are:
+    /// 0.20 (barely passes the gates) up to 0.40 (a clean filled disc).
+    static func confidence(for candidate: BallBlobDetector.Candidate) -> Double {
+        let discLikeness = min(max((candidate.fillRatio - 0.55) / (0.85 - 0.55), 0), 1) * candidate.aspectRatio
+        return 0.20 + 0.20 * discLikeness
     }
 
     /// Renders a CGImage into a raw RGBA8 buffer so BallBlobDetector (pure

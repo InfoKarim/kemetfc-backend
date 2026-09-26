@@ -108,6 +108,9 @@ public final class AssessmentSessionViewModel: ObservableObject {
     /// observe it directly.
     public let pendingStore = PendingAssessmentStore()
     private let apiClient: KemetAPIClient
+    /// Owns replay of queued-but-unacknowledged telemetry; this view model only
+    /// signals lifecycle moments to it (see TelemetryReplayService).
+    private let telemetryReplay: TelemetryReplayService
     /// Exposed so GuardianViewModel (a guardian-role account never
     /// touches any coach/recording state on this class) can issue
     /// requests through the SAME authenticated client/cookie session,
@@ -159,6 +162,7 @@ public final class AssessmentSessionViewModel: ObservableObject {
 
     public init(apiClient: KemetAPIClient) {
         self.apiClient = apiClient
+        self.telemetryReplay = TelemetryReplayService(apiClient: apiClient)
         self.backendDiagnostics = BackendDiagnostics(baseURL: apiClient.baseURL)
         videoUploadManager.$state
             .receive(on: DispatchQueue.main)
@@ -403,6 +407,7 @@ public final class AssessmentSessionViewModel: ObservableObject {
     /// doesn't get hammered every time the app happens to launch/
     /// foreground/reconnect.
     public func retryAllPending() async {
+        Task { await telemetryReplay.replayPending() }   // signal only; the service owns replay
         for record in pendingStore.pendingUploads where record.isRetryable {
             if record.uploadAttempts > 0, let lastAttemptAt = record.lastAttemptAt {
                 let backoff = min(Self.baseBackoffSeconds * pow(2, Double(record.uploadAttempts - 1)), Self.maxBackoffSeconds)
@@ -717,7 +722,10 @@ public final class AssessmentSessionViewModel: ObservableObject {
     public func stopAssessment() async {
         sessionRetryTask?.cancel()
         sessionRetryTask = nil
-        telemetryUploader?.stop()
+        // Marks the telemetry session finished and makes one final upload pass in the
+        // background — Stop is never held up by the network, and anything not
+        // acknowledged is already on disk for TelemetryReplayService.
+        if let uploader = telemetryUploader { Task { await uploader.stopAndFlush() } }
         isAssessmentActive = false
 
         guard let recordingId = activeRecordingId, var record = pendingStore.record(id: recordingId) else { return }
