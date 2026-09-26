@@ -9,8 +9,8 @@ this app (require_guardian_player_access)."""
 from datetime import datetime, UTC
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api_schemas import (
@@ -32,7 +32,10 @@ from app.services.id_service import next_entity_id
 from app.services.model_registry_service import ModelRegistryError, ModelRegistryService
 from app.services.player_service import PlayerService
 from app.services.tracking_service import (
+    TrackingReviewRequired,
     TrackingError,
+    TrackingEventConflict,
+    TrackingSampleConflict,
     TrackingService,
     TrackingSessionIdentityConflict,
 )
@@ -74,7 +77,11 @@ def _event_payload(event) -> dict:
     return {
         "event_id": event.event_id,
         "session_id": event.session_id,
+        # Server receipt time (its meaning is unchanged); the device-side
+        # time and the retry identity are separate, client-authored fields.
         "occurred_at": event.occurred_at,
+        "client_occurred_at": event.client_occurred_at,
+        "client_event_id": event.client_event_id,
         "event_type": event.event_type,
         "details": event.details,
     }
@@ -193,13 +200,59 @@ def ingest_tracking_samples(
         raise HTTPException(status_code=403, detail="Not your tracking session")
 
     try:
-        count = service.ingest_samples(
+        result = service.ingest_sample_batch(
             session_id, [sample.model_dump() for sample in payload.samples]
+        )
+    except TrackingSampleConflict as conflict:
+        # Atomic: nothing from this request was committed, and nothing is
+        # acknowledged, so the client keeps its whole batch local.
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(conflict),
+                "mismatched_sequences": conflict.mismatched_sequences,
+                "conflicts": conflict.conflicts,
+            },
         )
     except TrackingError as error:
         raise HTTPException(status_code=400, detail=str(error))
 
-    return {"ingested": count}
+    return {
+        "ingested": result.ingested,
+        "duplicates": result.duplicates,
+        "acknowledged_sequences": result.acknowledged_sequences,
+    }
+
+
+@router.get("/tracking/sessions/{session_id}/samples")
+def export_tracking_samples(
+    session_id: str,
+    request: Request,
+    after_sequence: int = 0,
+    limit: int = 5000,
+    db: Session = Depends(get_db),
+):
+    """The session's raw telemetry, for real-video validation
+    (scripts/validate_tracking_session.py). Coach/admin only, and only their
+    own session: this is child tracking data. Ordered by sequence then time;
+    page with `after_sequence`."""
+    _require_coach_or_admin(request)
+    service = TrackingService(db=db)
+    session = service.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Tracking session not found")
+    if session.coach_user_id != request.state.current_user["user_id"] and request.state.current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Not your tracking session")
+    limit = max(1, min(limit, 20000))
+    rows = service.list_samples_after(session_id, after_sequence=after_sequence, limit=limit)
+    return {
+        "session_id": session_id,
+        "samples": [
+            {**sample, "tracking_mode": row.tracking_mode, "gimbal_state": row.gimbal_state}
+            for row, sample in zip(rows, service.samples_as_dicts(rows))
+        ],
+        "next_after_sequence": max((r.sequence_number for r in rows if r.sequence_number is not None), default=None),
+    }
 
 
 @router.post("/tracking/sessions/{session_id}/events", status_code=201)
@@ -207,6 +260,7 @@ def ingest_tracking_event(
     session_id: str,
     payload: IngestTrackingEventSchema,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     _require_coach_or_admin(request)
@@ -218,10 +272,28 @@ def ingest_tracking_event(
         raise HTTPException(status_code=403, detail="Not your tracking session")
 
     try:
-        event = service.ingest_event(session_id, payload.event_type, payload.details)
+        result = service.ingest_event_idempotent(
+            session_id,
+            payload.event_type,
+            payload.details,
+            client_event_id=payload.client_event_id,
+            client_occurred_at=payload.client_occurred_at,
+        )
+    except TrackingEventConflict as conflict:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": str(conflict),
+                "client_event_id": conflict.client_event_id,
+                "differing_fields": conflict.differing_fields,
+            },
+        )
     except TrackingError as error:
         raise HTTPException(status_code=400, detail=str(error))
-    return _event_payload(event)
+
+    if result.duplicate:
+        response.status_code = 200   # an identical retry: already stored, not created again
+    return {**_event_payload(result.event), "duplicate": result.duplicate}
 
 
 @router.get("/tracking/sessions/{session_id}/events")
@@ -312,6 +384,8 @@ def publish_tracking_assessment(
             actor_user_id=request.state.current_user["user_id"],
             assessment_date=payload.assessment_date,
         )
+    except TrackingReviewRequired as review:
+        raise HTTPException(status_code=409, detail=str(review))
     except TrackingError as error:
         raise HTTPException(status_code=400, detail=str(error))
 

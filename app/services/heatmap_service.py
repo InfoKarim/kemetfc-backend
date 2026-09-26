@@ -41,6 +41,10 @@ def build_heatmap_payload(samples: list[dict], grid_size: int = DEFAULT_GRID_SIZ
     ball_points = [s["ball_center"] for s in ordered if s.get("ball_center")]
 
     return {
+        # Where these coordinates live: the CAMERA FRAME, not the pitch. No calibration
+        # (homography) exists yet, so this is never a positional heatmap of the field.
+        "coordinate_space": "normalized_image",
+        "pitch_coordinates": False,
         "grid_size": grid_size,
         "player_heat_grid": build_occupancy_grid(player_points, grid_size),
         "ball_heat_grid": build_occupancy_grid(ball_points, grid_size) if ball_points else None,

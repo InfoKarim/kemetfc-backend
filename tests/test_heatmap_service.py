@@ -30,3 +30,9 @@ def test_build_heatmap_payload_ball_grid_none_when_no_ball_ever_seen():
     samples = [{"t_seconds": 0.0, "player_center": [0.1, 0.1], "ball_center": None}]
     payload = build_heatmap_payload(samples)
     assert payload["ball_heat_grid"] is None
+
+
+def test_heatmap_declares_that_it_is_in_image_space_not_pitch_coordinates():
+    payload = build_heatmap_payload([{"t_seconds": 0.0, "player_center": [0.5, 0.5], "ball_center": None}])
+    assert payload["coordinate_space"] == "normalized_image"
+    assert payload["pitch_coordinates"] is False

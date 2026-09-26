@@ -10,6 +10,19 @@ the spec demands ("A model that detects people accurately but switches to
 another child is not acceptable"), so any session with detected switch
 risk is forced to at least REVIEW_REQUIRED regardless of how good its
 other ratios look.
+
+Review round (identity + honesty):
+  * "reacquired" is a tracked status (after the first reacquisition the iOS
+    tracker stays "reacquired" for the rest of the session), so it counts as
+    tracked. Each reacquisition is still counted and caps the outcome at
+    VALID_WITH_LIMITED_CONFIDENCE — identity was re-established by an algorithm.
+  * Frames the tracker itself flagged as identity-ambiguous can force
+    REVIEW_REQUIRED (ambiguous_frame_ratio). An unknown flag is never read as
+    "not ambiguous".
+  * Sequence gaps (missing sequence numbers) mean telemetry was lost.
+  * Pose coverage counts only poses that can be tied to the tracked player;
+    ball coverage counts only frames with an actual ball measurement.
+  * The thresholds below are heuristics that must be calibrated on real footage.
 """
 
 from __future__ import annotations
@@ -48,6 +61,16 @@ POSSIBLE_ID_SWITCH_DISTANCE = 0.25
 # for a "jump" at all (e.g. a gap during TEMPORARILY_LOST/SEARCHING).
 ID_SWITCH_MAX_DT_SECONDS = 0.5
 
+# The tracker committed a detection for the selected player in these states.
+TRACKED_STATUSES = frozenset({"locked", "reacquired"})
+# Share of samples the tracker flagged as identity-ambiguous above which a coach
+# must review. Heuristic: calibrate on real video.
+AMBIGUOUS_REVIEW_RATIO = 0.02
+# Missing sequence numbers as a share of the expected range: telemetry was lost.
+SEQUENCE_GAP_REVIEW_RATIO = 0.05
+# Below this, the recording is mostly holes.
+TELEMETRY_COMPLETENESS_REVIEW = 0.20
+
 # Minimum acceptable average sample rate — used only to compute
 # telemetry_completeness_ratio, a QA signal, never as a hard requirement.
 EXPECTED_MIN_SAMPLE_RATE_HZ = 5.0
@@ -66,7 +89,7 @@ def _target_lost_duration_seconds(samples: list[dict]) -> float:
     longest = 0.0
     current_start: float | None = None
     for sample in ordered:
-        if sample.get("tracking_status") != "locked":
+        if sample.get("tracking_status") not in TRACKED_STATUSES:
             if current_start is None:
                 current_start = sample["t_seconds"]
         else:
@@ -90,7 +113,7 @@ def _telemetry_completeness_ratio(samples: list[dict]) -> float:
 def _id_switch_risk_count(samples: list[dict]) -> int:
     ordered = [
         s for s in sorted(samples, key=lambda s: s["t_seconds"])
-        if s.get("tracking_status") == "locked" and s.get("player_center") is not None
+        if s.get("tracking_status") in TRACKED_STATUSES and s.get("player_center") is not None
     ]
     switches = 0
     for prev, curr in zip(ordered, ordered[1:]):
@@ -100,6 +123,27 @@ def _id_switch_risk_count(samples: list[dict]) -> int:
         if _distance(prev["player_center"], curr["player_center"]) > POSSIBLE_ID_SWITCH_DISTANCE:
             switches += 1
     return switches
+
+
+def _reacquisition_count(samples: list[dict]) -> int:
+    """How many times the target was lost and then reacquired by the tracker."""
+    count = 0
+    previous_tracked = True
+    for sample in sorted(samples, key=lambda s: s["t_seconds"]):
+        status = sample.get("tracking_status")
+        tracked = status in TRACKED_STATUSES
+        if status == "reacquired" and not previous_tracked:
+            count += 1
+        previous_tracked = tracked
+    return count
+
+
+def _sequence_gap_count(samples: list[dict]) -> int:
+    """Sequence numbers missing between the lowest and highest one received."""
+    sequences = sorted({s["sequence_number"] for s in samples if s.get("sequence_number") is not None})
+    if len(sequences) < 2:
+        return 0
+    return (sequences[-1] - sequences[0] + 1) - len(sequences)
 
 
 def evaluate_session_quality(samples: list[dict]) -> dict:
@@ -117,20 +161,36 @@ def evaluate_session_quality(samples: list[dict]) -> dict:
             "target_lost_duration_seconds": None,
             "telemetry_completeness_ratio": None,
             "id_switch_risk_count": None,
+            "reacquisition_count": None,
+            "ambiguous_frame_count": None,
+            "ambiguous_frame_ratio": None,
+            "sequence_gap_count": None,
             "overall_confidence": INSUFFICIENT,
             "reasons": [f"Only {total} samples recorded (minimum {MIN_SAMPLE_COUNT})."],
         }
 
-    locked = sum(1 for s in samples if s.get("tracking_status") == "locked")
-    ball_seen = sum(1 for s in samples if (s.get("ball_confidence") or 0) > 0)
-    pose_seen = sum(1 for s in samples if s.get("pose_keypoints"))
+    from app.services.tracking_features import pose_belongs_to_player
 
-    player_lock_ratio = _ratio(locked, total)
+    tracked = sum(1 for s in samples if s.get("tracking_status") in TRACKED_STATUSES)
+    ball_seen = sum(
+        1 for s in samples
+        if (s.get("ball_confidence") or 0) > 0 and s.get("ball_center") is not None
+    )
+    pose_seen = sum(1 for s in samples if pose_belongs_to_player(s))
+
+    player_lock_ratio = _ratio(tracked, total)
     ball_coverage_ratio = _ratio(ball_seen, total)
     pose_coverage_ratio = _ratio(pose_seen, total)
     target_lost_duration_seconds = _target_lost_duration_seconds(samples)
     telemetry_completeness_ratio = _telemetry_completeness_ratio(samples)
     id_switch_risk_count = _id_switch_risk_count(samples)
+    reacquisition_count = _reacquisition_count(samples)
+    ambiguous_frame_count = sum(1 for s in samples if s.get("identity_ambiguous") is True)
+    ambiguous_frame_ratio = _ratio(ambiguous_frame_count, total)
+    sequence_gap_count = _sequence_gap_count(samples)
+    sequenced = [s["sequence_number"] for s in samples if s.get("sequence_number") is not None]
+    expected_sequences = (max(sequenced) - min(sequenced) + 1) if sequenced else 0
+    sequence_gap_ratio = _ratio(sequence_gap_count, expected_sequences)
 
     reasons: list[str] = []
 
@@ -159,6 +219,38 @@ def evaluate_session_quality(samples: list[dict]) -> dict:
             "expected minimum sample rate — recording may have gaps."
         )
 
+    if telemetry_completeness_ratio < TELEMETRY_COMPLETENESS_REVIEW:
+        outcome = REVIEW_REQUIRED
+        reasons.append(
+            f"Telemetry completeness is only {telemetry_completeness_ratio:.0%} of the expected sample rate — "
+            "the recording is mostly gaps."
+        )
+
+    if sequence_gap_count > 0:
+        reasons.append(f"{sequence_gap_count} telemetry sample(s) never arrived (missing sequence numbers).")
+        if sequence_gap_ratio >= SEQUENCE_GAP_REVIEW_RATIO:
+            outcome = REVIEW_REQUIRED
+        elif outcome == VALID:
+            outcome = VALID_WITH_LIMITED_CONFIDENCE
+
+    if reacquisition_count > 0:
+        reasons.append(
+            f"The selected player was lost and reacquired {reacquisition_count} time(s); identity was "
+            "re-established by the tracker, not confirmed by a person."
+        )
+        if outcome == VALID:
+            outcome = VALID_WITH_LIMITED_CONFIDENCE
+
+    if ambiguous_frame_count > 0:
+        reasons.append(
+            f"The tracker flagged {ambiguous_frame_count} sample(s) ({ambiguous_frame_ratio:.1%}) as identity-ambiguous "
+            "(a look-alike candidate could not be ruled out)."
+        )
+        if ambiguous_frame_ratio >= AMBIGUOUS_REVIEW_RATIO:
+            outcome = REVIEW_REQUIRED
+        elif outcome == VALID:
+            outcome = VALID_WITH_LIMITED_CONFIDENCE
+
     # A wrong-player lock is treated seriously, per spec: any detected
     # possible ID switch forces at least REVIEW_REQUIRED, overriding a
     # VALID outcome the other ratios alone would have produced.
@@ -169,9 +261,10 @@ def evaluate_session_quality(samples: list[dict]) -> dict:
             "\"locked\" — possible wrong-player tracking. Coach review required."
         )
 
-    if player_lock_ratio >= LOCK_RATIO_VALID and ball_coverage_ratio >= BALL_COVERAGE_HIGH and id_switch_risk_count == 0:
+    identity_clean = id_switch_risk_count == 0 and outcome != REVIEW_REQUIRED
+    if identity_clean and player_lock_ratio >= LOCK_RATIO_VALID and ball_coverage_ratio >= BALL_COVERAGE_HIGH and reacquisition_count == 0:
         overall_confidence = HIGH
-    elif player_lock_ratio >= LOCK_RATIO_LIMITED and ball_coverage_ratio >= BALL_COVERAGE_MEDIUM and id_switch_risk_count == 0:
+    elif identity_clean and player_lock_ratio >= LOCK_RATIO_LIMITED and ball_coverage_ratio >= BALL_COVERAGE_MEDIUM:
         overall_confidence = MEDIUM
     else:
         overall_confidence = LOW
@@ -185,6 +278,10 @@ def evaluate_session_quality(samples: list[dict]) -> dict:
         "target_lost_duration_seconds": target_lost_duration_seconds,
         "telemetry_completeness_ratio": telemetry_completeness_ratio,
         "id_switch_risk_count": id_switch_risk_count,
+        "reacquisition_count": reacquisition_count,
+        "ambiguous_frame_count": ambiguous_frame_count,
+        "ambiguous_frame_ratio": ambiguous_frame_ratio,
+        "sequence_gap_count": sequence_gap_count,
         "overall_confidence": overall_confidence,
         "reasons": reasons,
     }

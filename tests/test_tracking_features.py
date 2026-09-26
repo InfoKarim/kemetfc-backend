@@ -8,9 +8,10 @@ from app.services.tracking_features import (
 )
 
 
-def sample(t, player=None, ball=None, player_conf=0.9, ball_conf=0.9, pose=None):
+def sample(t, player=None, ball=None, player_conf=0.9, ball_conf=0.9, pose=None, bbox=None):
     return {
         "t_seconds": t,
+        "player_bbox": bbox,
         "player_center": player,
         "player_confidence": player_conf if player else None,
         "ball_center": ball,
@@ -107,7 +108,7 @@ def test_pose_features_computes_upright_torso_lean_near_zero():
         {"name": "leftHip", "x": 0.45, "y": 0.5},
         {"name": "rightHip", "x": 0.55, "y": 0.5},
     ]
-    samples = [sample(0.0, player=[0.5, 0.4], pose=keypoints)]
+    samples = [sample(0.0, player=[0.5, 0.4], pose=keypoints, bbox=[0.40, 0.25, 0.20, 0.35])]
     result = compute_pose_features(samples)
     assert result["status"] == "ok"
     assert result["pose_coverage_ratio"] == 1.0
@@ -124,3 +125,86 @@ def test_build_feature_set_combines_all_three_and_is_versioned():
     assert feature_set["movement"]["status"] == "ok"
     assert feature_set["ball_relationship"]["status"] == "ok"
     assert feature_set["sample_count"] == 2
+
+
+# --- v2: honest units, heuristic labels, verified pose --------------------------------
+
+from app.services.tracking_features import (  # noqa: E402
+    FEATURE_SCHEMA_VERSION,
+    build_feature_set,
+    measurement_context,
+    pose_belongs_to_player,
+)
+
+UPRIGHT = [
+    {"name": "leftShoulder", "x": 0.45, "y": 0.3},
+    {"name": "rightShoulder", "x": 0.55, "y": 0.3},
+    {"name": "leftHip", "x": 0.45, "y": 0.5},
+    {"name": "rightHip", "x": 0.55, "y": 0.5},
+]
+
+
+def test_feature_set_declares_that_nothing_is_in_metres():
+    features = build_feature_set([sample(float(t), player=[0.3 + 0.01 * t, 0.5]) for t in range(5)])
+
+    assert features["schema_version"] == FEATURE_SCHEMA_VERSION == "tracking-features-v2"
+    context = features["measurement_context"]
+    assert context["space"] == "normalized_image"
+    assert context["meters_available"] is False and context["calibrated"] is False
+    assert context["distance_unit"] == "normalized_image_units"
+    assert context["speed_unit"] == "normalized_image_units_per_second"
+    # No metric-unit keys anywhere in the movement payload.
+    assert not any(key.endswith(("_m", "_meters", "_mps", "_kmh")) for key in features["movement"])
+
+
+def test_a_calibration_scale_alone_never_produces_metres():
+    context = measurement_context("calibrated", 0.5)
+    assert context["calibration_scale_present"] is True
+    assert context["meters_available"] is False, "a single scale factor is not a validated conversion"
+
+
+def test_ball_proximity_numbers_are_labelled_as_heuristic_image_space():
+    samples = [sample(t * 0.1, player=[0.5, 0.5], ball=[0.55, 0.5]) for t in range(5)]
+    result = compute_ball_relationship_features(samples)
+    assert result["touch_count_basis"] == "proximity_heuristic_image_space"
+    assert result["possession_basis"] == "proximity_heuristic_image_space"
+    assert result["possession_distance_threshold_units"] == 0.10
+    # ...also when there is nothing to compute:
+    assert compute_ball_relationship_features([sample(0.0, player=[0.5, 0.5])])["touch_count_basis"] == "proximity_heuristic_image_space"
+
+
+def test_no_ball_means_no_possession_or_touch_metrics_are_invented():
+    result = compute_ball_relationship_features([sample(t * 0.1, player=[0.5, 0.5]) for t in range(20)])
+    assert result["status"] == "insufficient_data"
+    assert result["touch_count"] is None and result["possession_seconds"] is None
+
+
+def test_a_pose_without_a_player_box_in_the_same_sample_is_not_counted():
+    result = compute_pose_features([sample(0.0, player=[0.5, 0.4], pose=UPRIGHT)])   # no bbox: cannot be verified
+    assert result["status"] == "insufficient_data"
+    assert result["pose_coverage_ratio"] == 0.0
+    assert result["pose_unverified_sample_count"] == 1
+    assert result["average_torso_lean_deg"] is None, "no pose metric is invented from an unverified pose"
+
+
+def test_a_pose_outside_the_tracked_players_box_is_not_counted():
+    elsewhere = sample(0.0, player=[0.2, 0.4], pose=UPRIGHT, bbox=[0.10, 0.25, 0.12, 0.35])   # joints are around x=0.5
+    result = compute_pose_features([elsewhere])
+    assert result["pose_unverified_sample_count"] == 1
+    assert result["status"] == "insufficient_data"
+
+
+def test_pose_belongs_to_player_needs_enough_joints_and_a_box():
+    box = [0.40, 0.25, 0.20, 0.35]
+    assert pose_belongs_to_player(sample(0.0, pose=UPRIGHT, bbox=box)) is True
+    assert pose_belongs_to_player(sample(0.0, pose=UPRIGHT[:3], bbox=box)) is False
+    assert pose_belongs_to_player(sample(0.0, pose=UPRIGHT, bbox=None)) is False
+    assert pose_belongs_to_player(sample(0.0, pose=None, bbox=box)) is False
+
+
+def test_only_verified_poses_count_toward_coverage():
+    good = sample(0.0, player=[0.5, 0.4], pose=UPRIGHT, bbox=[0.40, 0.25, 0.20, 0.35])
+    bad = sample(0.1, player=[0.2, 0.4], pose=UPRIGHT, bbox=[0.10, 0.25, 0.12, 0.35])
+    result = compute_pose_features([good, bad])
+    assert result["pose_coverage_ratio"] == 0.5
+    assert result["pose_unverified_sample_count"] == 1

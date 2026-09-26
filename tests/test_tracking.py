@@ -510,8 +510,92 @@ def test_quality_gate_forces_review_required_when_id_switch_detected(client):
     assert quality["id_switch_risk_count"] >= 1
     assert quality["outcome"] == "REVIEW_REQUIRED"
 
-    # publish_assessment still succeeds (REVIEW_REQUIRED is not
-    # INSUFFICIENT_DATA) but the published record honestly carries the
-    # review-required outcome for a coach to see, never silently upgraded.
+    # Uncertain identity is never published on the system's say-so: the coach
+    # must first confirm that the RIGHT child was tracked.
+    refused = client.post(f"/tracking/sessions/{session_id}/publish", json={})
+    assert refused.status_code == 409
+    assert "Coach review required" in refused.json()["detail"]
+
+    assert client.post(f"/tracking/sessions/{session_id}/confirm-player", json={"answer": "yes"}).status_code == 201
+
+    # After coach review it publishes, and the record honestly carries the
+    # review-required outcome plus who confirmed it, never silently upgraded.
     publish_response = client.post(f"/tracking/sessions/{session_id}/publish", json={})
     assert publish_response.status_code == 200
+
+
+def _review_required_session(client, player_id):
+    create_test_player(client, player_id)
+    session_id = create_session(client, player_id)
+    samples = [make_sample(i * 0.1) for i in range(40)]
+    samples[20]["player_center"] = [0.95, 0.95]                    # implausible jump: possible wrong-player lock
+    client.post(f"/tracking/sessions/{session_id}/samples", json={"samples": samples})
+    assert client.get(f"/tracking/sessions/{session_id}/quality").json()["outcome"] == "REVIEW_REQUIRED"
+    return session_id
+
+
+def test_review_required_session_stays_unpublished_for_unsure_and_no_answers(client):
+    session_id = _review_required_session(client, "TRK_P_REVIEW_GATE")
+
+    for answer in ("unsure", "no"):
+        client.post(f"/tracking/sessions/{session_id}/confirm-player", json={"answer": answer})
+        assert client.post(f"/tracking/sessions/{session_id}/publish", json={}).status_code == 409, answer
+
+    # The LATEST answer counts.
+    client.post(f"/tracking/sessions/{session_id}/confirm-player", json={"answer": "yes"})
+    published = client.post(f"/tracking/sessions/{session_id}/publish", json={})
+    assert published.status_code == 200
+    assert published.json()["calculated_metrics"]["measurement_context"]["meters_available"] is False
+    assert published.json()["calculated_metrics"]["touch_count_basis"] == "proximity_heuristic_image_space"
+
+
+def test_a_coach_who_says_wrong_player_blocks_publishing_even_for_a_clean_session(client):
+    create_test_player(client, "TRK_P_WRONG_CHILD")
+    session_id = create_session(client, "TRK_P_WRONG_CHILD")
+    ingest_rich_session(client, session_id)
+    assert client.get(f"/tracking/sessions/{session_id}/quality").json()["outcome"] != "REVIEW_REQUIRED"
+
+    client.post(f"/tracking/sessions/{session_id}/confirm-player", json={"answer": "no"})
+
+    refused = client.post(f"/tracking/sessions/{session_id}/publish", json={})
+    assert refused.status_code == 409
+    assert "wrong player" in refused.json()["detail"]
+
+
+def test_published_record_carries_the_coach_review_provenance(client):
+    session_id = _review_required_session(client, "TRK_P_REVIEW_PROVENANCE")
+    client.post(f"/tracking/sessions/{session_id}/confirm-player", json={"answer": "yes", "notes": "checked on video"})
+    published = client.post(f"/tracking/sessions/{session_id}/publish", json={}).json()
+
+    db = TestingSessionLocal()
+    try:
+        assessment = db.get(PlayerAssessmentDB, published["assessment_id"])
+        assert assessment.raw_data["coach_review"]["answer"] == "yes"
+        assert assessment.raw_data["coach_review"]["coach_user_id"] == "TRK_COACH"
+        assert assessment.raw_data["quality_gate"]["outcome"] == "REVIEW_REQUIRED", "never silently upgraded"
+        assert assessment.raw_data["features"]["measurement_context"]["space"] == "normalized_image"
+    finally:
+        db.close()
+
+
+def test_sample_export_returns_the_sessions_telemetry_to_its_own_coach_only(client):
+    create_test_player(client, "TRK_P_EXPORT")
+    session_id = create_session(client, "TRK_P_EXPORT")
+    samples = [make_sample(i * 0.1) for i in range(5)]
+    for index, sample_ in enumerate(samples):
+        sample_["sequence_number"] = index + 1
+    client.post(f"/tracking/sessions/{session_id}/samples", json={"samples": samples})
+
+    exported = client.get(f"/tracking/sessions/{session_id}/samples")
+    assert exported.status_code == 200
+    body = exported.json()
+    assert [s["sequence_number"] for s in body["samples"]] == [1, 2, 3, 4, 5]
+    assert body["next_after_sequence"] == 5
+    assert "player_track_id" in body["samples"][0] and "identity_ambiguous" in body["samples"][0]
+
+    paged = client.get(f"/tracking/sessions/{session_id}/samples", params={"after_sequence": 3, "limit": 10}).json()
+    assert [s["sequence_number"] for s in paged["samples"]] == [4, 5]
+
+    guardian = _create_role_client("trk.guardian.export", "GuardianPassword123!", "guardian")
+    assert guardian.get(f"/tracking/sessions/{session_id}/samples").status_code == 403
+    assert client.get("/tracking/sessions/TRK_DOES_NOT_EXIST/samples").status_code == 404

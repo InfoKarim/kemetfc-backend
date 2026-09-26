@@ -669,6 +669,12 @@ class TrackingSampleSchema(BaseModel):
     gimbal_state: str = Field(default="unknown", max_length=40)
     tracking_mode: str = Field(default="smart_soccer", max_length=40)
     tracking_status: str = Field(default="unknown", max_length=40)
+    # Per-session, monotonic, assigned once by the client and unchanged on
+    # retry. Optional: clients that predate it keep their old behavior.
+    sequence_number: int | None = Field(default=None, ge=1)
+    # The tracker's own report that this frame's match to the selected player was
+    # ambiguous (two look-alike candidates). None = unknown.
+    identity_ambiguous: bool | None = None
 
     @field_validator("player_bbox", "ball_bbox")
     @classmethod
@@ -692,6 +698,11 @@ class IngestTrackingSamplesSchema(BaseModel):
 class IngestTrackingEventSchema(BaseModel):
     event_type: str = Field(min_length=1, max_length=60)
     details: dict = Field(default_factory=dict)
+    # Stable identity generated once on the device, so a retry is idempotent,
+    # and the device-side time of the event (server receipt time stays in
+    # the stored `occurred_at`).
+    client_event_id: str | None = Field(default=None, min_length=1, max_length=64)
+    client_occurred_at: datetime | None = None
 
 
 class CompleteTrackingSessionSchema(BaseModel):

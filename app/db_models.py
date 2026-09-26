@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
 )
@@ -1446,6 +1447,19 @@ class TrackingSampleDB(Base):
     gimbal_state: Mapped[str] = mapped_column(String)
     tracking_mode: Mapped[str] = mapped_column(String)
     tracking_status: Mapped[str] = mapped_column(String)
+    # Client-assigned, per-session, monotonic identity used for idempotent
+    # ingest (a retried batch must never create a second row). NULL for rows
+    # written before this column existed and for clients that do not send it;
+    # NULLs never collide in a unique index, so both keep working.
+    sequence_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # PlayerTracker.lastMatchWasAmbiguous for this frame: the match to the selected
+    # player could not be told apart from another candidate. NULL = unknown / not
+    # reported (older clients), which is never treated as "not ambiguous".
+    identity_ambiguous: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    __table_args__ = (
+        Index("uq_tracking_samples_session_sequence", "session_id", "sequence_number", unique=True),
+    )
 
 
 class TrackingEventDB(Base):
@@ -1466,6 +1480,16 @@ class TrackingEventDB(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     event_type: Mapped[str] = mapped_column(String, index=True)
     details: Mapped[dict] = mapped_column(JSON, default=dict)
+    # `occurred_at` above is the SERVER receipt time (its meaning is
+    # unchanged). These two are client-authored: a stable id generated once
+    # at enqueue on the device (idempotent retry) and the device-side time
+    # the event actually happened.
+    client_event_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    client_occurred_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("uq_tracking_events_session_client_event", "session_id", "client_event_id", unique=True),
+    )
 
 
 class TrackingFeatureSetDB(Base):
