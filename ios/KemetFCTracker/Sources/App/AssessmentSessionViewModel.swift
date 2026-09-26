@@ -774,6 +774,17 @@ public final class AssessmentSessionViewModel: ObservableObject {
             let duration = (try? await AVURLAsset(url: pendingStore.localVideoURL(for: record)).load(.duration).seconds) ?? 0
             record.stopTime = Date()
             record.durationSeconds = duration
+            // A file can be non-empty and readable yet far shorter than the session (a stalled
+            // recording). Say so instead of presenting it as a clean success. The video is
+            // still kept and uploaded — nothing is discarded.
+            let wallSeconds = record.stopTime?.timeIntervalSince(record.startTime) ?? 0
+            if wallSeconds >= 5, duration < wallSeconds * 0.5 {
+                record.lastError = String(
+                    format: "Warning: the saved video is only %.1f s but the assessment ran for %.0f s — the recording may be incomplete.",
+                    duration, wallSeconds
+                )
+                lastError = record.lastError
+            }
             record.fileSizeBytes = sizeBytes
             record.resolution = cameraCaptureManager.activeFormatDescription
             record.frameRateFps = cameraCaptureManager.effectiveFrameRate

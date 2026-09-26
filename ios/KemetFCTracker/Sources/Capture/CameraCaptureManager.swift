@@ -162,7 +162,10 @@ public final class CameraCaptureManager: NSObject, ObservableObject {
         session.addOutput(movieFileOutput)
 
         if let connection = videoDataOutput.connection(with: .video) {
-            connection.preferredVideoStabilizationMode = .cinematic
+            // Only where the active format supports it (high-frame-rate formats do not).
+            if device.activeFormat.isVideoStabilizationModeSupported(.cinematic) {
+                connection.preferredVideoStabilizationMode = .cinematic
+            }
         }
 
         session.commitConfiguration()
@@ -192,19 +195,19 @@ public final class CameraCaptureManager: NSObject, ObservableObject {
         // ties, prefer the smaller (less thermally/CPU expensive)
         // resolution — 4K60 is rarely necessary for pose/ball inference
         // and taxes the Neural Engine unnecessarily (spec section 26/27).
-        let best = candidates.max { lhs, rhs in
-            let lhsMaxFPS = lhs.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 0
-            let rhsMaxFPS = rhs.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 0
-            if lhsMaxFPS != rhsMaxFPS { return lhsMaxFPS < rhsMaxFPS }
-            let lhsDims = CMVideoFormatDescriptionGetDimensions(lhs.formatDescription)
-            let rhsDims = CMVideoFormatDescriptionGetDimensions(rhs.formatDescription)
-            return (lhsDims.width * lhsDims.height) > (rhsDims.width * rhsDims.height)
+        // See CaptureFormatChooser: prefer a plain 1080p@60 format, not the highest-frame-rate one.
+        let infos = candidates.map { format -> CaptureFormatInfo in
+            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+            return CaptureFormatInfo(
+                width: Int(dimensions.width), height: Int(dimensions.height),
+                maxFrameRate: format.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 30
+            )
         }
-        guard let selected = best else {
+        guard let choice = CaptureFormatChooser.choose(from: infos) else {
             throw CameraCaptureError.configurationFailed("Could not select a capture format")
         }
-
-        let targetFPS = min(60, selected.videoSupportedFrameRateRanges.map(\.maxFrameRate).max() ?? 30)
+        let selected = candidates[choice.index]
+        let targetFPS = Int(choice.frameRate.rounded())
 
         try device.lockForConfiguration()
         device.activeFormat = selected
@@ -223,8 +226,8 @@ public final class CameraCaptureManager: NSObject, ObservableObject {
         let dims = CMVideoFormatDescriptionGetDimensions(selected.formatDescription)
         activeFormatDescription = "\(dims.width)x\(dims.height)"
         activeVideoDimensions = CGSize(width: Int(dims.width), height: Int(dims.height))
-        effectiveFrameRate = targetFPS
-        log.info("Selected capture format \(dims.width)x\(dims.height) @ \(targetFPS)fps")
+        effectiveFrameRate = Double(targetFPS)
+        log.info("Selected capture format \(dims.width)x\(dims.height) @ \(targetFPS)fps (format max \(infos[choice.index].maxFrameRate) fps, high-frame-rate: \(choice.isHighFrameRateFormat))")
     }
 
     public func setZoomFactor(_ factor: CGFloat) {
