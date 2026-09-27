@@ -545,4 +545,100 @@ final class PlayerAnalysisEngineTests: XCTestCase {
         )
         XCTAssertNil(afterReset.ballVelocity, "reset must not preserve hidden ball-track identity state across it")
     }
+
+    // MARK: - Player velocity + relative ball position (2026-09-27 co-movement audit)
+
+    func testPlayerVelocityIsNilOnTheFirstMeasuredCommitOfANewLock() {
+        let engine = PlayerAnalysisEngine()
+        // First observed tick after a (re)lock — PlayerTracker's own first
+        // commit has no prior commit to measure a gap against, so its
+        // currentVelocity is still the untouched (0,0) default, not a real
+        // measurement.
+        let snap = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: nil, ballConfidence: 0, at: 0
+        )
+        XCTAssertNil(snap.playerVelocity, "the very first measured commit's velocity must never be reported as a confirmed-stationary value")
+    }
+
+    func testPlayerVelocityIsValidOnASubsequentObservation() {
+        let engine = PlayerAnalysisEngine()
+        _ = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: nil, ballConfidence: 0, at: 0
+        )
+        let snap = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.55),
+            playerVelocity: .init(x: 0.3, y: -0.1), ballBox: nil, ballConfidence: 0, at: 1.0
+        )
+        XCTAssertEqual(snap.playerVelocity, NormalizedPoint(x: 0.3, y: -0.1))
+    }
+
+    func testPlayerVelocityRemainsValidAcrossAReacquisitionGapOnTheSameLock() {
+        // Unlike the ball, PlayerTracker keeps measuring real velocity across
+        // a temporarily-lost/reacquired gap on the SAME lock (its
+        // lastCommitTime/lastKnownCenter persist through a miss) — so only
+        // the very FIRST commit of a lock is ever unmeasured.
+        let engine = PlayerAnalysisEngine()
+        _ = engine.observe( // first commit — unmeasured
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: nil, ballConfidence: 0, at: 0
+        )
+        _ = engine.observe( // temporarily lost — not observed
+            playerState: .temporarilyLost, playerConfidence: 0, playerBox: nil,
+            playerVelocity: .init(x: 0, y: 0), ballBox: nil, ballConfidence: 0, at: 0.5
+        )
+        let reacquired = engine.observe( // reacquired with a real, gap-spanning measurement
+            playerState: .reacquired, playerConfidence: 0.8, playerBox: box(0.6),
+            playerVelocity: .init(x: 0.2, y: 0.05), ballBox: nil, ballConfidence: 0, at: 1.0
+        )
+        XCTAssertEqual(reacquired.playerVelocity, NormalizedPoint(x: 0.2, y: 0.05), "a reacquisition on the SAME lock is not a new 'first commit'")
+    }
+
+    func testPlayerVelocityIsNilAgainAfterReset() {
+        let engine = PlayerAnalysisEngine()
+        _ = engine.observe( // first commit — unmeasured
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: nil, ballConfidence: 0, at: 0
+        )
+        let established = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.55),
+            playerVelocity: .init(x: 0.3, y: 0), ballBox: nil, ballConfidence: 0, at: 1.0
+        )
+        XCTAssertNotNil(established.playerVelocity)
+
+        engine.reset()
+
+        let afterReset = engine.observe( // a brand-new lock's own first commit
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0.3, y: 0), ballBox: nil, ballConfidence: 0, at: 100.0
+        )
+        XCTAssertNil(afterReset.playerVelocity, "reset must not preserve hidden player-velocity identity state across it")
+    }
+
+    func testRelativeBallPositionMagnitudeMatchesNormalizedPlayerBallDistance() {
+        let engine = PlayerAnalysisEngine()
+        let snap = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.6),
+            ballConfidence: PlayerAnalysisV1Calibration.minimumBallConfidenceForProximityAnalysis, at: 0
+        )
+        guard let relative = snap.relativeBallPosition, let distance = snap.normalizedPlayerBallDistance else {
+            return XCTFail("both should be measurable here")
+        }
+        let magnitude = (relative.x * relative.x + relative.y * relative.y).squareRoot()
+        XCTAssertEqual(magnitude, distance, accuracy: 1e-9, "the vector's magnitude must equal the already-established scalar distance")
+    }
+
+    func testRelativeBallPositionIsNilUnderTheExactSameConditionsAsNormalizedDistance() {
+        let engine = PlayerAnalysisEngine()
+        let belowFloor = PlayerAnalysisV1Calibration.minimumBallConfidenceForProximityAnalysis - 0.01
+        let snap = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.6),
+            ballConfidence: belowFloor, at: 0
+        )
+        XCTAssertNil(snap.normalizedPlayerBallDistance)
+        XCTAssertNil(snap.relativeBallPosition, "must be nil under the exact same eligibility as the scalar distance")
+    }
 }

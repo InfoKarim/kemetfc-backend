@@ -80,6 +80,12 @@ public final class TrackingCoordinator: ObservableObject {
     private let playerAnalysisEventDetector = PlayerAnalysisEventDetector()
     @Published public private(set) var playerAnalysisEvents: [PlayerAnalysisEvent] = []
 
+    /// Player ↔ Ball Co-Movement — a low-level measurement only (never
+    /// possession/dribbling/touch/receive/pass/shot). Pure downstream
+    /// consumer of `playerAnalysis` above, same as the V2.0 event detector.
+    private let playerBallCoMovementDetector = PlayerBallCoMovementDetector()
+    @Published public private(set) var playerBallCoMovement: PlayerBallCoMovementSnapshot?
+
     public let thermalManager = ThermalManager()
 
     // Field Test Mode telemetry (spec section 32) — visible only behind
@@ -220,6 +226,10 @@ public final class TrackingCoordinator: ObservableObject {
         // TrackingCoordinator instance.
         playerAnalysisEventDetector.reset()
         playerAnalysisEvents = []
+        // Same session-isolation requirement — co-movement evidence must
+        // never leak from one locked player into the next.
+        playerBallCoMovementDetector.reset()
+        playerBallCoMovement = nil
         playerState = .locked
         telemetryUploader.recordEvent(type: "player_locked", details: ["target_track_id": 1])
     }
@@ -456,6 +466,11 @@ public final class TrackingCoordinator: ObservableObject {
         if !newPlayerAnalysisEvents.isEmpty {
             playerAnalysisEvents.append(contentsOf: newPlayerAnalysisEvents)
         }
+
+        // Player ↔ Ball Co-Movement: pure downstream consumer of the SAME V1
+        // snapshot, in the same timestamp order. A low-level measurement
+        // only — never possession/dribbling/touch/receive/pass/shot.
+        playerBallCoMovement = playerBallCoMovementDetector.observe(snapshot: latestPlayerAnalysis)
 
         telemetryUploader.recordSample(
             tSeconds: sessionElapsedSeconds,

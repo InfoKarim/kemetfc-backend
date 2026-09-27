@@ -169,6 +169,34 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
     /// the direction information the same way `PlayerAnalysisHistoryEntry
     /// .rawSpeed` already does for the player (a known, documented gap).
     public var ballVelocity: NormalizedPoint?
+    /// Raw player velocity vector, in the SAME normalized image-space
+    /// units/second as `ballVelocity` above — real `PlayerTracker
+    /// .currentVelocity`, gated for a validity subtlety discovered during the
+    /// player↔ball co-movement audit (2026-09-27): `PlayerTracker.commit()`
+    /// only computes a real measurement when a previous commit exists
+    /// (`lastCommitTime != nil`); on the very FIRST commit of a freshly
+    /// (re)locked player, `currentVelocity` is still its untouched `(0,0)`
+    /// default — exactly the same "zero means unmeasured, not confirmed-
+    /// stationary" hazard already solved for `ballVelocity`. `nil` here means
+    /// not currently valid — either the player is not currently observed
+    /// (`trackingState != .locked`), or this is that first-commit tick.
+    /// V1's own `movementState` was never affected by this in practice (its
+    /// 3-frame hysteresis dilutes a single false-zero frame), but a
+    /// per-frame consumer like co-movement cannot rely on that dilution.
+    public var playerVelocity: NormalizedPoint?
+    /// The ball's position relative to the player, `(ballCenter -
+    /// playerCenter) / playerBox.width` — the SAME body-width normalization
+    /// and the SAME eligibility as `normalizedPlayerBallDistance` (in fact
+    /// `relativeBallPosition.magnitude == normalizedPlayerBallDistance`
+    /// whenever both are non-nil): nil under the exact same conditions
+    /// (player/ball not observed, or ball confidence below
+    /// `minimumBallConfidenceForProximityAnalysis`). Kept as a VECTOR (unlike
+    /// the scalar distance) specifically so a downstream consumer can track
+    /// how the player-ball RELATIONSHIP moves over time, not just how far
+    /// apart they are — needed for relative-position-drift evidence, which
+    /// is more camera-motion-robust than either object's absolute velocity
+    /// (see PLAYER_ANALYSIS_V2_EVENT_DESIGN.md section 7).
+    public var relativeBallPosition: NormalizedPoint?
 
     public init(
         timestamp: TimeInterval,
@@ -179,7 +207,9 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
         ballConfidence: Double?,
         ballProximityState: BallProximityState,
         normalizedPlayerBallDistance: Double? = nil,
-        ballVelocity: NormalizedPoint? = nil
+        ballVelocity: NormalizedPoint? = nil,
+        playerVelocity: NormalizedPoint? = nil,
+        relativeBallPosition: NormalizedPoint? = nil
     ) {
         self.timestamp = timestamp
         self.trackingState = trackingState
@@ -190,6 +220,8 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
         self.ballProximityState = ballProximityState
         self.normalizedPlayerBallDistance = normalizedPlayerBallDistance
         self.ballVelocity = ballVelocity
+        self.playerVelocity = playerVelocity
+        self.relativeBallPosition = relativeBallPosition
     }
 }
 
@@ -343,6 +375,18 @@ public final class PlayerAnalysisEngine {
     /// exists yet) is never reported as a confirmed-stationary velocity.
     private var lastNonNilBallTrackId: Int?
 
+    /// True once the CURRENT player lock has had at least one real, measured
+    /// commit (see `PlayerLiveAnalysisSnapshot.playerVelocity`'s doc for why
+    /// the very first commit's velocity is not a real measurement). Reset
+    /// alongside everything else in `reset()`. Unlike the ball, this needs no
+    /// changing-identity comparison: a player (re)lock always constructs a
+    /// brand-new `PlayerTracker` AND calls this engine's `reset()` together
+    /// (confirmed in `TrackingCoordinator.lockPlayer` — `PlayerTracker
+    /// .reset(to:appearance:)` itself is never called anywhere in this
+    /// codebase), so "first observed tick since this engine's last reset" and
+    /// "first-ever commit on the current PlayerTracker" are the same moment.
+    private var hasPlayerVelocityBeenMeasuredSinceReset = false
+
     public init(historyCapacity: Int = 20_000) {
         self.historyCapacity = max(1, historyCapacity)
     }
@@ -393,11 +437,28 @@ public final class PlayerAnalysisEngine {
         // never turned into a confident near/away claim (pre-commit review
         // section 6). Never raises the detector's own confidence to qualify.
         var normalizedDistance: Double?
+        // Same eligibility gate as `normalizedDistance` above — kept as a
+        // VECTOR (see the type-level doc) rather than only the scalar
+        // distance already computed.
+        var relativeBallPosition: NormalizedPoint?
         if playerObserved, ballVisible, let playerBox, let ballBox, playerBox.width > 0,
            ballConfidence >= PlayerAnalysisV1Calibration.minimumBallConfidenceForProximityAnalysis {
             normalizedDistance = playerBox.center.distance(to: ballBox.center) / playerBox.width
+            relativeBallPosition = NormalizedPoint(
+                x: (ballBox.center.x - playerBox.center.x) / playerBox.width,
+                y: (ballBox.center.y - playerBox.center.y) / playerBox.width
+            )
         }
         let proximityState = updateProximityHysteresis(distanceInBodyWidths: normalizedDistance)
+
+        // Player velocity validity (2026-09-27 co-movement audit finding):
+        // exposed ONLY when the player is currently observed AND this is not
+        // the first-ever measured commit for the current lock (see
+        // `hasPlayerVelocityBeenMeasuredSinceReset`'s doc).
+        let validPlayerVelocity: NormalizedPoint? = (playerObserved && hasPlayerVelocityBeenMeasuredSinceReset) ? playerVelocity : nil
+        if playerObserved {
+            hasPlayerVelocityBeenMeasuredSinceReset = true
+        }
 
         // Ball velocity validity (2026-09-27 wiring): exposed ONLY when the
         // ball is currently visible AND this is not the first confirmed
@@ -421,7 +482,9 @@ public final class PlayerAnalysisEngine {
             ballConfidence: ballVisible ? ballConfidence : nil,
             ballProximityState: proximityState,
             normalizedPlayerBallDistance: normalizedDistance,
-            ballVelocity: validBallVelocity
+            ballVelocity: validBallVelocity,
+            playerVelocity: validPlayerVelocity,
+            relativeBallPosition: relativeBallPosition
         )
 
         recordAggregates(
@@ -476,6 +539,12 @@ public final class PlayerAnalysisEngine {
         // `ballVelocity` is conservatively `nil` for that one tick, even if
         // the underlying ball track never actually changed.
         lastNonNilBallTrackId = nil
+        // A player (re)lock always constructs a brand-new PlayerTracker
+        // (confirmed in TrackingCoordinator.lockPlayer) whose own first
+        // commit is genuinely unmeasured — so clearing this here is not just
+        // conservative, it is CORRECT: the new lock's first observed tick
+        // really is a first-ever measurement.
+        hasPlayerVelocityBeenMeasuredSinceReset = false
     }
 
     /// Aggregates the FULL SESSION (streaming counters, not the bounded
