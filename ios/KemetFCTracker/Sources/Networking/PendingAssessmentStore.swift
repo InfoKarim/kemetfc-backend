@@ -89,6 +89,12 @@ public struct PendingAssessmentRecord: Codable, Identifiable, Equatable {
     public var lastError: String?
     public var uploadAttempts: Int
     public var lastAttemptAt: Date?
+    /// Set when the finalized media failed RecordingIntegrity (e.g. a 0.1 s file for a 30 s
+    /// assessment). Such a record is never uploaded or shown as a success; the file is kept.
+    public var integrityFailure: String?
+    /// Set when the file passed but AVFoundation still reported an error at stop. Survives a
+    /// successful upload (unlike `lastError`, which upload success clears).
+    public var integrityWarning: String?
 
     public init(
         id: String,
@@ -239,6 +245,19 @@ public final class PendingAssessmentStore: ObservableObject {
         let duration = (try? await AVURLAsset(url: url).load(.duration).seconds) ?? 0
         guard duration.isFinite, duration > 0 else { return .unreadable }
         return .verified(sizeBytes: size)
+    }
+
+    /// Measures the FINALIZED file (existence, size, video track, duration) for RecordingIntegrity.
+    public func measureRecording(for record: PendingAssessmentRecord) async -> RecordingMeasurement {
+        let url = localVideoURL(for: record)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return RecordingMeasurement(fileExists: false, sizeBytes: 0, hasVideoTrack: false, durationSeconds: 0)
+        }
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+        let asset = AVURLAsset(url: url)
+        let duration = (try? await asset.load(.duration).seconds) ?? 0
+        let tracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
+        return RecordingMeasurement(fileExists: true, sizeBytes: size, hasVideoTrack: !tracks.isEmpty, durationSeconds: duration)
     }
 
     /// Fast, synchronous existence check for UI rendering — never the

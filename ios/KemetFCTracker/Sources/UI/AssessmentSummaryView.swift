@@ -48,7 +48,7 @@ struct AssessmentSummaryView: View {
                     .font(.system(size: 44))
                     .foregroundStyle(statusColor(record))
                     .padding(.top, 4)
-                Text("ASSESSMENT COMPLETE")
+                Text(record.integrityFailure == nil ? "ASSESSMENT COMPLETE" : "RECORDING FAILED")
                     .font(.title2).bold()
             }
             .padding(.top, 24)
@@ -58,10 +58,21 @@ struct AssessmentSummaryView: View {
                 summaryRow("Recording", durationText(record))
                 summaryRow("Status", localFileStatusText(record))
                 summaryRow("Upload", uploadStatusText(record))
-                if let lastError = record.lastError, record.uploadState != .uploaded {
+                if let failure = record.integrityFailure {
+                    Text(failure)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                } else if let lastError = record.lastError, record.uploadState != .uploaded {
                     Text(lastError)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                if let warning = record.integrityWarning {
+                    Text(warning)
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
                         .multilineTextAlignment(.center)
                 }
             }
@@ -106,6 +117,7 @@ struct AssessmentSummaryView: View {
     /// display, and defers to that stored verification for the rest).
     private func localFileStatusText(_ record: PendingAssessmentRecord) -> String {
         guard store.fileExistsSync(for: record) else { return "Recording file missing" }
+        if record.integrityFailure != nil { return "Recording incomplete — not valid" }
         switch record.uploadState {
         case .failedPermanent:
             if let lastError = record.lastError,
@@ -126,12 +138,14 @@ struct AssessmentSummaryView: View {
         case .pendingUpload, .failedRetryable: return "UPLOAD PENDING\nWill retry automatically"
         case .uploading: return "Uploading..."
         case .uploaded: return "SYNCED\nSecurely uploaded"
-        case .failedPermanent: return "Upload failed — see Pending Uploads"
+        case .failedPermanent:
+            return record.integrityFailure != nil ? "Not uploaded — recording is invalid\nRecord this player again" : "Upload failed — see Pending Uploads"
         }
     }
 
     private func statusIcon(_ record: PendingAssessmentRecord) -> String {
-        record.uploadState == .uploaded ? "checkmark.circle.fill" : "icloud.and.arrow.up"
+        if record.integrityFailure != nil { return "exclamationmark.triangle.fill" }
+        return record.uploadState == .uploaded ? "checkmark.circle.fill" : "icloud.and.arrow.up"
     }
 
     private func statusColor(_ record: PendingAssessmentRecord) -> Color {

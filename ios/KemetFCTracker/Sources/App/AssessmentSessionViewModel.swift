@@ -743,55 +743,35 @@ public final class AssessmentSessionViewModel: ObservableObject {
         // the expected path — declaring it "missing" without checking
         // there first threw away a genuinely safe recording.
         _ = await cameraCaptureManager.stopRecordingAndWait()
+        let finalizationError = cameraCaptureManager.lastFinalizationError
 
-        switch await pendingStore.verifyFileHealth(for: record) {
-        case .missing:
-            // A file-level failure is never retryable — there is nothing
-            // to upload. Still never discarded: the queue entry remains,
-            // visible in Pending Uploads, for the coach to see exactly
-            // what happened, and the record is not deleted.
+        // The FINALIZED file is the source of truth — measured, then judged against how long the
+        // assessment actually ran (RecordingIntegrity). Never the UI timer, never "non-empty".
+        let stopTime = Date()
+        let measurement = await pendingStore.measureRecording(for: record)
+        let wallSeconds = stopTime.timeIntervalSince(record.startTime)
+        record.stopTime = stopTime
+        record.durationSeconds = measurement.durationSeconds.isFinite ? measurement.durationSeconds : 0
+        record.fileSizeBytes = measurement.sizeBytes
+        record.resolution = cameraCaptureManager.activeFormatDescription
+        record.frameRateFps = cameraCaptureManager.effectiveFrameRate
+
+        switch RecordingIntegrity.evaluate(measurement: measurement, wallSeconds: wallSeconds, finalizationError: finalizationError) {
+        case .invalid(let reason):
+            // Kept on disk and in the queue (evidence, never deleted), but NOT uploadable and
+            // NOT a success: failedPermanent is not retryable and never cleanup-eligible.
+            log.error("Recording integrity FAILED for \(recordingId): \(reason) [wall=\(wallSeconds)s media=\(measurement.durationSeconds)s size=\(measurement.sizeBytes) error=\(finalizationError?.summary ?? "none")]")
             record.uploadState = .failedPermanent
-            record.lastError = "Recording file was not found after stopping — the camera may have failed to finalize it."
+            record.integrityFailure = reason
+            record.lastError = reason
             pendingStore.upsert(record)
-            lastError = record.lastError
+            lastError = reason
             lastFinishedRecordingId = recordingId
-        case .empty:
-            record.uploadState = .failedPermanent
-            record.lastError = "Recording file is empty (0 bytes) after stopping."
-            pendingStore.upsert(record)
-            lastError = record.lastError
-            lastFinishedRecordingId = recordingId
-        case .unreadable:
-            record.uploadState = .failedPermanent
-            record.lastError = "Recorded video is not readable — it may be corrupt."
-            pendingStore.upsert(record)
-            lastError = record.lastError
-            lastFinishedRecordingId = recordingId
-        case .verified(let sizeBytes):
-            // The local video is now VERIFIED safe — everything past
-            // this point is upload, which can fail and be retried
-            // without any risk to the recording itself.
-            let duration = (try? await AVURLAsset(url: pendingStore.localVideoURL(for: record)).load(.duration).seconds) ?? 0
-            record.stopTime = Date()
-            record.durationSeconds = duration
-            // A file can be non-empty and readable yet far shorter than the session (a stalled
-            // recording). Say so instead of presenting it as a clean success. The video is
-            // still kept and uploaded — nothing is discarded.
-            let wallSeconds = record.stopTime?.timeIntervalSince(record.startTime) ?? 0
-            if wallSeconds >= 5, duration < wallSeconds * 0.5 {
-                record.lastError = String(
-                    format: "Warning: the saved video is only %.1f s but the assessment ran for %.0f s — the recording may be incomplete.",
-                    duration, wallSeconds
-                )
-                lastError = record.lastError
-            }
-            record.fileSizeBytes = sizeBytes
-            record.resolution = cameraCaptureManager.activeFormatDescription
-            record.frameRateFps = cameraCaptureManager.effectiveFrameRate
+        case .valid(let warning):
+            record.integrityWarning = warning
             record.uploadState = .localSaved
             pendingStore.upsert(record)
             lastFinishedRecordingId = recordingId
-
             await finalizeAndUpload(recordId: recordingId)
         }
     }
@@ -818,6 +798,9 @@ public final class AssessmentSessionViewModel: ObservableObject {
     private func finalizeAndUpload(recordId: String) async {
         guard !activeUploadIds.contains(recordId) else { return }
         guard var record = pendingStore.record(id: recordId), record.stopTime != nil else { return }
+        // A recording that failed its integrity check must never reach the server, whichever path
+        // (auto-retry, manual Retry Upload) gets here.
+        guard record.integrityFailure == nil else { return }
         guard pendingStore.fileExistsSync(for: record) else {
             record.uploadState = .failedPermanent
             record.lastError = "Local video file is missing — cannot upload."

@@ -90,6 +90,11 @@ public final class CameraCaptureManager: NSObject, ObservableObject {
     /// underlying operation — spec: "Multiple Stop taps must share one
     /// finalization operation or be ignored safely."
     private var stopTask: Task<URL?, Never>?
+    /// What AVFoundation reported at the end of the most recent recording (nil = no error).
+    /// Reset when a recording starts; set BEFORE the stop wait resumes, so the caller reads
+    /// this right after `stopRecordingAndWait` returns. The caller decides what it means
+    /// (RecordingIntegrity) — this only reports it.
+    public private(set) var lastFinalizationError: RecordingFinalizationError?
 
     /// Zoom is deliberately separate from gimbal rotation (spec section
     /// 16) — this is the iPhone's own optical/digital zoom via
@@ -274,6 +279,7 @@ public final class CameraCaptureManager: NSObject, ObservableObject {
     private func performStart(to url: URL, timeoutSeconds: TimeInterval) async -> Bool {
         recordingLifecycleState = .starting
         expectedRecordingURL = url
+        lastFinalizationError = nil
         movieFileOutput.startRecording(to: url, recordingDelegate: self)
 
         return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
@@ -476,15 +482,14 @@ extension CameraCaptureManager: AVCaptureFileOutputRecordingDelegate {
     ) {
         Task { @MainActor in
             self.isRecording = false
+            self.lastFinalizationError = error.map(RecordingFinalizationError.init)
             if let error {
                 self.log.error("Recording finished with error: \(error.localizedDescription)")
             }
-            // The URL is handed to the continuation regardless of `error`
-            // — AVFoundation can report a non-fatal error (e.g. a
-            // dropped frame near the end) while still producing a
-            // usable file. The caller (stopAssessment) does its own
-            // real existence/size/AVAsset-readable verification rather
-            // than trusting this delegate's error alone.
+            // The URL is handed to the continuation regardless of `error`, and the error is
+            // kept in `lastFinalizationError`. The caller (stopAssessment) measures the
+            // finalized file and applies RecordingIntegrity — neither the error alone nor a
+            // merely non-empty file decides success.
             self.resolveStopIfStillPending(url: outputFileURL)
             // Guards against a pathological case where didFinishRecordingTo
             // fires without a preceding didStartRecordingTo (a very early
