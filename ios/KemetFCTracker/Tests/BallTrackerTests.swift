@@ -202,4 +202,100 @@ final class BallTrackerTests: XCTestCase {
         tracker.update(detections: [ball(0.61)], at: time + 2 * dt)
         XCTAssertEqual(frame().ballTrackId, 2, "the id changes with the track")
     }
+
+    // MARK: - currentVelocity (read-only mirror of the private `velocity`)
+    //
+    // These prove `currentVelocity` tracks the SAME smoothed value the
+    // tracker already computes for its own matching/prediction — never a
+    // second, independent computation — and that nothing outside BallTracker
+    // can feed a value back into it (it is a `private(set)` struct property;
+    // `tracker.currentVelocity = ...` from this file would not compile).
+
+    /// A. Reflects the existing smoothed velocity after valid sequential detections.
+    func testCurrentVelocityReflectsSmoothedVelocityAfterSequentialDetections() {
+        let tracker = BallTracker()
+        // Acquire a track with zero motion between the two confirmation
+        // frames — the confirming `record(...)` call has `previous: nil`, so
+        // velocity stays exactly zero at this point (matches `loseTrack`'s
+        // and a fresh acquisition's zero baseline).
+        tracker.update(detections: [ball(0.20)], at: dt)
+        tracker.update(detections: [ball(0.20)], at: 2 * dt)
+        XCTAssertEqual(tracker.currentVelocity, NormalizedPoint(x: 0, y: 0))
+
+        // First real motion: Δx == dt over elapsed == dt, so measured == 1.0
+        // unit/sec exactly. EMA (smoothing 0.5): 0*0.5 + 1.0*0.5 = 0.5.
+        tracker.update(detections: [ball(0.20 + dt)], at: 3 * dt)
+        XCTAssertEqual(tracker.currentVelocity.x, 0.5, accuracy: 1e-9)
+        XCTAssertEqual(tracker.currentVelocity.y, 0, accuracy: 1e-9)
+
+        // Same step again: 0.5*0.5 + 1.0*0.5 = 0.75.
+        tracker.update(detections: [ball(0.20 + 2 * dt)], at: 4 * dt)
+        XCTAssertEqual(tracker.currentVelocity.x, 0.75, accuracy: 1e-9)
+    }
+
+    /// B. A temporary miss/searching state preserves the last velocity.
+    func testCurrentVelocityIsPreservedDuringATemporaryMiss() {
+        let tracker = BallTracker()
+        tracker.update(detections: [ball(0.20)], at: dt)
+        tracker.update(detections: [ball(0.20)], at: 2 * dt)
+        tracker.update(detections: [ball(0.20 + dt)], at: 3 * dt)
+        tracker.update(detections: [ball(0.20 + 2 * dt)], at: 4 * dt)
+        let beforeMiss = tracker.currentVelocity
+        XCTAssertNotEqual(beforeMiss, NormalizedPoint(x: 0, y: 0))
+
+        tracker.update(detections: [], at: 5 * dt) // a miss, well within maxSearchSeconds
+        XCTAssertEqual(tracker.state, .searching)
+        XCTAssertEqual(tracker.currentVelocity, beforeMiss, "a miss must not touch velocity at all — held, not recomputed")
+
+        tracker.update(detections: [], at: 6 * dt) // a second consecutive miss
+        XCTAssertEqual(tracker.currentVelocity, beforeMiss)
+    }
+
+    /// C. `loseTrack`/a brand-new track resets velocity to zero.
+    func testCurrentVelocityResetsToZeroWhenTheTrackIsLost() {
+        let tracker = BallTracker()
+        tracker.update(detections: [ball(0.20)], at: dt)
+        tracker.update(detections: [ball(0.20)], at: 2 * dt)
+        tracker.update(detections: [ball(0.20 + dt)], at: 3 * dt)
+        XCTAssertNotEqual(tracker.currentVelocity, NormalizedPoint(x: 0, y: 0))
+
+        // A single gap beyond maxSearchSeconds (2.0s) forces loseTrack().
+        tracker.update(detections: [], at: 3 * dt + 2.5)
+        XCTAssertEqual(tracker.state, .lost)
+        XCTAssertEqual(tracker.currentVelocity, NormalizedPoint(x: 0, y: 0), "loseTrack must zero the exposed velocity, exactly like the internal one")
+
+        // A freshly confirmed new track also starts at zero (the confirming
+        // `record(...)` call has `previous: nil`).
+        let reacquireStart = 3 * dt + 2.5
+        tracker.update(detections: [ball(0.60)], at: reacquireStart + dt)
+        tracker.update(detections: [ball(0.60)], at: reacquireStart + 2 * dt)
+        XCTAssertEqual(tracker.currentVelocity, NormalizedPoint(x: 0, y: 0))
+    }
+
+    /// D. The exposed value cannot independently modify BallTracker's
+    /// internal velocity — `currentVelocity` is `private(set)` (a line like
+    /// `tracker.currentVelocity = NormalizedPoint(x: 99, y: 99)` would not
+    /// compile in this file), and `NormalizedPoint` is a value type, so a
+    /// local copy can never alias or write back into the tracker's state.
+    func testExposedVelocityCannotIndependentlyModifyTrackerInternalVelocity() {
+        let tracker = BallTracker()
+        tracker.update(detections: [ball(0.20)], at: dt)
+        tracker.update(detections: [ball(0.20)], at: 2 * dt)
+        tracker.update(detections: [ball(0.20 + dt)], at: 3 * dt)
+        let real = tracker.currentVelocity
+        XCTAssertEqual(real.x, 0.5, accuracy: 1e-9)
+
+        // Take a local copy and mutate IT, not the tracker.
+        var externalCopy = real
+        externalCopy.x = 999
+        externalCopy.y = -999
+        XCTAssertNotEqual(tracker.currentVelocity, externalCopy, "mutating a local copy must never reach the tracker's own state")
+        XCTAssertEqual(tracker.currentVelocity, real, "the tracker's real value is untouched by the external mutation")
+
+        // The tracker's OWN subsequent computation — not the external copy —
+        // is what drives the next value.
+        tracker.update(detections: [ball(0.20 + 2 * dt)], at: 4 * dt)
+        XCTAssertEqual(tracker.currentVelocity.x, 0.75, accuracy: 1e-9)
+        XCTAssertNotEqual(tracker.currentVelocity, externalCopy)
+    }
 }

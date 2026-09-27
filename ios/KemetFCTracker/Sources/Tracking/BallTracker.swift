@@ -47,6 +47,12 @@ public final class BallTracker: ObservableObject {
     @Published public private(set) var currentConfidence: Double = 0
     /// Identity of the followed ball, nil whenever the ball is not detected this frame.
     @Published public private(set) var currentTrackId: Int?
+    /// Read-only mirror of the private `velocity` below — same normalized
+    /// image-space units/second, same EMA smoothing, same reset/hold
+    /// behavior. Exists only so a downstream consumer (Player Analysis) can
+    /// read it; nothing here can feed back into or alter BallTracker's own
+    /// matching/prediction, which reads only the private `velocity`.
+    @Published public private(set) var currentVelocity = NormalizedPoint(x: 0, y: 0)
 
     /// Where the ball was last actually detected (nil after the track is lost).
     /// For framing continuity only — NOT a detection.
@@ -181,6 +187,7 @@ public final class BallTracker: ObservableObject {
         acquiredTrackCount += 1
         activeTrackId = acquiredTrackCount
         velocity = NormalizedPoint(x: 0, y: 0)
+        currentVelocity = velocity
         record(confirmed.detection, at: time, previous: nil, elapsed: 0)
     }
 
@@ -230,6 +237,7 @@ public final class BallTracker: ObservableObject {
                 x: velocity.x * (1 - velocitySmoothing) + measured.x * velocitySmoothing,
                 y: velocity.y * (1 - velocitySmoothing) + measured.y * velocitySmoothing
             )
+            currentVelocity = velocity
         }
         lastKnownBoundingBox = detection.boundingBox
         lastObservedAt = time
@@ -256,6 +264,7 @@ public final class BallTracker: ObservableObject {
         lastObservedConfidence = 0
         activeTrackId = nil
         velocity = NormalizedPoint(x: 0, y: 0)
+        currentVelocity = velocity
         currentBoundingBox = nil
         currentConfidence = 0
         currentTrackId = nil

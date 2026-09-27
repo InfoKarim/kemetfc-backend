@@ -442,6 +442,8 @@ public final class TrackingCoordinator: ObservableObject {
             playerVelocity: playerTracker?.currentVelocity ?? NormalizedPoint(x: 0, y: 0),
             ballBox: ballTracker.currentBoundingBox,
             ballConfidence: ballTracker.currentConfidence,
+            ballVelocity: ballTracker.currentVelocity,
+            ballTrackId: ballTracker.currentTrackId,
             at: sessionElapsedSeconds
         )
         playerAnalysis = latestPlayerAnalysis

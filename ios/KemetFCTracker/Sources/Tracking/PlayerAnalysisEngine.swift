@@ -147,6 +147,28 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
     /// (player/ball not observed, or ball confidence below
     /// `minimumBallConfidenceForProximityAnalysis`).
     public var normalizedPlayerBallDistance: Double?
+    /// Raw ball velocity vector, in normalized image-space units/second (the
+    /// SAME convention as `BallTracker.currentVelocity`/`PlayerTracker.currentVelocity`)
+    /// — NOT real-world speed, and camera/gimbal motion is NOT compensated
+    /// (see PLAYER_ANALYSIS_V2_EVENT_DESIGN.md section 7's risk matrix, which
+    /// documents the identical uncompensated-pan/tilt risk for player velocity).
+    ///
+    /// Validity, not just presence, is what `nil` means here:
+    /// - `nil` = velocity is NOT currently valid/measurable this frame —
+    ///   either the ball is not currently visible, OR this is the first
+    ///   confirmed observation of a brand-new ball track (see
+    ///   `PlayerAnalysisEngine.observe`'s `ballTrackId` handling below —
+    ///   `BallTracker` reports exactly `(0,0)` on a track's first confirmed
+    ///   frame purely because no measurement exists yet, and that must never
+    ///   be reported as a "confirmed stationary ball").
+    /// - non-nil = a genuinely measured value. `(0,0)` is allowed here ONLY
+    ///   when it is itself a real measurement (a ball that is truly not
+    ///   moving in image-space), never as a substitute for "unmeasured."
+    /// No separate magnitude field exists — a consumer that only needs speed
+    /// derives it from this vector; storing magnitude-only here would discard
+    /// the direction information the same way `PlayerAnalysisHistoryEntry
+    /// .rawSpeed` already does for the player (a known, documented gap).
+    public var ballVelocity: NormalizedPoint?
 
     public init(
         timestamp: TimeInterval,
@@ -156,7 +178,8 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
         ballVisible: Bool,
         ballConfidence: Double?,
         ballProximityState: BallProximityState,
-        normalizedPlayerBallDistance: Double? = nil
+        normalizedPlayerBallDistance: Double? = nil,
+        ballVelocity: NormalizedPoint? = nil
     ) {
         self.timestamp = timestamp
         self.trackingState = trackingState
@@ -166,6 +189,7 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
         self.ballConfidence = ballConfidence
         self.ballProximityState = ballProximityState
         self.normalizedPlayerBallDistance = normalizedPlayerBallDistance
+        self.ballVelocity = ballVelocity
     }
 }
 
@@ -310,6 +334,15 @@ public final class PlayerAnalysisEngine {
 
     private var confirmedProximityState: BallProximityState = .unavailable
 
+    /// The last NON-NIL `ballTrackId` observed — deliberately never
+    /// overwritten with `nil` during a temporary miss (unlike
+    /// `BallTracker.currentTrackId` itself, which does go nil on every miss,
+    /// including a brief, resumable one). Used only to detect the first
+    /// confirmed observation of a genuinely NEW ball track, so that
+    /// `BallTracker`'s hard `(0,0)` on that first frame (no measurement
+    /// exists yet) is never reported as a confirmed-stationary velocity.
+    private var lastNonNilBallTrackId: Int?
+
     public init(historyCapacity: Int = 20_000) {
         self.historyCapacity = max(1, historyCapacity)
     }
@@ -327,6 +360,8 @@ public final class PlayerAnalysisEngine {
         playerVelocity: NormalizedPoint,
         ballBox: NormalizedRect?,
         ballConfidence: Double,
+        ballVelocity: NormalizedPoint = .init(x: 0, y: 0),
+        ballTrackId: Int? = nil,
         at timestamp: TimeInterval
     ) -> PlayerLiveAnalysisSnapshot {
         let trackingState = Self.mapTrackingState(playerState)
@@ -364,6 +399,19 @@ public final class PlayerAnalysisEngine {
         }
         let proximityState = updateProximityHysteresis(distanceInBodyWidths: normalizedDistance)
 
+        // Ball velocity validity (2026-09-27 wiring): exposed ONLY when the
+        // ball is currently visible AND this is not the first confirmed
+        // observation of a brand-new track — see the type-level doc on
+        // `PlayerLiveAnalysisSnapshot.ballVelocity` and `lastNonNilBallTrackId`
+        // above for why a naive "trackId changed since last tick" check would
+        // be wrong (BallTracker.currentTrackId also goes nil on an ordinary,
+        // resumable miss).
+        let isFirstObservationOfBallTrack = ballTrackId != nil && ballTrackId != lastNonNilBallTrackId
+        let validBallVelocity: NormalizedPoint? = (ballVisible && !isFirstObservationOfBallTrack) ? ballVelocity : nil
+        if let ballTrackId {
+            lastNonNilBallTrackId = ballTrackId
+        }
+
         let snapshot = PlayerLiveAnalysisSnapshot(
             timestamp: timestamp,
             trackingState: trackingState,
@@ -372,7 +420,8 @@ public final class PlayerAnalysisEngine {
             ballVisible: ballVisible,
             ballConfidence: ballVisible ? ballConfidence : nil,
             ballProximityState: proximityState,
-            normalizedPlayerBallDistance: normalizedDistance
+            normalizedPlayerBallDistance: normalizedDistance,
+            ballVelocity: validBallVelocity
         )
 
         recordAggregates(
@@ -419,6 +468,14 @@ public final class PlayerAnalysisEngine {
         movementCandidate = .uncertain
         movementCandidateStreak = 0
         confirmedProximityState = .unavailable
+        // Conservative-by-design (2026-09-27 review): a player (re)lock does
+        // NOT reset `BallTracker` itself (the ball is tracked independently
+        // of which player is locked), so this deliberately does not try to
+        // preserve ball-track identity across the reset. The first ball
+        // observation after a reset is treated as a first observation and
+        // `ballVelocity` is conservatively `nil` for that one tick, even if
+        // the underlying ball track never actually changed.
+        lastNonNilBallTrackId = nil
     }
 
     /// Aggregates the FULL SESSION (streaming counters, not the bounded

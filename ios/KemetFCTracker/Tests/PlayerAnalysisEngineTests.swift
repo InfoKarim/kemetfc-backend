@@ -430,4 +430,119 @@ final class PlayerAnalysisEngineTests: XCTestCase {
         XCTAssertEqual(snap.ballConfidence, belowFloor, "the real, unmodified confidence is still reported")
         XCTAssertEqual(snap.ballProximityState, .unavailable, "just below the floor must not produce a confident near/away claim")
     }
+
+    // MARK: - Ball velocity (2026-09-27 wiring — raw vector, validity-gated)
+
+    func testBallVelocityIsNilWhenBallNotVisible() {
+        let engine = PlayerAnalysisEngine()
+        let snap = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: nil, ballConfidence: 0,
+            ballVelocity: .init(x: 0.3, y: 0.1), ballTrackId: 1, at: 0
+        )
+        XCTAssertFalse(snap.ballVisible)
+        XCTAssertNil(snap.ballVelocity, "must never expose a velocity for a ball that isn't visible this frame")
+    }
+
+    func testBallVelocityExposesSuppliedVectorOnAContinuedObservationOfTheSameTrack() {
+        let engine = PlayerAnalysisEngine()
+        _ = engine.observe( // first confirmed observation of track 7 — velocity is nil regardless of this call
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.3), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0, y: 0), ballTrackId: 7, at: 0
+        )
+        let snap = engine.observe( // continued observation, same track
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.35), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0.42, y: -0.1), ballTrackId: 7, at: 1.0
+        )
+        XCTAssertEqual(snap.ballVelocity, NormalizedPoint(x: 0.42, y: -0.1))
+    }
+
+    func testFirstConfirmedObservationOfANewTrackReturnsNilEvenWhenSuppliedVelocityIsZero() {
+        let engine = PlayerAnalysisEngine()
+        let snap = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.3), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0, y: 0), ballTrackId: 1, at: 0
+        )
+        XCTAssertTrue(snap.ballVisible)
+        XCTAssertNil(snap.ballVelocity, "BallTracker's own (0,0) on a track's first confirmed frame means 'not measured yet', never 'confirmed stationary'")
+    }
+
+    func testBriefMissFollowedBySameTrackIdDoesNotManufactureANewTrackCondition() {
+        let engine = PlayerAnalysisEngine()
+        _ = engine.observe( // first observation of track 5 — nil
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.3), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0, y: 0), ballTrackId: 5, at: 0
+        )
+        _ = engine.observe( // continued — valid
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.32), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0.2, y: 0), ballTrackId: 5, at: 1.0
+        )
+        _ = engine.observe( // brief miss: BallTracker itself reports ballTrackId nil, ball not visible
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: nil, ballConfidence: 0,
+            ballVelocity: .init(x: 0.2, y: 0), ballTrackId: nil, at: 2.0
+        )
+        let snap = engine.observe( // resume: the SAME track id (5) reappears
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.34), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0.25, y: 0), ballTrackId: 5, at: 3.0
+        )
+        XCTAssertEqual(snap.ballVelocity, NormalizedPoint(x: 0.25, y: 0), "resuming the SAME track after a brief miss must not be treated as a new track")
+    }
+
+    func testGenuinelyDifferentTrackIdCausesBallVelocityToBeNilForItsFirstObservation() {
+        let engine = PlayerAnalysisEngine()
+        _ = engine.observe( // first observation of track 1 — nil
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.3), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0.2, y: 0), ballTrackId: 1, at: 0
+        )
+        _ = engine.observe( // continued — valid
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.32), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0.3, y: 0), ballTrackId: 1, at: 1.0
+        )
+        // A genuinely different track (id 2), with a deliberately NONZERO
+        // supplied velocity — proving the rule is driven by the trackId
+        // transition, not by "the raw value happens to be zero".
+        let snap = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.7),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.7), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0.99, y: 0.5), ballTrackId: 2, at: 2.0
+        )
+        XCTAssertNil(snap.ballVelocity, "a new trackId's first observation must be treated as unmeasured regardless of the supplied raw value")
+    }
+
+    func testResetClearsRememberedBallTrackIdentityAndFirstPostResetObservationIsNil() {
+        let engine = PlayerAnalysisEngine()
+        _ = engine.observe( // first observation of track 3 — nil
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.3), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0.2, y: 0), ballTrackId: 3, at: 0
+        )
+        let established = engine.observe( // continued — valid
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.32), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0.4, y: 0), ballTrackId: 3, at: 1.0
+        )
+        XCTAssertEqual(established.ballVelocity, NormalizedPoint(x: 0.4, y: 0))
+
+        engine.reset()
+
+        // SAME trackId (3) as before reset — BallTracker itself never
+        // restarted this ball's track (a player re-lock does not touch
+        // BallTracker) — but the engine's own remembered identity was
+        // cleared, so this is conservatively treated as a first observation.
+        let afterReset = engine.observe(
+            playerState: .locked, playerConfidence: 0.9, playerBox: box(0.5),
+            playerVelocity: .init(x: 0, y: 0), ballBox: ballAt(centerX: 0.3), ballConfidence: 0.3,
+            ballVelocity: .init(x: 0.4, y: 0), ballTrackId: 3, at: 100.0
+        )
+        XCTAssertNil(afterReset.ballVelocity, "reset must not preserve hidden ball-track identity state across it")
+    }
 }
