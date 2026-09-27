@@ -11,6 +11,10 @@
 import SwiftUI
 
 struct AssessmentSettingsSheet: View {
+    // Kept unconditionally so the call site's shape doesn't need to change per
+    // build config — the Toggle that actually surfaces this (below) is itself
+    // DEBUG-gated, so this can never become true, and FieldTestOverlay can
+    // never be shown, in a Release build.
     @Binding var isFieldTestMode: Bool
     let isPaused: Bool
     let onPauseToggle: () -> Void
@@ -23,11 +27,13 @@ struct AssessmentSettingsSheet: View {
                     Button(isPaused ? "Resume Tracking" : "Pause Tracking", action: onPauseToggle)
                     Button("Center Gimbal", action: onCenterGimbal)
                 }
+                #if DEBUG
                 Section {
                     Toggle("Field Test Mode", isOn: $isFieldTestMode)
                 } footer: {
-                    Text("Shows real-time technical diagnostics (FPS, confidence, latency) over the camera — for coaches diagnosing tracking issues, not everyday use.")
+                    Text("DEBUG ONLY — raw engineering diagnostics (backend URL, HTTP status, FPS, latency, model names). Never shown in a production build; coaches see Player Live Analysis instead.")
                 }
+                #endif
             }
             .navigationTitle("Assessment Settings")
             .navigationBarTitleDisplayMode(.inline)

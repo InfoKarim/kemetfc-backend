@@ -31,6 +31,10 @@ struct AssessmentCameraView: View {
 
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
+    // Kept unconditionally (harmless, unused in Release) so AssessmentSettingsSheet's
+    // API shape doesn't need to change per build config — its actual effect (showing
+    // FieldTestOverlay) is what's DEBUG-gated below, and the Toggle that sets this is
+    // itself DEBUG-gated in AssessmentSettingsSheet, so it can never become true in Release.
     @State private var isFieldTestMode = false
     @State private var isRecording = false
     @State private var recordingStartTime: Date?
@@ -68,6 +72,25 @@ struct AssessmentCameraView: View {
                     playerFirstName: player.firstNameEn
                 )
 
+                // PLAYER LIVE ANALYSIS — the coach-facing replacement for the old
+                // always-visible FieldTestOverlay (PLAYER_ANALYSIS_CAPABILITY_AUDIT.md).
+                // This view calculates nothing itself; it only displays
+                // coordinator.playerAnalysis, produced downstream of tracking by
+                // PlayerAnalysisEngine.
+                VStack {
+                    Spacer()
+                    HStack {
+                        PlayerLiveAnalysisPanel(snapshot: coordinator.playerAnalysis)
+                        Spacer()
+                    }
+                }
+                .padding()
+                .padding(.bottom, verticalSizeClass == .compact ? 8 : 90)
+
+                #if DEBUG
+                // Developer-only raw diagnostics (backend URL, HTTP status, FPS,
+                // latency, model names) — never present in a production build,
+                // reachable only via the DEBUG-only toggle in AssessmentSettingsSheet.
                 if isFieldTestMode {
                     VStack {
                         Spacer()
@@ -79,6 +102,7 @@ struct AssessmentCameraView: View {
                     .padding()
                     .padding(.bottom, verticalSizeClass == .compact ? 8 : 90)
                 }
+                #endif
 
                 if verticalSizeClass == .compact {
                     landscapeChrome

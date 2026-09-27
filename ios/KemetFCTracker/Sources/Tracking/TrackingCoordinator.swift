@@ -66,6 +66,14 @@ public final class TrackingCoordinator: ObservableObject {
     @Published public private(set) var isGimbalControlLost = false
     private var cancellables = Set<AnyCancellable>()
 
+    /// Player Live Analysis (see PLAYER_ANALYSIS_CAPABILITY_AUDIT.md) — a pure
+    /// downstream consumer of this coordinator's own tracker state, never a
+    /// second source of truth. One engine instance per TrackingCoordinator
+    /// (itself created fresh per assessment in wireTracking()), so its history
+    /// naturally starts empty each session with no explicit reset needed here.
+    private let playerAnalysisEngine = PlayerAnalysisEngine()
+    @Published public private(set) var playerAnalysis: PlayerLiveAnalysisSnapshot?
+
     public let thermalManager = ThermalManager()
 
     // Field Test Mode telemetry (spec section 32) — visible only behind
@@ -158,6 +166,14 @@ public final class TrackingCoordinator: ObservableObject {
         )
     }
 
+    /// Post-assessment aggregation over everything Player Live Analysis has
+    /// observed so far this session — not yet wired into any UI (see the
+    /// implementation report); available for AssessmentSummaryView to adopt
+    /// later without touching this coordinator again.
+    public func playerAnalysisSummary() -> PlayerAnalysisSessionSummary {
+        playerAnalysisEngine.summarize()
+    }
+
     public func setMode(_ newMode: TrackingMode) {
         mode = newMode
         telemetryUploader.recordEvent(type: "mode_switch", details: ["mode": .string(newMode.rawValue)])
@@ -185,6 +201,13 @@ public final class TrackingCoordinator: ObservableObject {
         let signature = Self.appearanceSignature(for: chosen.boundingBox, in: pixelBuffer)
         playerTracker = PlayerTracker(targetTrackId: 1, initialBoundingBox: chosen.boundingBox, appearance: signature)
         framingPipeline.reset()
+        // Pre-commit review section 3: a (re)lock is the real "a different
+        // player is now being analyzed" boundary — this can happen more than
+        // once per recording (coach re-selects mid-assessment), not only once
+        // per TrackingCoordinator instance, so Player Live Analysis must reset
+        // here too, not rely solely on this coordinator's own lifetime.
+        playerAnalysisEngine.reset()
+        playerAnalysis = nil
         playerState = .locked
         telemetryUploader.recordEvent(type: "player_locked", details: ["target_track_id": 1])
     }
@@ -396,6 +419,19 @@ public final class TrackingCoordinator: ObservableObject {
                 referenceDimensions: CGSize(width: 1920, height: 1080)
             )
         }
+
+        // Player Live Analysis: downstream-only, fed the exact same values just
+        // computed above — this never re-runs detection and never influences
+        // tracking/framing/gimbal/recording (all already decided above this line).
+        playerAnalysis = playerAnalysisEngine.observe(
+            playerState: playerTracker?.state,
+            playerConfidence: playerTracker?.currentConfidence ?? 0,
+            playerBox: playerTracker?.currentBoundingBox,
+            playerVelocity: playerTracker?.currentVelocity ?? NormalizedPoint(x: 0, y: 0),
+            ballBox: ballTracker.currentBoundingBox,
+            ballConfidence: ballTracker.currentConfidence,
+            at: sessionElapsedSeconds
+        )
 
         telemetryUploader.recordSample(
             tSeconds: sessionElapsedSeconds,
