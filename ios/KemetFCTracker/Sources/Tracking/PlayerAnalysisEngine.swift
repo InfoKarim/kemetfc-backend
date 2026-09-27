@@ -136,6 +136,17 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
     /// detected this frame.
     public var ballConfidence: Double?
     public var ballProximityState: BallProximityState
+    /// Normalized player-ball distance in body-widths — the SAME value
+    /// `PlayerAnalysisHistoryEntry.normalizedPlayerBallDistance` already
+    /// retains, surfaced here too so a live downstream consumer (the V2
+    /// Temporal Event Detector's ball-approach/separation trend analysis,
+    /// per PLAYER_ANALYSIS_V2_EVENT_DESIGN.md section 4/17) does not need to
+    /// re-derive it or read the bounded history buffer. Additive-only field:
+    /// existing consumers of this struct that don't read it are unaffected.
+    /// nil under the exact same conditions as the history entry's field
+    /// (player/ball not observed, or ball confidence below
+    /// `minimumBallConfidenceForProximityAnalysis`).
+    public var normalizedPlayerBallDistance: Double?
 
     public init(
         timestamp: TimeInterval,
@@ -144,7 +155,8 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
         movementState: MovementState,
         ballVisible: Bool,
         ballConfidence: Double?,
-        ballProximityState: BallProximityState
+        ballProximityState: BallProximityState,
+        normalizedPlayerBallDistance: Double? = nil
     ) {
         self.timestamp = timestamp
         self.trackingState = trackingState
@@ -153,6 +165,7 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
         self.ballVisible = ballVisible
         self.ballConfidence = ballConfidence
         self.ballProximityState = ballProximityState
+        self.normalizedPlayerBallDistance = normalizedPlayerBallDistance
     }
 }
 
@@ -358,7 +371,8 @@ public final class PlayerAnalysisEngine {
             movementState: movementState,
             ballVisible: ballVisible,
             ballConfidence: ballVisible ? ballConfidence : nil,
-            ballProximityState: proximityState
+            ballProximityState: proximityState,
+            normalizedPlayerBallDistance: normalizedDistance
         )
 
         recordAggregates(

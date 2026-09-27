@@ -74,6 +74,12 @@ public final class TrackingCoordinator: ObservableObject {
     private let playerAnalysisEngine = PlayerAnalysisEngine()
     @Published public private(set) var playerAnalysis: PlayerLiveAnalysisSnapshot?
 
+    /// Player Analysis V2.0 — Temporal Event Detection (see
+    /// PLAYER_ANALYSIS_V2_EVENT_DESIGN.md). Pure downstream consumer of
+    /// `playerAnalysis` above; never a second source of truth for tracking.
+    private let playerAnalysisEventDetector = PlayerAnalysisEventDetector()
+    @Published public private(set) var playerAnalysisEvents: [PlayerAnalysisEvent] = []
+
     public let thermalManager = ThermalManager()
 
     // Field Test Mode telemetry (spec section 32) — visible only behind
@@ -208,6 +214,12 @@ public final class TrackingCoordinator: ObservableObject {
         // here too, not rely solely on this coordinator's own lifetime.
         playerAnalysisEngine.reset()
         playerAnalysis = nil
+        // Same session-isolation requirement as the V1 engine above: a
+        // (re)lock is the real "different player" boundary for V2's event
+        // timeline too, so it must reset here rather than only on a new
+        // TrackingCoordinator instance.
+        playerAnalysisEventDetector.reset()
+        playerAnalysisEvents = []
         playerState = .locked
         telemetryUploader.recordEvent(type: "player_locked", details: ["target_track_id": 1])
     }
@@ -423,7 +435,7 @@ public final class TrackingCoordinator: ObservableObject {
         // Player Live Analysis: downstream-only, fed the exact same values just
         // computed above — this never re-runs detection and never influences
         // tracking/framing/gimbal/recording (all already decided above this line).
-        playerAnalysis = playerAnalysisEngine.observe(
+        let latestPlayerAnalysis = playerAnalysisEngine.observe(
             playerState: playerTracker?.state,
             playerConfidence: playerTracker?.currentConfidence ?? 0,
             playerBox: playerTracker?.currentBoundingBox,
@@ -432,6 +444,16 @@ public final class TrackingCoordinator: ObservableObject {
             ballConfidence: ballTracker.currentConfidence,
             at: sessionElapsedSeconds
         )
+        playerAnalysis = latestPlayerAnalysis
+
+        // Player Analysis V2.0 — Temporal Event Detection: pure downstream
+        // consumer of the V1 snapshot just computed above, in the same
+        // timestamp order. Never re-runs detection, never influences
+        // tracking/framing/gimbal/recording.
+        let newPlayerAnalysisEvents = playerAnalysisEventDetector.observe(snapshot: latestPlayerAnalysis)
+        if !newPlayerAnalysisEvents.isEmpty {
+            playerAnalysisEvents.append(contentsOf: newPlayerAnalysisEvents)
+        }
 
         telemetryUploader.recordSample(
             tSeconds: sessionElapsedSeconds,
