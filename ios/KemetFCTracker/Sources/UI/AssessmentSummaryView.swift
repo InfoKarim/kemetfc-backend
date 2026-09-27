@@ -24,6 +24,18 @@ struct AssessmentSummaryView: View {
     let onRetryUpload: () -> Void
     let onDone: () -> Void
     let onViewPendingUploads: () -> Void
+    let onConfirmPlayerTracked: (String) -> Void
+
+    // BUG FIX (found during recording-fix verification): this dialog used to live on
+    // AssessmentCameraView, triggered synchronously by the Stop button — but
+    // stopAssessment() sets lastFinishedRecordingId as soon as it finishes, which
+    // RootView checks with HIGHER precedence than the camera screen, so the app was
+    // already switching to THIS summary screen (unmounting AssessmentCameraView, and
+    // with it the dialog) before the coach could ever tap an answer — "appears and
+    // disappears immediately." This screen is the one that actually stays on screen
+    // after Stop, so the confirmation now lives here instead, shown once per finished
+    // recording via .onAppear.
+    @State private var showPlayerTrackedConfirmation = false
 
     private var record: PendingAssessmentRecord? { store.record(id: recordId) }
 
@@ -31,6 +43,23 @@ struct AssessmentSummaryView: View {
         NavigationStack {
             if let record {
                 content(for: record)
+                    .onAppear {
+                        // Only meaningful for a recording that actually has tracking
+                        // telemetry to confirm — never asked for an integrity failure.
+                        if record.integrityFailure == nil {
+                            showPlayerTrackedConfirmation = true
+                        }
+                    }
+                    .confirmationDialog(
+                        "Was the correct player tracked?",
+                        isPresented: $showPlayerTrackedConfirmation,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Yes") { onConfirmPlayerTracked("yes") }
+                        Button("No") { onConfirmPlayerTracked("no") }
+                        Button("Unsure") { onConfirmPlayerTracked("unsure") }
+                        Button("Skip", role: .cancel) {}
+                    }
             } else {
                 // Should not happen in practice (the record that just
                 // finished recording always exists) — never crash on a

@@ -80,14 +80,26 @@ public final class GimbalController: ObservableObject {
 
     public func attach(accessory: DockAccessory) {
         self.accessory = accessory
-        applySpeedProfileLimits()
         Task {
             do {
                 // KEMET always supplies its own observations — Apple's
                 // built-in system tracking must stay OFF so it never
                 // reframes onto an unselected person (see DockKitManager
                 // header comment).
+                //
+                // CONFIRMED CRASH (physical device, real Flow 2 Pro connected):
+                // DockKit's own setLimits(_:) enforces "API violation: setting
+                // limits only supported when system tracking disabled" and
+                // FATAL-ERRORS (not a throwing Swift error — an unconditional
+                // process termination Apple's framework raises directly) if
+                // called while system tracking is still enabled. The previous
+                // code called applySpeedProfileLimits() (-> setLimits)
+                // SYNCHRONOUSLY, before this Task — and therefore before
+                // system tracking was ever disabled — crashing the app the
+                // instant a real accessory was attached. setLimits must not
+                // run until setSystemTrackingEnabled(false) has completed.
                 try await DockAccessoryManager.shared.setSystemTrackingEnabled(false)
+                applySpeedProfileLimits()
                 try await accessory.setFramingMode(.automatic)
             } catch {
                 log.error("Initial gimbal configuration failed: \(error.localizedDescription)")

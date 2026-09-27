@@ -83,7 +83,10 @@ struct RootView: View {
                         session.clearFinishedRecording()
                         coachWantsToRecord = false
                     },
-                    onViewPendingUploads: { showPendingUploads = true }
+                    onViewPendingUploads: { showPendingUploads = true },
+                    onConfirmPlayerTracked: { answer in
+                        Task { await session.confirmPlayerTracked(answer) }
+                    }
                 )
             } else if !coachWantsToRecord {
                 CoachHomeView(
@@ -130,83 +133,125 @@ struct RootView: View {
                         .background(Color.kemetNavy)
                     }
                 }
-            } else if let coordinator = session.trackingCoordinator, let player = session.confirmedPlayer {
-                // The REAL coordinator AssessmentSessionViewModel created in
-                // startAssessment(...) and is actively feeding camera frames
-                // to — never a fresh throwaway instance the view constructs
-                // itself, which would silently desync the HUD from what's
-                // actually being tracked.
-                AssessmentCameraView(
-                    capture: session.cameraCaptureManager,
-                    dockKit: session.dockKitManager,
-                    coordinator: coordinator,
-                    player: player,
-                    backendDiagnostics: session.backendDiagnostics,
-                    onTapToLock: { point in
-                        // Phase 2 fix: this was a literal no-op — tap-to-lock
-                        // was completely disconnected end to end, not merely
-                        // hardcoded to frame-center. AssessmentCameraView has
-                        // already converted the raw view tap into a
-                        // normalized camera-space point; the coordinator
-                        // supplies the matching detections/pixel buffer from
-                        // that same moment (see TrackingCoordinator
-                        // .latestDetections/.latestPixelBuffer) so the tap
-                        // handler never needs its own stale copy of either.
-                        guard let pixelBuffer = coordinator.latestPixelBuffer else { return }
-                        session.handlePlayerTap(point, detections: coordinator.latestDetections, pixelBuffer: pixelBuffer)
-                    },
-                    onStartAssessment: {
-                        Task { await session.startAssessment(mode: .smartSoccer, speedProfile: .sport) }
-                    },
-                    onStopAssessment: {
-                        Task { await session.stopAssessment() }
-                    },
-                    onConfirmPlayerTracked: { answer in
-                        Task { await session.confirmPlayerTracked(answer) }
-                    }
-                )
-            } else if session.isAssessmentActive {
-                // Recording started (spec Phase 1: unconditionally, the
-                // instant Start Assessment was tapped) but the backend
-                // tracking session isn't wired up yet — either still
-                // retrying in the background, or genuinely offline for
-                // this whole recording. The video is safely recording
-                // via cameraCaptureManager regardless; this is presentation
-                // only, and Stop Assessment here is the SAME call as the
-                // full camera view's (spec Phase 4: never forces a
-                // restart or re-scan just because live tracking hasn't
-                // connected yet).
-                recordingWithoutTrackingScreen
-            } else {
-                // Player confirmed, but startAssessment(...) hasn't run
-                // yet — a real app shows a "Connect Flow 2 Pro / press
-                // Start Assessment" screen here; kept minimal since that
-                // screen's design is a product decision, not a
-                // tracking-engineering one. This is also the natural
-                // place to reach Gimbal Diagnostics / DockKit Test Mode
-                // exactly when a coach would want to sanity-check the
-                // gimbal BEFORE trusting it during a real assessment.
-                NavigationStack {
-                    VStack(spacing: 16) {
-                        Text("Player confirmed. Connect the Flow 2 Pro, then start the assessment.")
-                            .multilineTextAlignment(.center)
-                            .padding()
-                        Button("Start Assessment") {
-                            Task { await session.startAssessment(mode: .smartSoccer, speedProfile: .sport) }
-                        }
-                        .buttonStyle(.borderedProminent)
+            } else if let player = session.confirmedPlayer {
+                // ROOT-CAUSE FIX (physical-device investigation, 2026-09-27): the camera
+                // preview used to live INSIDE AssessmentCameraView, which only enters the
+                // view tree once `trackingCoordinator` becomes non-nil — i.e. AFTER
+                // `AVCaptureMovieFileOutput` is already recording (set inside wireTracking(),
+                // itself called from startAssessment() after the movie file output is
+                // already confirmed recording). That meant `CameraPreviewRepresentable
+                // .makeUIView` created a BRAND NEW `AVCaptureVideoPreviewLayer` and attached
+                // it to the live session — a genuinely expensive, ~200-250ms synchronous
+                // main-thread AVFoundation operation — WHILE the movie writer was already
+                // active. Four independent physical-device runs, each fully instrumented,
+                // showed `AVFoundationErrorDomain -11818`/`NSOSStatusErrorDomain -16414`
+                // arriving 10-30ms after that exact statement returned, every single time —
+                // with no AVCaptureSessionRuntimeError/WasInterrupted notification, no
+                // explicit stopRecording/stopRunning call, no session/device/connection
+                // mutation, and no other production-only code path anywhere in the
+                // recording window. Every other candidate (fps, session preset, codec,
+                // stabilization, backend networking, TelemetryUploader, the entire
+                // TrackingCoordinator/Vision/CIContext object graph under real load, and the
+                // real CameraCaptureManager/AVCaptureVideoDataOutput/AVCaptureMovieFileOutput
+                // in isolation) was independently proven safe.
+                //
+                // THE FIX: mount exactly ONE `CameraPreviewRepresentable` — hence exactly one
+                // `AVCaptureVideoPreviewLayer` — for the entire lifetime of a confirmed
+                // player, BEFORE `Start Assessment` is ever tapped and therefore before
+                // `movieFileOutput.startRecording` is ever called. SwiftUI preserves a
+                // `UIViewRepresentable`'s backing UIView/CALayer across body re-evaluations
+                // as long as it stays at the same position in the view tree — it does NOT
+                // get destroyed and recreated when `trackingCoordinator`/`isAssessmentActive`
+                // change below, so the preview layer's one-time expensive attach happens
+                // once, safely, with no movie file output active yet. The per-state content
+                // (connect-gimbal prompt, "recording without tracking" banner, or the full
+                // AssessmentCameraView HUD/overlay) is layered ON TOP of that persistent
+                // preview instead of each owning/recreating its own.
+                ZStack {
+                    CameraPreviewRepresentable(capture: session.cameraCaptureManager)
+                        .ignoresSafeArea()
 
-                        NavigationLink("Gimbal Diagnostics") {
-                            GimbalDiagnosticsView(dockKit: session.dockKitManager)
-                        }
-                        NavigationLink("DockKit Test Mode") {
-                            DockKitTestModeView(dockKit: session.dockKitManager, capture: session.cameraCaptureManager)
-                        }
-                        if session.pendingStore.actionablePendingCount > 0 {
-                            Button("Pending Uploads (\(session.pendingStore.actionablePendingCount))") {
-                                showPendingUploads = true
+                    if let coordinator = session.trackingCoordinator {
+                        // The REAL coordinator AssessmentSessionViewModel created in
+                        // startAssessment(...) and is actively feeding camera frames
+                        // to — never a fresh throwaway instance the view constructs
+                        // itself, which would silently desync the HUD from what's
+                        // actually being tracked.
+                        AssessmentCameraView(
+                            capture: session.cameraCaptureManager,
+                            dockKit: session.dockKitManager,
+                            coordinator: coordinator,
+                            player: player,
+                            backendDiagnostics: session.backendDiagnostics,
+                            onTapToLock: { point in
+                                // Phase 2 fix: this was a literal no-op — tap-to-lock
+                                // was completely disconnected end to end, not merely
+                                // hardcoded to frame-center. AssessmentCameraView has
+                                // already converted the raw view tap into a
+                                // normalized camera-space point; the coordinator
+                                // supplies the matching detections/pixel buffer from
+                                // that same moment (see TrackingCoordinator
+                                // .latestDetections/.latestPixelBuffer) so the tap
+                                // handler never needs its own stale copy of either.
+                                guard let pixelBuffer = coordinator.latestPixelBuffer else { return }
+                                session.handlePlayerTap(point, detections: coordinator.latestDetections, pixelBuffer: pixelBuffer)
+                            },
+                            onStartAssessment: {
+                                Task { await session.startAssessment(mode: .smartSoccer, speedProfile: .sport) }
+                            },
+                            onStopAssessment: {
+                                Task { await session.stopAssessment() }
+                            }
+                        )
+                    } else if session.isAssessmentActive {
+                        // Recording started (spec Phase 1: unconditionally, the
+                        // instant Start Assessment was tapped) but the backend
+                        // tracking session isn't wired up yet — either still
+                        // retrying in the background, or genuinely offline for
+                        // this whole recording. The video is safely recording
+                        // via cameraCaptureManager regardless; this is presentation
+                        // only, and Stop Assessment here is the SAME call as the
+                        // full camera view's (spec Phase 4: never forces a
+                        // restart or re-scan just because live tracking hasn't
+                        // connected yet).
+                        recordingWithoutTrackingScreen
+                    } else {
+                        // Player confirmed, but startAssessment(...) hasn't run
+                        // yet — a real app shows a "Connect Flow 2 Pro / press
+                        // Start Assessment" screen here; kept minimal since that
+                        // screen's design is a product decision, not a
+                        // tracking-engineering one. This is also the natural
+                        // place to reach Gimbal Diagnostics / DockKit Test Mode
+                        // exactly when a coach would want to sanity-check the
+                        // gimbal BEFORE trusting it during a real assessment.
+                        // The camera preview behind this content is the SAME
+                        // persistent layer the assessment itself will use — see
+                        // the fix note above this ZStack.
+                        NavigationStack {
+                            VStack(spacing: 16) {
+                                Text("Player confirmed. Connect the Flow 2 Pro, then start the assessment.")
+                                    .multilineTextAlignment(.center)
+                                    .padding()
+                                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                                Button("Start Assessment") {
+                                    Task { await session.startAssessment(mode: .smartSoccer, speedProfile: .sport) }
+                                }
+                                .buttonStyle(.borderedProminent)
+
+                                NavigationLink("Gimbal Diagnostics") {
+                                    GimbalDiagnosticsView(dockKit: session.dockKitManager)
+                                }
+                                NavigationLink("DockKit Test Mode") {
+                                    DockKitTestModeView(dockKit: session.dockKitManager, capture: session.cameraCaptureManager)
+                                }
+                                if session.pendingStore.actionablePendingCount > 0 {
+                                    Button("Pending Uploads (\(session.pendingStore.actionablePendingCount))") {
+                                        showPendingUploads = true
+                                    }
+                                }
                             }
                         }
+                        .toolbarBackground(.hidden, for: .navigationBar)
                     }
                 }
             }
@@ -221,29 +266,31 @@ struct RootView: View {
     }
 
     private var recordingWithoutTrackingScreen: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            VStack(spacing: 20) {
-                Spacer()
-                Image(systemName: "wifi.slash")
-                    .font(.system(size: 40))
-                    .foregroundStyle(.orange)
-                Text("Recording...")
-                    .font(.title2).bold()
-                    .foregroundStyle(.white)
-                Text("Saving locally. Live tracking will connect automatically once the KEMET server is reachable.")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.7))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
-                Spacer()
-                Button("Stop Assessment") {
-                    Task { await session.stopAssessment() }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-                .padding(.bottom, 40)
+        // No opaque background here anymore — this now overlays the persistent camera
+        // preview mounted by the parent ZStack (see the fix note above it) rather than
+        // hiding it behind a black screen, which also means the coach can genuinely see
+        // that recording is live even before tracking connects.
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "wifi.slash")
+                .font(.system(size: 40))
+                .foregroundStyle(.orange)
+            Text("Recording...")
+                .font(.title2).bold()
+                .foregroundStyle(.white)
+            Text("Saving locally. Live tracking will connect automatically once the KEMET server is reachable.")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.7))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Spacer()
+            Button("Stop Assessment") {
+                Task { await session.stopAssessment() }
             }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .padding(.bottom, 40)
         }
+        .background(.black.opacity(0.35))
     }
 }

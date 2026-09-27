@@ -28,7 +28,6 @@ struct AssessmentCameraView: View {
     let onTapToLock: (NormalizedPoint) -> Void
     let onStartAssessment: () -> Void
     let onStopAssessment: () -> Void
-    let onConfirmPlayerTracked: (String) -> Void
 
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
@@ -36,7 +35,6 @@ struct AssessmentCameraView: View {
     @State private var isRecording = false
     @State private var recordingStartTime: Date?
     @State private var elapsedSeconds = 0
-    @State private var showPlayerTrackedConfirmation = false
     @State private var showSettingsSheet = false
     @State private var showGimbalDetail = false
     @State private var unavailableModeMessage: String?
@@ -47,7 +45,14 @@ struct AssessmentCameraView: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                CameraPreviewRepresentable(session: capture.session)
+                // ROOT-CAUSE FIX: the camera preview is no longer created here. It is
+                // mounted ONCE by the parent (KemetFCTrackerApp.RootView), persisting
+                // across the whole confirmed-player lifetime — including before Start
+                // Assessment is ever tapped — so its one-time expensive
+                // AVCaptureVideoPreviewLayer attach never coincides with an active
+                // AVCaptureMovieFileOutput recording. This transparent layer only keeps
+                // the tap-to-lock gesture and hit-testing working exactly as before.
+                Color.clear
                     .ignoresSafeArea()
                     .contentShape(Rectangle())
                     .gesture(tapToLockGesture(viewSize: proxy.size))
@@ -107,18 +112,9 @@ struct AssessmentCameraView: View {
                 }
             }
         }
-        .background(.black)
+        // No opaque background here anymore — this view now overlays the persistent
+        // camera preview mounted by the parent (see the fix note in this ZStack above).
         .statusBarHidden(verticalSizeClass == .compact)
-        .confirmationDialog(
-            "Was the correct player tracked?",
-            isPresented: $showPlayerTrackedConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Yes") { onConfirmPlayerTracked("yes") }
-            Button("No") { onConfirmPlayerTracked("no") }
-            Button("Unsure") { onConfirmPlayerTracked("unsure") }
-            Button("Skip", role: .cancel) {}
-        }
         .sheet(isPresented: $showSettingsSheet) {
             AssessmentSettingsSheet(
                 isFieldTestMode: $isFieldTestMode,
@@ -287,7 +283,6 @@ struct AssessmentCameraView: View {
             HapticFeedback.notify(.warning)
             onStopAssessment()
             recordingStartTime = nil
-            showPlayerTrackedConfirmation = true
         } else {
             HapticFeedback.impact(.rigid)
             recordingStartTime = Date()
@@ -346,11 +341,14 @@ enum HapticFeedback {
 /// UIViewRepresentable wrapping AVCaptureVideoPreviewLayer — standard
 /// AVFoundation preview boilerplate.
 struct CameraPreviewRepresentable: UIViewRepresentable {
-    let session: AVCaptureSession
+    // Takes the whole manager (not just `session`) so it can read `capture
+    // .activeVideoDimensions` etc. elsewhere in this file if ever needed — currently only
+    // `.session` is used, exactly as before.
+    let capture: CameraCaptureManager
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
-        view.videoPreviewLayer.session = session
+        view.videoPreviewLayer.session = capture.session
         view.videoPreviewLayer.videoGravity = .resizeAspectFill
         return view
     }
