@@ -8,15 +8,19 @@
 //  never a copy-pasted state machine — so live and replay behavior can
 //  never diverge by construction.
 //
-//  IMPORTANT — CONFIGURATION SCOPE: `TouchCandidateDetector` accepts no
-//  injected configuration today (confirmed by source audit). This engine
-//  can therefore only replay using the BASELINE configuration — the exact
-//  same constants the live detector always uses. Requesting any other
-//  configuration is explicitly REJECTED (`.unsupportedConfiguration`),
-//  never silently ignored or approximated. True alternate-configuration
-//  replay requires a small, approval-gated `TouchCandidateDetector`
-//  refactor — see the phase report for the exact proposed API change; it is
-//  NOT implemented here.
+//  CONFIGURATION SCOPE (2026-09-28, configuration injection): since
+//  `TouchCandidateDetector` now accepts an injected
+//  `TouchCandidateDetectorConfigurationSnapshot` (defaulting to `.baseline`,
+//  which live production always uses implicitly), this engine can replay
+//  the SAME captured observation stream under ANY semantically valid
+//  configuration — not just baseline. A configuration that fails
+//  `validate()` (see that type's own doc — e.g. a negative window duration,
+//  a non-finite value, or a direction-similarity threshold outside its
+//  meaningful cosine range) is REJECTED, never silently substituted or
+//  clamped. Producing a DIFFERENT alternate configuration is NOT itself
+//  calibration, ranking, or a claim that any configuration is better — see
+//  `TouchCandidateExperimentRunner` for where evaluation against ground
+//  truth actually happens; this file only proves replay is trustworthy.
 //
 
 import Foundation
@@ -24,9 +28,8 @@ import Foundation
 
 public enum TouchCandidateReplayError: Error, Equatable {
     case incompatibleSchemaVersion(found: Int, expected: Int)
-    /// Thrown for any configuration other than `.baseline` — see the file
-    /// header. Never silently substituted with baseline.
-    case unsupportedConfiguration
+    /// The requested configuration failed `TouchCandidateDetectorConfigurationSnapshot.validate()`.
+    case invalidConfiguration(TouchCandidateDetectorConfigurationSnapshotValidationError)
 }
 
 /// Remains a Touch Candidate — NEVER "ground truth" or "validated touches"
@@ -60,22 +63,29 @@ public struct TouchCandidateReplayResult: Codable, Equatable, Sendable {
 
 public enum TouchCandidateReplayEngine {
     /// Feeds `capture.observations`, IN ORDER, through a FRESH
-    /// `TouchCandidateDetector()` instance (one full epoch — matches the
-    /// live "one relevant epoch per exported artifact" guarantee; a fresh
-    /// instance is itself equivalent to a `reset()` boundary). The original
+    /// `TouchCandidateDetector(configuration:)` instance — the SAME
+    /// production detector implementation, never a reimplementation of its
+    /// state machine (one full epoch — matches the live "one relevant
+    /// epoch per exported artifact" guarantee; a fresh instance is itself
+    /// equivalent to a `reset()` boundary). The original
     /// `capture.observations` array is never mutated (value-type `struct`,
-    /// `let`-only access here).
+    /// `let`-only access here), and `capture.detectorConfigurationAtCapture`
+    /// (what was LIVE when the observations were recorded) is left
+    /// completely untouched — only this call's own `configuration`
+    /// parameter (what this REPLAY uses) can differ from it.
     public static func replay(
         capture: TouchCandidateObservationCapture, configuration: TouchCandidateDetectorConfigurationSnapshot = .baseline
     ) throws -> TouchCandidateReplayResult {
         guard capture.schemaVersion == TouchCandidateObservationCapture.currentSchemaVersion else {
             throw TouchCandidateReplayError.incompatibleSchemaVersion(found: capture.schemaVersion, expected: TouchCandidateObservationCapture.currentSchemaVersion)
         }
-        guard configuration.fingerprint == TouchCandidateDetectorConfigurationSnapshot.baseline.fingerprint else {
-            throw TouchCandidateReplayError.unsupportedConfiguration
+        do {
+            try configuration.validate()
+        } catch let validationError as TouchCandidateDetectorConfigurationSnapshotValidationError {
+            throw TouchCandidateReplayError.invalidConfiguration(validationError)
         }
 
-        let detector = TouchCandidateDetector()
+        let detector = TouchCandidateDetector(configuration: configuration)
         var events: [TouchCandidateEvent] = []
         for observation in capture.observations {
             let (analysis, coMovement) = observation.reconstructedSnapshots()

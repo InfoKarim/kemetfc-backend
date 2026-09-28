@@ -217,13 +217,23 @@ final class TouchCandidateReplayEngineTests: XCTestCase {
         }
     }
 
-    func testNonBaselineConfigurationIsRejectedNotSilentlySubstituted() throws {
+    func testInvalidConfigurationReplayIsRejectedNotSilentlySubstituted() throws {
         let capture = try buildCapture(noEventPlan())
-        var nonBaseline = TouchCandidateDetectorConfigurationSnapshot.baseline
-        nonBaseline.minimumSpeedChangeForTouchCandidate += 1.0
-        XCTAssertThrowsError(try TouchCandidateReplayEngine.replay(capture: capture, configuration: nonBaseline)) { error in
-            XCTAssertEqual(error as? TouchCandidateReplayError, .unsupportedConfiguration)
+        var invalid = TouchCandidateDetectorConfigurationSnapshot.baseline
+        invalid.cooldownDurationSeconds = -1.0
+        XCTAssertThrowsError(try TouchCandidateReplayEngine.replay(capture: capture, configuration: invalid)) { error in
+            XCTAssertEqual(error as? TouchCandidateReplayError, .invalidConfiguration(.negativeDuration(field: "cooldownDurationSeconds")))
         }
+    }
+
+    func testValidNonBaselineConfigurationReplayIsAccepted() throws {
+        // A semantically valid, non-baseline configuration must now be
+        // ACCEPTED (2026-09-28, configuration injection) — the old
+        // baseline-only restriction is gone.
+        let capture = try buildCapture(noEventPlan())
+        var lenient = TouchCandidateDetectorConfigurationSnapshot.baseline
+        lenient.minimumSpeedChangeForTouchCandidate = 0.001
+        XCTAssertNoThrow(try TouchCandidateReplayEngine.replay(capture: capture, configuration: lenient))
     }
 
     func testBaselineConfigurationFingerprintChangeIsDetectable() throws {
@@ -256,6 +266,134 @@ final class TouchCandidateReplayEngineTests: XCTestCase {
             XCTAssertEqual(record.directionSimilarity, exported.directionSimilarity)
             XCTAssertEqual(record.minimumPlayerBallDistance, exported.minimumPlayerBallDistance)
         }
+    }
+
+    // MARK: - Part 8: controlled alternate-configuration behavior change
+
+    func testBorderlineSpeedChangeRejectedByBaselineEmittedByLowerThreshold() throws {
+        // Same direction throughout (cosine == 1) so direction-change never
+        // contributes — isolates the speed-change threshold as the ONLY
+        // variable under test.
+        var plan: TickPlan = []
+        let pre = NormalizedPoint(x: 0.2, y: 0)
+        for i in 0..<5 { plan.append((armTime(i), .away, pre, true, 3.0, .unavailable, 1)) }
+        plan.append((0.5, .near, pre, true, 1.0, .candidate, 1))
+        let post = NormalizedPoint(x: 0.25, y: 0) // |speedChange| = 0.05: below baseline 0.08, above a lower test threshold
+        for i in 1...5 { plan.append((0.5 + Double(i) * 0.1, .near, post, true, 1.0, .sustained, 1)) }
+        let capture = try buildCapture(plan)
+
+        let baselineResult = try TouchCandidateReplayEngine.replay(capture: capture, configuration: .baseline)
+        XCTAssertTrue(baselineResult.events.isEmpty, "baseline (threshold 0.08) must reject a 0.05 speed change")
+
+        var lowerThreshold = TouchCandidateDetectorConfigurationSnapshot.baseline
+        lowerThreshold.minimumSpeedChangeForTouchCandidate = 0.03
+        let alternateResult = try TouchCandidateReplayEngine.replay(capture: capture, configuration: lowerThreshold)
+        XCTAssertEqual(alternateResult.events.count, 1, "lower threshold (0.03) must emit the SAME 0.05 speed change")
+        XCTAssertEqual(alternateResult.events.first?.speedChange ?? -99, 0.05, accuracy: 1e-9)
+    }
+
+    func testBorderlineDirectionChangeRejectedByBaselineEmittedByAlternateMaximum() throws {
+        var plan: TickPlan = []
+        let pre = NormalizedPoint(x: 0.3, y: 0) // speed 0.3
+        for i in 0..<5 { plan.append((armTime(i), .away, pre, true, 3.0, .unavailable, 1)) }
+        plan.append((0.5, .near, pre, true, 1.0, .candidate, 1))
+        // Same magnitude (0.3), rotated ~53.13° — cosine similarity == 0.6,
+        // so |speedChange| == 0 (never meaningful) and only direction can
+        // decide the outcome.
+        let post = NormalizedPoint(x: 0.18, y: 0.24)
+        for i in 1...5 { plan.append((0.5 + Double(i) * 0.1, .near, post, true, 1.0, .sustained, 1)) }
+        let capture = try buildCapture(plan)
+
+        let baselineResult = try TouchCandidateReplayEngine.replay(capture: capture, configuration: .baseline)
+        XCTAssertTrue(baselineResult.events.isEmpty, "baseline (max similarity 0.5) must reject a 0.6-similarity direction change")
+
+        var higherMaximum = TouchCandidateDetectorConfigurationSnapshot.baseline
+        higherMaximum.maximumDirectionSimilarityForTouchCandidate = 0.7
+        let alternateResult = try TouchCandidateReplayEngine.replay(capture: capture, configuration: higherMaximum)
+        XCTAssertEqual(alternateResult.events.count, 1, "higher maximum (0.7) must emit the SAME 0.6-similarity direction change")
+        XCTAssertEqual(alternateResult.events.first?.directionSimilarity ?? -99, 0.6, accuracy: 1e-9)
+    }
+
+    func testAlternateConfigurationNeverLabeledCalibratedOrSuperior() throws {
+        // Structural guard, not a semantic one: `.baseline` itself must
+        // remain untouched by constructing/using an alternate configuration
+        // elsewhere in the same process (Part 13 — no calibration performed).
+        var alternate = TouchCandidateDetectorConfigurationSnapshot.baseline
+        alternate.minimumSpeedChangeForTouchCandidate = 0.001
+        _ = try TouchCandidateReplayEngine.replay(capture: buildCapture(noEventPlan()), configuration: alternate)
+        XCTAssertEqual(TouchCandidateDetectorConfigurationSnapshot.baseline.minimumSpeedChangeForTouchCandidate, TouchCandidateCalibration.minimumSpeedChangeForTouchCandidate, "using an alternate configuration for replay must never mutate .baseline or the live TouchCandidateCalibration constants")
+    }
+
+    // MARK: - Part 10: determinism across configurations
+
+    func testReplayIsDeterministicAcrossRepeatedRunsWithAlternateConfiguration() throws {
+        var alternate = TouchCandidateDetectorConfigurationSnapshot.baseline
+        alternate.minimumSpeedChangeForTouchCandidate = 0.03
+        let capture = try buildCapture(meaningfulSpeedChangePlan())
+        let result1 = try TouchCandidateReplayEngine.replay(capture: capture, configuration: alternate)
+        let result2 = try TouchCandidateReplayEngine.replay(capture: capture, configuration: alternate)
+        assertPredictionsEquivalent(result1.events, result2.events)
+        XCTAssertEqual(result1.configurationFingerprint, result2.configurationFingerprint)
+    }
+
+    func testSameObservationsSameFingerprintProduceIdenticalEvents() throws {
+        let capture = try buildCapture(meaningfulSpeedChangePlan())
+        var alternate = TouchCandidateDetectorConfigurationSnapshot.baseline
+        alternate.minimumSpeedChangeForTouchCandidate = 0.03
+        let result1 = try TouchCandidateReplayEngine.replay(capture: capture, configuration: alternate)
+        // Reconstruct an equal-but-distinct configuration value (not the
+        // same Swift value in memory) with the identical fingerprint.
+        var reconstructed = TouchCandidateDetectorConfigurationSnapshot.baseline
+        reconstructed.minimumSpeedChangeForTouchCandidate = 0.03
+        XCTAssertEqual(alternate.fingerprint, reconstructed.fingerprint)
+        let result2 = try TouchCandidateReplayEngine.replay(capture: capture, configuration: reconstructed)
+        assertPredictionsEquivalent(result1.events, result2.events)
+    }
+
+    // MARK: - Part 11: capture-vs-replay provenance stay distinct
+
+    func testCaptureConfigurationAtCaptureNeverOverwrittenByReplayConfiguration() throws {
+        let observations = meaningfulSpeedChangePlan().map { step in
+            TouchCandidateObservationRecord(
+                timestampSeconds: step.t, ballVisible: step.visible, ballVelocity: step.velocity,
+                normalizedPlayerBallDistance: step.distance, ballProximityState: step.proximity,
+                ballTrackId: step.visible ? step.trackId : nil, coMovementState: step.coMovement
+            )
+        }
+        let capture = try TouchCandidateObservationCapture(assessmentId: "A1", detectorConfigurationAtCapture: .baseline, observations: observations)
+        var alternate = TouchCandidateDetectorConfigurationSnapshot.baseline
+        alternate.minimumSpeedChangeForTouchCandidate = 0.03
+
+        let result = try TouchCandidateReplayEngine.replay(capture: capture, configuration: alternate)
+
+        // "Captured while live configuration = baseline; replayed using
+        // configuration = alternate" — unambiguous, without mutating the
+        // capture's own historical provenance.
+        XCTAssertEqual(capture.detectorConfigurationAtCapture, .baseline)
+        XCTAssertEqual(capture.detectorConfigurationFingerprint, TouchCandidateDetectorConfigurationSnapshot.baseline.fingerprint)
+        XCTAssertEqual(result.replayDetectorConfiguration, alternate)
+        XCTAssertEqual(result.configurationFingerprint, alternate.fingerprint)
+        XCTAssertNotEqual(result.configurationFingerprint, capture.detectorConfigurationFingerprint)
+    }
+
+    // MARK: - Part 12: dataset/experiment integration under an alternate configuration
+
+    func testAlternateConfigurationReplayConvertsToPredictionDatasetUnmodified() throws {
+        var lowerThreshold = TouchCandidateDetectorConfigurationSnapshot.baseline
+        lowerThreshold.minimumSpeedChangeForTouchCandidate = 0.03
+        var plan: TickPlan = []
+        let pre = NormalizedPoint(x: 0.2, y: 0)
+        for i in 0..<5 { plan.append((armTime(i), .away, pre, true, 3.0, .unavailable, 1)) }
+        plan.append((0.5, .near, pre, true, 1.0, .candidate, 1))
+        let post = NormalizedPoint(x: 0.25, y: 0)
+        for i in 1...5 { plan.append((0.5 + Double(i) * 0.1, .near, post, true, 1.0, .sustained, 1)) }
+        let capture = try buildCapture(plan)
+
+        let result = try TouchCandidateReplayEngine.replay(capture: capture, configuration: lowerThreshold)
+        XCTAssertEqual(result.events.count, 1, "sanity: this plan must emit under the lower threshold")
+        let dataset = result.toPredictionDataset(timebase: .analysisSeconds)
+        XCTAssertEqual(dataset.predictions.count, 1)
+        XCTAssertEqual(dataset.predictions.first?.speedChange, result.events.first?.speedChange)
     }
 
     // MARK: - Performance sanity (Part 19) — no fragile wall-clock assertions
@@ -294,5 +432,38 @@ final class TouchCandidateReplayEngineTests: XCTestCase {
         // accumulation or ordering nondeterminism across runs.
         let result2 = try TouchCandidateReplayEngine.replay(capture: capture)
         XCTAssertEqual(result.events.count, result2.events.count)
+    }
+
+    func testLargeSyntheticObservationStreamReplaysUnderAnAlternateConfigurationWithoutCrashing() throws {
+        var observations: [TouchCandidateObservationRecord] = []
+        observations.reserveCapacity(30_000)
+        var t: TimeInterval = 0
+        for i in 0..<30_000 {
+            let near = (i / 20) % 3 == 0
+            let angle = Double(i % 40) * 0.05
+            let velocity = NormalizedPoint(x: 0.15 * cos(angle), y: 0.15 * sin(angle))
+            observations.append(TouchCandidateObservationRecord(
+                timestampSeconds: t, ballVisible: true, ballVelocity: velocity,
+                normalizedPlayerBallDistance: near ? 1.0 : 3.0,
+                ballProximityState: near ? .near : .away, ballTrackId: 1,
+                coMovementState: near ? .sustained : .unavailable
+            ))
+            t += 1.0 / 15.0
+        }
+        let capture = try TouchCandidateObservationCapture(assessmentId: "PERF-ALT", observations: observations)
+        var lenient = TouchCandidateDetectorConfigurationSnapshot.baseline
+        lenient.minimumSpeedChangeForTouchCandidate = 0.01
+        lenient.maximumDirectionSimilarityForTouchCandidate = 0.9
+
+        let start = Date()
+        let result = try TouchCandidateReplayEngine.replay(capture: capture, configuration: lenient)
+        let elapsed = Date().timeIntervalSince(start)
+
+        XCTAssertEqual(result.sourceObservationCount, 30_000)
+        XCTAssertLessThan(result.events.count, observations.count)
+        XCTAssertLessThanOrEqual(result.events.count, 500)
+        // Diagnostic only (Part 14) — not a pass/fail gate, since device
+        // performance varies; printed for visibility.
+        print("[perf] 30,000-observation alternate-config replay took \(elapsed)s, \(result.events.count) events")
     }
 }

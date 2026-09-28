@@ -84,3 +84,74 @@ public struct TouchCandidateDetectorConfigurationSnapshot: Codable, Equatable, S
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
+
+// MARK: - Semantic validation (2026-09-28, configuration injection)
+
+/// Every case corresponds to a constraint the detector's OWN arithmetic
+/// requires to remain meaningful — never an arbitrary limit invented
+/// independently of `TouchCandidateDetector`'s logic. See
+/// `validate()`'s own per-field doc for the exact justification.
+public enum TouchCandidateDetectorConfigurationSnapshotValidationError: Error, Equatable {
+    case nonFiniteValue(field: String)
+    case negativeDuration(field: String)
+    case negativeThreshold(field: String)
+    case directionSimilarityOutOfRange(value: Double)
+}
+
+extension TouchCandidateDetectorConfigurationSnapshot {
+    private var durationFields: [(String, TimeInterval)] {
+        [
+            ("preWindowSeconds", preWindowSeconds), ("postWindowSeconds", postWindowSeconds),
+            ("cooldownDurationSeconds", cooldownDurationSeconds), ("dropoutGraceDurationSeconds", dropoutGraceDurationSeconds),
+        ]
+    }
+
+    private var thresholdFields: [(String, Double)] {
+        [
+            ("minimumSpeedChangeForTouchCandidate", minimumSpeedChangeForTouchCandidate),
+            ("minimumSpeedForMeaningfulDirection", minimumSpeedForMeaningfulDirection),
+        ]
+    }
+
+    /// Deliberately NOT part of the memberwise `init` above (Part 7): this
+    /// type is `Codable`, and Swift's synthesized `init(from:)` bypasses any
+    /// custom initializer entirely, so validation placed in the initializer
+    /// would silently fail to protect decoded (e.g. replayed-from-disk)
+    /// configurations. Callers that accept an externally-supplied
+    /// configuration — currently only `TouchCandidateReplayEngine.replay`
+    /// — must call this explicitly before use.
+    public func validate() throws {
+        for (name, value) in durationFields + thresholdFields {
+            guard value.isFinite else {
+                throw TouchCandidateDetectorConfigurationSnapshotValidationError.nonFiniteValue(field: name)
+            }
+        }
+        // `observe()` uses each duration as a one-sided elapsed-time bound
+        // (`elapsed >= x`, `gap > x`) and to compute a future deadline
+        // (`timestamp + x`) — a negative duration would place that deadline
+        // before `timestamp`, which has no meaningful interpretation as
+        // "how long to wait."
+        for (name, value) in durationFields {
+            guard value >= 0 else {
+                throw TouchCandidateDetectorConfigurationSnapshotValidationError.negativeDuration(field: name)
+            }
+        }
+        // Both thresholds are compared against non-negative magnitudes
+        // (`abs(speedChange)`, and speed computed via `magnitude(...)`,
+        // itself a vector length) — a negative threshold would be trivially
+        // satisfied by any input, which is not a meaningful "minimum
+        // magnitude" semantics.
+        for (name, value) in thresholdFields {
+            guard value >= 0 else {
+                throw TouchCandidateDetectorConfigurationSnapshotValidationError.negativeThreshold(field: name)
+            }
+        }
+        // `directionSimilarity(...)` always clamps its own result to [-1, 1]
+        // (`min(1, max(-1, cosTheta))`) before comparing it against this
+        // threshold — a threshold outside that range makes the comparison
+        // either impossible to satisfy or trivially always true.
+        guard maximumDirectionSimilarityForTouchCandidate >= -1, maximumDirectionSimilarityForTouchCandidate <= 1 else {
+            throw TouchCandidateDetectorConfigurationSnapshotValidationError.directionSimilarityOutOfRange(value: maximumDirectionSimilarityForTouchCandidate)
+        }
+    }
+}

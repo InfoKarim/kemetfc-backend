@@ -223,7 +223,20 @@ public final class TouchCandidateDetector {
     /// cleared the moment a new episode arms. Debug/explainability only.
     private(set) var lastRejectionReason: TouchCandidateRejectionReason?
 
-    public init(eventCapacity: Int = 500) {
+    /// Immutable for the lifetime of the instance (2026-09-28, configuration
+    /// injection) — set once at init, never mutated, so two detector
+    /// instances constructed with different configurations can never
+    /// influence one another. Defaults to `.baseline`, which is itself
+    /// derived directly from `TouchCandidateCalibration` — the live
+    /// production detector (`TouchCandidateDetector()`, zero-arg, as
+    /// `TrackingCoordinator` constructs it) is therefore byte-for-byte
+    /// equivalent to today's behavior; see
+    /// `TouchCandidateReplayEngineTests`'s baseline-equivalence suite for
+    /// the regression proof.
+    private let configuration: TouchCandidateDetectorConfigurationSnapshot
+
+    public init(configuration: TouchCandidateDetectorConfigurationSnapshot = .baseline, eventCapacity: Int = 500) {
+        self.configuration = configuration
         self.eventCapacity = max(1, eventCapacity)
     }
 
@@ -270,11 +283,11 @@ public final class TouchCandidateDetector {
 
             let elapsed = timestamp - episode.startTime
             let leftNearZone = analysis.ballProximityState == .away
-            let graceExceeded = timestamp - episode.lastAvailableTimestamp > TouchCandidateCalibration.dropoutGraceDurationSeconds
-            let windowElapsed = elapsed >= TouchCandidateCalibration.postWindowSeconds
+            let graceExceeded = timestamp - episode.lastAvailableTimestamp > configuration.dropoutGraceDurationSeconds
+            let windowElapsed = elapsed >= configuration.postWindowSeconds
 
             if leftNearZone || graceExceeded || windowElapsed {
-                phase = .cooldown(until: timestamp + TouchCandidateCalibration.cooldownDurationSeconds)
+                phase = .cooldown(until: timestamp + configuration.cooldownDurationSeconds)
                 return conclude(episode, endTime: timestamp)
             } else {
                 phase = .collectingPostWindow(episode: episode)
@@ -311,14 +324,14 @@ public final class TouchCandidateDetector {
         if let velocity {
             preWindowSamples.append(VelocitySample(timestamp: timestamp, velocity: velocity))
         }
-        preWindowSamples.removeAll { timestamp - $0.timestamp > TouchCandidateCalibration.preWindowSeconds }
+        preWindowSamples.removeAll { timestamp - $0.timestamp > configuration.preWindowSeconds }
     }
 
     private func arm(at timestamp: TimeInterval, distance: Double?, ballTrackId: Int?, coMovement: PlayerBallCoMovementState) -> TouchCandidateEvent? {
         lastRejectionReason = nil
         guard !preWindowSamples.isEmpty else {
             lastRejectionReason = .insufficientPreSamples
-            phase = .cooldown(until: timestamp + TouchCandidateCalibration.cooldownDurationSeconds)
+            phase = .cooldown(until: timestamp + configuration.cooldownDurationSeconds)
             return nil
         }
         let preAverage = average(preWindowSamples.map { $0.velocity })
@@ -342,8 +355,8 @@ public final class TouchCandidateDetector {
         let speedChange = postSpeed - preSpeed
         let directionSimilarity = self.directionSimilarity(episode.preAverage, postAverage, preSpeed: preSpeed, postSpeed: postSpeed)
 
-        let meaningfulSpeedChange = abs(speedChange) >= TouchCandidateCalibration.minimumSpeedChangeForTouchCandidate
-        let meaningfulDirectionChange = (directionSimilarity.map { $0 <= TouchCandidateCalibration.maximumDirectionSimilarityForTouchCandidate }) ?? false
+        let meaningfulSpeedChange = abs(speedChange) >= configuration.minimumSpeedChangeForTouchCandidate
+        let meaningfulDirectionChange = (directionSimilarity.map { $0 <= configuration.maximumDirectionSimilarityForTouchCandidate }) ?? false
 
         let evidence = TouchCandidateEvidence(
             preBallSpeed: preSpeed, postBallSpeed: postSpeed, speedChange: speedChange,
@@ -386,8 +399,8 @@ public final class TouchCandidateDetector {
     }
 
     private func directionSimilarity(_ before: NormalizedPoint, _ after: NormalizedPoint, preSpeed: Double, postSpeed: Double) -> Double? {
-        guard preSpeed >= TouchCandidateCalibration.minimumSpeedForMeaningfulDirection,
-              postSpeed >= TouchCandidateCalibration.minimumSpeedForMeaningfulDirection
+        guard preSpeed >= configuration.minimumSpeedForMeaningfulDirection,
+              postSpeed >= configuration.minimumSpeedForMeaningfulDirection
         else { return nil }
         let dot = before.x * after.x + before.y * after.y
         let cosTheta = dot / (preSpeed * postSpeed)
