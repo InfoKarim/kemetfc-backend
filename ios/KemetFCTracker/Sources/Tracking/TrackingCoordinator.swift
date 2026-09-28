@@ -86,6 +86,13 @@ public final class TrackingCoordinator: ObservableObject {
     private let playerBallCoMovementDetector = PlayerBallCoMovementDetector()
     @Published public private(set) var playerBallCoMovement: PlayerBallCoMovementSnapshot?
 
+    /// Touch Candidate — a LOW-LEVEL "did the ball's motion measurably change
+    /// while near the player" measurement only (never a confirmed Touch, and
+    /// never Receive/Carry/Dribble/Possession/Pass/Shot). Pure downstream
+    /// consumer of `playerAnalysis` + `playerBallCoMovement` above.
+    private let touchCandidateDetector = TouchCandidateDetector()
+    @Published public private(set) var touchCandidateEvents: [TouchCandidateEvent] = []
+
     public let thermalManager = ThermalManager()
 
     // Field Test Mode telemetry (spec section 32) — visible only behind
@@ -230,6 +237,10 @@ public final class TrackingCoordinator: ObservableObject {
         // never leak from one locked player into the next.
         playerBallCoMovementDetector.reset()
         playerBallCoMovement = nil
+        // Same session-isolation requirement — an in-progress touch-candidate
+        // episode must never leak from one locked player into the next.
+        touchCandidateDetector.reset()
+        touchCandidateEvents = []
         playerState = .locked
         telemetryUploader.recordEvent(type: "player_locked", details: ["target_track_id": 1])
     }
@@ -470,7 +481,16 @@ public final class TrackingCoordinator: ObservableObject {
         // Player ↔ Ball Co-Movement: pure downstream consumer of the SAME V1
         // snapshot, in the same timestamp order. A low-level measurement
         // only — never possession/dribbling/touch/receive/pass/shot.
-        playerBallCoMovement = playerBallCoMovementDetector.observe(snapshot: latestPlayerAnalysis)
+        let latestCoMovement = playerBallCoMovementDetector.observe(snapshot: latestPlayerAnalysis)
+        playerBallCoMovement = latestCoMovement
+
+        // Touch Candidate: pure downstream consumer of the SAME V1 snapshot
+        // plus the co-movement result just computed above, in the same
+        // timestamp order. A LOW-LEVEL candidate only — never a confirmed
+        // Touch, and never Receive/Carry/Dribble/Possession/Pass/Shot.
+        if let newTouchCandidate = touchCandidateDetector.observe(analysis: latestPlayerAnalysis, coMovement: latestCoMovement) {
+            touchCandidateEvents.append(newTouchCandidate)
+        }
 
         telemetryUploader.recordSample(
             tSeconds: sessionElapsedSeconds,

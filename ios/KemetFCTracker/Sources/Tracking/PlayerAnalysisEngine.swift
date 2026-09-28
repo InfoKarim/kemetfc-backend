@@ -197,6 +197,14 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
     /// is more camera-motion-robust than either object's absolute velocity
     /// (see PLAYER_ANALYSIS_V2_EVENT_DESIGN.md section 7).
     public var relativeBallPosition: NormalizedPoint?
+    /// The real `BallTracker.currentTrackId`, passed straight through
+    /// (2026-09-27, Touch Candidate audit) — nil under the exact same
+    /// condition as `ballVisible == false`. Purely for explainability/
+    /// debugging (e.g. `TouchCandidateEvent.ballTrackId`); no validity logic
+    /// in this engine depends on a consumer reading this field (the
+    /// first-observation/resume rules are already fully encoded in whether
+    /// `ballVelocity` is nil, per its own doc above).
+    public var ballTrackId: Int?
 
     public init(
         timestamp: TimeInterval,
@@ -209,7 +217,8 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
         normalizedPlayerBallDistance: Double? = nil,
         ballVelocity: NormalizedPoint? = nil,
         playerVelocity: NormalizedPoint? = nil,
-        relativeBallPosition: NormalizedPoint? = nil
+        relativeBallPosition: NormalizedPoint? = nil,
+        ballTrackId: Int? = nil
     ) {
         self.timestamp = timestamp
         self.trackingState = trackingState
@@ -222,6 +231,7 @@ public struct PlayerLiveAnalysisSnapshot: Equatable, Sendable {
         self.ballVelocity = ballVelocity
         self.playerVelocity = playerVelocity
         self.relativeBallPosition = relativeBallPosition
+        self.ballTrackId = ballTrackId
     }
 }
 
@@ -484,7 +494,8 @@ public final class PlayerAnalysisEngine {
             normalizedPlayerBallDistance: normalizedDistance,
             ballVelocity: validBallVelocity,
             playerVelocity: validPlayerVelocity,
-            relativeBallPosition: relativeBallPosition
+            relativeBallPosition: relativeBallPosition,
+            ballTrackId: ballVisible ? ballTrackId : nil
         )
 
         recordAggregates(
