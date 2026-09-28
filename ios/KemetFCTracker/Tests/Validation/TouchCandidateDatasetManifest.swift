@@ -8,6 +8,7 @@
 //  detector threshold is changed. Pure, offline, Tests/Validation/-only.
 //
 
+import CryptoKit
 import Foundation
 @testable import KemetFCTracker
 
@@ -133,5 +134,30 @@ public struct TouchCandidateDatasetManifest: Codable, Equatable, Sendable {
             splitsByGroup[groupId, default: []].insert(entry.split)
         }
         return splitsByGroup.filter { $0.value.count > 1 }.map { $0.key }.sorted()
+    }
+
+    /// A real content-addressed dataset identity (2026-09-28, calibration
+    /// experiment protocol phase) — fills a gap the original `datasetId`
+    /// plain string left open: two different manifests could otherwise
+    /// share the same `datasetId` label with no way to detect it. Order-
+    /// independent (entries are sorted by `assessmentId` before hashing) so
+    /// manifest ordering never changes identity. Only the fields that
+    /// materially define WHICH data is in the dataset are included —
+    /// `notes` and `createdAt` are labels, not content.
+    public var contentFingerprint: String {
+        let entryDescriptions = assessments
+            .sorted { $0.assessmentId < $1.assessmentId }
+            .map { entry -> String in
+                let inclusion: String
+                switch entry.inclusionStatus {
+                case .included: inclusion = "included"
+                case .excluded(let reason): inclusion = "excluded:\(reason.rawValue)"
+                }
+                return "\(entry.assessmentId)|\(entry.sessionId ?? "")|\(entry.synchronizationStatus.rawValue)"
+                    + "|\(entry.split.rawValue)|\(inclusion)|\(entry.groupId ?? "")"
+            }
+        let canonical = "schema=\(schemaVersion)|dataset=\(datasetId)|entries=\(entryDescriptions.joined(separator: ";"))"
+        let digest = SHA256.hash(data: Data(canonical.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
