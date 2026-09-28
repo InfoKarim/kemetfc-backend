@@ -93,6 +93,16 @@ public final class TrackingCoordinator: ObservableObject {
     private let touchCandidateDetector = TouchCandidateDetector()
     @Published public private(set) var touchCandidateEvents: [TouchCandidateEvent] = []
 
+    /// Raw per-tick observation capture for OFFLINE REPLAY (2026-09-28, raw
+    /// observation replay foundation) — a lightweight, purely additive
+    /// record of exactly what was fed to `touchCandidateDetector` each
+    /// tick. NOT `@Published` (no UI binds to this; avoids unnecessary
+    /// SwiftUI diffing on a per-tick-growing array). Appended immediately
+    /// before the detector call below, so it always reflects EXACTLY what
+    /// the live detector actually saw — never a "cleaned" or reordered
+    /// version.
+    private(set) var touchCandidateObservations: [TouchCandidateObservationRecord] = []
+
     public let thermalManager = ThermalManager()
 
     // Field Test Mode telemetry (spec section 32) — visible only behind
@@ -215,6 +225,24 @@ public final class TrackingCoordinator: ObservableObject {
         )
     }
 
+    /// Builds a local, offline RAW OBSERVATION capture from THIS session's
+    /// `touchCandidateObservations` (2026-09-28, raw observation replay
+    /// foundation — infrastructure only, never a change to Touch Candidate
+    /// detection itself). Pure and side-effect-free, same as
+    /// `buildValidationCaptureExport` above. `detectorConfigurationAtCapture`
+    /// is provenance only — see `TouchCandidateObservationCapture`'s own
+    /// doc for why it must never be read as a replay restriction.
+    public func buildObservationCapture(
+        assessmentId: String, sessionId: String? = nil,
+        detectorConfigurationAtCapture: TouchCandidateDetectorConfigurationSnapshot? = .baseline
+    ) throws -> TouchCandidateObservationCapture {
+        try TouchCandidateObservationCapture(
+            assessmentId: assessmentId, sessionId: sessionId,
+            detectorConfigurationAtCapture: detectorConfigurationAtCapture,
+            observations: touchCandidateObservations
+        )
+    }
+
     public func setMode(_ newMode: TrackingMode) {
         mode = newMode
         telemetryUploader.recordEvent(type: "mode_switch", details: ["mode": .string(newMode.rawValue)])
@@ -263,6 +291,11 @@ public final class TrackingCoordinator: ObservableObject {
         // episode must never leak from one locked player into the next.
         touchCandidateDetector.reset()
         touchCandidateEvents = []
+        // Same isolation requirement for the raw observation capture — a
+        // re-lock is a genuinely NEW detector epoch, and prior observations
+        // must never be silently merged into it (per the 2026-09-28 replay
+        // foundation audit: one relevant epoch per exported artifact).
+        touchCandidateObservations.removeAll(keepingCapacity: true)
         playerState = .locked
         telemetryUploader.recordEvent(type: "player_locked", details: ["target_track_id": 1])
     }
@@ -505,6 +538,13 @@ public final class TrackingCoordinator: ObservableObject {
         // only — never possession/dribbling/touch/receive/pass/shot.
         let latestCoMovement = playerBallCoMovementDetector.observe(snapshot: latestPlayerAnalysis)
         playerBallCoMovement = latestCoMovement
+
+        // Raw observation capture (Part 7): appended BEFORE the detector
+        // call immediately below, so the captured record always reflects
+        // EXACTLY what is about to be fed live — a mechanical copy, never a
+        // per-tick disk/JSON write (Part 8), never influencing the value
+        // supplied to the detector.
+        touchCandidateObservations.append(TouchCandidateObservationRecord(analysis: latestPlayerAnalysis, coMovement: latestCoMovement))
 
         // Touch Candidate: pure downstream consumer of the SAME V1 snapshot
         // plus the co-movement result just computed above, in the same

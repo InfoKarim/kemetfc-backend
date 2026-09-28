@@ -814,6 +814,21 @@ public final class AssessmentSessionViewModel: ObservableObject {
         } catch {
             log.error("Touch Candidate validation export failed (assessment remains valid regardless): \(error.localizedDescription, privacy: .public)")
         }
+
+        // Raw observation capture (2026-09-28, replay foundation) — same
+        // directory, same atomic-write/catch-and-log pattern, same
+        // guarantee: failure here can NEVER affect `record`/upload/recording
+        // success in any way.
+        do {
+            let observationCapture = try coordinator.buildObservationCapture(assessmentId: record.id, sessionId: record.backendSessionId)
+            let directory = try touchCandidateValidationDirectory(assessmentId: record.id)
+            let fileURL = directory.appendingPathComponent("touch_candidate_observations.json")
+            let data = try TouchCandidateObservationCaptureIO.encoder().encode(observationCapture)
+            try data.write(to: fileURL, options: .atomic)
+            log.info("Touch Candidate observation capture written: \(fileURL.path, privacy: .public)")
+        } catch {
+            log.error("Touch Candidate observation capture failed (assessment remains valid regardless): \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Application Support/KemetFCTracker/Validation/<assessment-id>/ —
