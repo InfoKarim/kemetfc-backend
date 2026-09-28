@@ -24,19 +24,12 @@ import Foundation
 @testable import KemetFCTracker
 
 // MARK: - Timebase
-
-/// Which clock a set of timestamps is expressed in. Never assumed identical
-/// across ground truth and predictions — see `TimestampMapping`.
-public enum Timebase: String, Codable, Equatable, Sendable {
-    /// Seconds into the recorded `.mov` file itself.
-    case videoSeconds = "video_seconds"
-    /// `sessionElapsedSeconds` — the analysis pipeline's own clock (see
-    /// PLAYER_ANALYSIS_V2_EVENT_DESIGN.md section 12 and the 2026-09-28
-    /// audit: this has a real, measured, NOT-currently-mapped offset from
-    /// the video file's own t=0, empirically ~0.15-0.2s from one historical
-    /// investigation — never assume it equals `videoSeconds`).
-    case analysisSeconds = "analysis_seconds"
-}
+//
+// `Timebase` itself now lives in Sources/Tracking/TouchCandidateCaptureExport.swift
+// (moved there 2026-09-28, real-data capture bridge phase, per "the minimal
+// neutral data contract belongs in Sources/" — production export code needs
+// it directly). Visible here unchanged via `@testable import` above; no
+// duplicate definition is kept.
 
 // MARK: - Ground truth (Part 2)
 

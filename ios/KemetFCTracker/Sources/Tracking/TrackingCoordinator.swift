@@ -193,6 +193,28 @@ public final class TrackingCoordinator: ObservableObject {
         playerAnalysisEngine.summarize()
     }
 
+    /// Builds a local, offline validation artifact from THIS session's
+    /// `touchCandidateEvents` (2026-09-28, real-data capture bridge —
+    /// infrastructure only, never a change to Touch Candidate detection
+    /// itself). Pure and side-effect-free: no disk I/O, no recording/camera
+    /// access. Deliberately does NOT decide when to call this or where to
+    /// write the result — that lifecycle decision touches recording-
+    /// adjacent code and is explicitly NOT implemented this phase (see the
+    /// audit report). `synchronizationAnchorSeconds` is caller-supplied;
+    /// this coordinator has no access to `FrameForwarder.sessionStartTime`
+    /// and does not reach for it.
+    public func buildValidationCaptureExport(
+        assessmentId: String, sessionId: String? = nil,
+        videoFilename: String, videoDurationSeconds: Double? = nil,
+        synchronizationAnchorSeconds: Double? = nil
+    ) -> TouchCandidateCaptureExport {
+        TouchCandidateCaptureExport.build(
+            assessmentId: assessmentId, sessionId: sessionId,
+            videoFilename: videoFilename, videoDurationSeconds: videoDurationSeconds,
+            events: touchCandidateEvents, synchronizationAnchorSeconds: synchronizationAnchorSeconds
+        )
+    }
+
     public func setMode(_ newMode: TrackingMode) {
         mode = newMode
         telemetryUploader.recordEvent(type: "mode_switch", details: ["mode": .string(newMode.rawValue)])

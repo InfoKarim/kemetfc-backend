@@ -772,8 +772,60 @@ public final class AssessmentSessionViewModel: ObservableObject {
             record.uploadState = .localSaved
             pendingStore.upsert(record)
             lastFinishedRecordingId = recordingId
+            // Recording success is now fully established (this branch is
+            // reached ONLY when RecordingIntegrity.evaluate already
+            // returned .valid, above) — the validation export is a pure
+            // side effect after that point, and cannot influence it: any
+            // failure inside is caught and logged, never rethrown, never
+            // written back onto `record` (2026-09-28, real-data capture
+            // bridge — infrastructure only).
+            exportTouchCandidateValidationArtifact(record: record)
             await finalizeAndUpload(recordId: recordingId)
         }
+    }
+
+    /// Writes a local, offline Touch Candidate validation artifact. Called
+    /// ONLY from the `.valid` branch above — a failed-integrity recording
+    /// never reaches this function at all. Export failure is caught and
+    /// logged here and never propagates: it cannot change `record`,
+    /// `uploadState`, or any upload eligibility/timing decided above this
+    /// call. Does not upload the artifact, does not change any backend
+    /// contract, does not copy the `.mov` (stores only its filename).
+    private func exportTouchCandidateValidationArtifact(record: PendingAssessmentRecord) {
+        guard let coordinator = trackingCoordinator else { return }
+        let videoFilename = pendingStore.localVideoURL(for: record).lastPathComponent
+        // capturePtsOriginSeconds only — per instruction, videoOriginSeconds
+        // and offsetSeconds stay nil and provenance stays `.unavailable`
+        // (TouchCandidateCaptureExport.build's existing, unchanged
+        // behavior) until the physical experiment resolves the actual
+        // analysis↔video time-domain relationship. Never the historical
+        // ~0.15-0.2s approximation.
+        let export = coordinator.buildValidationCaptureExport(
+            assessmentId: record.id, sessionId: record.backendSessionId,
+            videoFilename: videoFilename, videoDurationSeconds: record.durationSeconds,
+            synchronizationAnchorSeconds: frameForwarder?.sessionStartTimeSeconds
+        )
+        do {
+            let directory = try touchCandidateValidationDirectory(assessmentId: record.id)
+            let fileURL = directory.appendingPathComponent("touch_candidate_capture.json")
+            let data = try TouchCandidateCaptureExportIO.encoder().encode(export)
+            try data.write(to: fileURL, options: .atomic)
+            log.info("Touch Candidate validation artifact written: \(fileURL.path, privacy: .public)")
+        } catch {
+            log.error("Touch Candidate validation export failed (assessment remains valid regardless): \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Application Support/KemetFCTracker/Validation/<assessment-id>/ —
+    /// created on demand, deterministic, developer/debug-only (never
+    /// uploaded, never referenced by any backend contract). Internal (not
+    /// `private`) solely so it is independently testable — pure path
+    /// construction, nothing recording-related.
+    func touchCandidateValidationDirectory(assessmentId: String) throws -> URL {
+        let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let directory = base.appendingPathComponent("KemetFCTracker/Validation/\(assessmentId)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
     }
 
     /// Coach taps Done on the Assessment Summary screen (spec Phase 5) —
@@ -1029,6 +1081,21 @@ private final class FrameForwarder: NSObject, AVCaptureVideoDataOutputSampleBuff
     // just a compile-error workaround.
     private let device: AVCaptureDevice
     private var sessionStartTime: CMTime?
+
+    /// Read-only exposure of `sessionStartTime`, in seconds (2026-09-28,
+    /// real-data capture bridge — infrastructure only, no change to WHEN or
+    /// HOW `sessionStartTime` is set). Safe to read from `stopAssessment()`
+    /// (MainActor) despite `captureOutput` running on a different queue:
+    /// `sessionStartTime` is set-once (`if sessionStartTime == nil { ... }`,
+    /// line below) and never changes again for the rest of the session, so
+    /// by the time an assessment has already stopped and its recording has
+    /// already been confirmed valid, this value has long since stabilized —
+    /// same "does not change for the lifetime of one assessment" reasoning
+    /// already documented above for `device`. Read-only: nothing can write
+    /// through this accessor, and it does not touch `captureOutput` itself.
+    var sessionStartTimeSeconds: Double? {
+        sessionStartTime.map { CMTimeGetSeconds($0) }
+    }
 
     @MainActor
     init(coordinator: TrackingCoordinator, device: AVCaptureDevice) {
