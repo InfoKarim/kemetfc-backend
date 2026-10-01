@@ -43,6 +43,10 @@ struct AssessmentCameraView: View {
     @State private var showGimbalDetail = false
     @State private var unavailableModeMessage: String?
     @State private var targetToast: TargetToastKind?
+    /// 2026-09-29 production incident fix — tracks whether THIS session
+    /// has ever achieved a lock, purely to choose clearer status copy
+    /// (see PlayerLockStatus.swift). Never read by tracking logic.
+    @State private var lockHistory = PlayerLockHistory()
 
     private let elapsedTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -70,6 +74,15 @@ struct AssessmentCameraView: View {
                     playerState: coordinator.playerState,
                     confidence: coordinator.playerConfidence,
                     playerFirstName: player.firstNameEn
+                )
+
+                // Live ball-position marker (2026-09-29 production
+                // incident fix) — coexists with the player overlay above;
+                // reads the SAME BallTracker output already driving
+                // telemetry/framing, adds no detection pass of its own.
+                BallTrackingOverlay(
+                    ballBox: coordinator.ballBoundingBox,
+                    confidence: coordinator.ballConfidence
                 )
 
                 // PLAYER LIVE ANALYSIS — the coach-facing replacement for the old
@@ -170,6 +183,7 @@ struct AssessmentCameraView: View {
     private var portraitChrome: some View {
         VStack {
             hud.padding(.horizontal, 14).padding(.top, 8)
+            playerLockStatusBanner.padding(.top, 6)
             if let warning = coordinator.thermalManager.userFacingWarning {
                 thermalWarningStrip(warning)
             }
@@ -186,6 +200,7 @@ struct AssessmentCameraView: View {
             }
             .padding(.horizontal, 14)
             .padding(.top, 6)
+            playerLockStatusBanner.padding(.top, 4)
             if let warning = coordinator.thermalManager.userFacingWarning {
                 HStack {
                     thermalWarningStrip(warning)
@@ -242,6 +257,28 @@ struct AssessmentCameraView: View {
             },
             onOpenSettings: { showSettingsSheet = true }
         )
+    }
+
+    /// 2026-09-29 production incident fix — a small, non-obstructive
+    /// banner making the player-lock state impossible to misunderstand.
+    /// Pure text derived from PlayerLockStatusText; never claims "PLAYER
+    /// LOCKED" unless coordinator.playerState genuinely is `.locked`.
+    private var playerLockStatusBanner: some View {
+        let text = PlayerLockStatusText.text(for: coordinator.playerState, history: lockHistory)
+        let settled = PlayerLockStatusText.isSettled(coordinator.playerState)
+        return HStack {
+            Text(text)
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.5)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(.black.opacity(settled ? 0.25 : 0.55), in: Capsule())
+                .overlay(Capsule().stroke(Color.kemetGold.opacity(settled ? 0.3 : 0.7), lineWidth: 1))
+            Spacer()
+        }
+        .allowsHitTesting(false)
+        .animation(.easeInOut(duration: 0.15), value: text)
     }
 
     private var centerReticle: some View {
@@ -316,6 +353,7 @@ struct AssessmentCameraView: View {
     }
 
     private func handlePlayerStateChange(from old: PlayerTrackState, to new: PlayerTrackState) {
+        lockHistory.observe(new)
         let wasTracking = old == .locked || old == .reacquired
         let isTracking = new == .locked || new == .reacquired
 

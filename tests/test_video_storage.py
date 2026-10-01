@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.video_storage import (
+    MAX_PLAYER_VIDEO_SIZE_BYTES,
     LocalVideoStorage,
     S3VideoStorage,
     VideoStorageError,
@@ -52,6 +53,25 @@ def test_local_storage_saves_materializes_and_deletes(tmp_path):
 
     storage.delete("VID_LOCAL.mp4")
     assert not (tmp_path / "VID_LOCAL.mp4").exists()
+
+
+def test_player_video_size_limit_covers_a_long_match_recording():
+    # 2026-09-29 production incident: a real 15m21s / 1.35 GB 1080p60
+    # match recording failed to upload at the previous 500 MB limit.
+    real_match_size_bytes = 1_351_186_620
+    assert MAX_PLAYER_VIDEO_SIZE_BYTES == 2 * 1024 * 1024 * 1024
+    assert real_match_size_bytes < MAX_PLAYER_VIDEO_SIZE_BYTES
+
+
+def test_local_storage_rejects_video_over_its_configured_limit(tmp_path):
+    storage = LocalVideoStorage(tmp_path, max_size_bytes=10)
+
+    with pytest.raises(VideoStorageError) as excinfo:
+        storage.save(io.BytesIO(b"this payload is over ten bytes"), "VID_BIG.mp4", "video/mp4")
+
+    assert excinfo.value.status_code == 413
+    # The oversized temp file must never be left behind.
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_storage_rejects_invalid_or_empty_video(tmp_path):

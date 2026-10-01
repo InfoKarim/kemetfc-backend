@@ -44,6 +44,11 @@ public final class TrackingCoordinator: ObservableObject {
     /// both read these, nothing else.
     @Published public private(set) var playerConfidence: Double?
     @Published public private(set) var ballConfidence: Double?
+    /// Mirrors `BallTracker.currentBoundingBox` (2026-09-29, live ball
+    /// overlay) — nil exactly when the ball is not currently tracked,
+    /// same semantics as the tracker's own field; never a held/smoothed
+    /// value, so a UI consumer never shows a stale marker after loss.
+    @Published public private(set) var ballBoundingBox: NormalizedRect?
     @Published public private(set) var lockedTrackId: Int?
 
     /// The most recent frame's raw person detections and pixel buffer —
@@ -463,6 +468,7 @@ public final class TrackingCoordinator: ObservableObject {
         ballState = ballTracker.state
         playerConfidence = playerTracker?.currentConfidence
         ballConfidence = ballTracker.currentConfidence
+        ballBoundingBox = ballTracker.currentBoundingBox
         lockedTrackId = playerTracker?.targetTrackId
 
         if playerState == .lost {

@@ -963,6 +963,26 @@ public final class AssessmentSessionViewModel: ObservableObject {
                 pendingStore.upsert(record)
                 lastError = "Assessment saved on this iPhone. Upload pending."
             }
+        } catch VideoUploadError.fileTooLarge(let sizeBytes, let limitBytes) {
+            // Deterministic: the file's size never changes between
+            // attempts, so retrying guarantees the identical rejection
+            // forever (2026-09-29 production incident: a real 1.35GB
+            // match recording burned 12 pointless retries before this
+            // fix, under the OLD misclassification as failedRetryable).
+            // The local recording is preserved regardless — only the
+            // upload attempt stops.
+            record.uploadState = .failedPermanent
+            record.lastError = "Recording (\(sizeBytes / 1_048_576)MB) exceeds the \(limitBytes / 1_048_576)MB upload limit — retrying will not help."
+            pendingStore.upsert(record)
+            lastError = "Assessment saved on this iPhone. This recording is too large to upload — see Pending Uploads."
+            log.error("finalizeAndUpload permanently failed: file too large (\(sizeBytes) > \(limitBytes))")
+        } catch VideoUploadError.cancelled {
+            // User-initiated cancellation — nothing about the file or
+            // request changed, so this remains safely retryable.
+            record.uploadState = .failedRetryable
+            record.lastError = "Upload cancelled."
+            pendingStore.upsert(record)
+            lastError = "Assessment saved on this iPhone. Upload pending."
         } catch let conflict as VideoIdentityConflict {
             // A 409 whose existing server-side resource did NOT match
             // this recording's own expected identity — never treated as

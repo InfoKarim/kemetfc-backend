@@ -98,11 +98,16 @@ public struct PlayerVideoUploadMetadata: Encodable {
     }
 }
 
-public enum VideoUploadError: Error {
-    /// The recording exceeds the backend's 500MB limit
+public enum VideoUploadError: Error, Equatable {
+    /// The recording exceeds the backend's 2GB limit
     /// (MAX_PLAYER_VIDEO_SIZE_BYTES in app/video_storage.py) — checked
     /// BEFORE spending any upload bandwidth, not discovered from a
-    /// rejected request after the fact.
+    /// rejected request after the fact. This is a DETERMINISTIC condition
+    /// — the file's size never changes between attempts — so a caller
+    /// must classify this as permanent, never automatically retried (see
+    /// the 2026-09-29 production incident: a real 1.35GB match recording
+    /// burned 12 pointless retries because this case was previously
+    /// misclassified as retryable).
     case fileTooLarge(sizeBytes: Int64, limitBytes: Int64)
     case cancelled
 }
@@ -121,8 +126,21 @@ public final class VideoUploadManager: NSObject, ObservableObject {
     /// Mirrors the backend's real, current limit — kept as a named
     /// constant here (not silently assumed) so a pre-check can fail
     /// fast with an actionable message instead of uploading for minutes
-    /// only to be rejected by the server at the very end.
-    public static let maxUploadSizeBytes: Int64 = 500 * 1024 * 1024
+    /// only to be rejected by the server at the very end. Raised
+    /// 2026-09-29 (500MB → 2GB) after a real 15m21s / 1.35GB 1080p60
+    /// match recording failed at the old limit — see
+    /// MAX_PLAYER_VIDEO_SIZE_BYTES in app/video_storage.py, which must be
+    /// kept in sync with this value.
+    public static let maxUploadSizeBytes: Int64 = 2 * 1024 * 1024 * 1024
+
+    /// Extracted so the boundary comparison itself is directly testable
+    /// against arbitrary sizes without constructing a real multi-GB file
+    /// on disk — `uploadVideo` is the only production call site.
+    static func validateSize(_ fileSize: Int64) throws {
+        guard fileSize <= maxUploadSizeBytes else {
+            throw VideoUploadError.fileTooLarge(sizeBytes: fileSize, limitBytes: maxUploadSizeBytes)
+        }
+    }
 
     @Published public private(set) var state: UploadState = .notStarted
 
@@ -144,9 +162,10 @@ public final class VideoUploadManager: NSObject, ObservableObject {
         state = .preparing
 
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int64) ?? 0
-        guard fileSize <= Self.maxUploadSizeBytes else {
-            let error = VideoUploadError.fileTooLarge(sizeBytes: fileSize, limitBytes: Self.maxUploadSizeBytes)
-            state = .failed("Recording is \(fileSize / 1_048_576)MB, exceeding the 500MB upload limit.")
+        do {
+            try Self.validateSize(fileSize)
+        } catch let error as VideoUploadError {
+            state = .failed("Recording is \(fileSize / 1_048_576)MB, exceeding the \(Self.maxUploadSizeBytes / 1_048_576)MB upload limit.")
             throw error
         }
 

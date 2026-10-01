@@ -17,7 +17,14 @@ from app.config import (
 )
 
 
-MAX_PLAYER_VIDEO_SIZE_BYTES = 500 * 1024 * 1024
+#   2026-09-29 production incident: a real 15m21s / 1.35 GB 1080p60 match
+#   recording failed to upload at the previous 500 MB limit. Raised to 2
+#   GiB, comfortably covering a ~23-minute recording at the same bitrate,
+#   without being unbounded. Both LocalVideoStorage and S3VideoStorage
+#   already stream the upload to disk in bounded 1 MB chunks (see
+#   _copy_and_hash below) — this limit is a deliberate policy cap, not a
+#   memory-safety workaround.
+MAX_PLAYER_VIDEO_SIZE_BYTES = 2 * 1024 * 1024 * 1024
 VIDEO_FILENAME_PATTERN = re.compile(
     r"[A-Za-z0-9_-]+[.](mp4|mov|avi|mkv|webm|m4v)",
     flags=re.IGNORECASE,
@@ -70,7 +77,7 @@ def _copy_and_hash(
     source: BinaryIO,
     target: BinaryIO,
     max_size_bytes: int = MAX_PLAYER_VIDEO_SIZE_BYTES,
-    size_error: str = "Video exceeds the 500 MB limit",
+    size_error: str = "Video exceeds the 2 GB limit",
 ) -> tuple[int, str]:
     total_size = 0
     digest = hashlib.sha256()
@@ -98,7 +105,7 @@ class LocalVideoStorage:
         self,
         directory: Path | None = None,
         max_size_bytes: int = MAX_PLAYER_VIDEO_SIZE_BYTES,
-        size_error: str = "Video exceeds the 500 MB limit",
+        size_error: str = "Video exceeds the 2 GB limit",
     ):
         self.directory = directory or Path(
             os.getenv("PLAYER_VIDEO_UPLOAD_DIR", "uploads/videos")
@@ -161,7 +168,7 @@ class S3VideoStorage:
         client=None,
         prefix: str | None = None,
         max_size_bytes: int = MAX_PLAYER_VIDEO_SIZE_BYTES,
-        size_error: str = "Video exceeds the 500 MB limit",
+        size_error: str = "Video exceeds the 2 GB limit",
     ):
         if client is None:
             try:
