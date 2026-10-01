@@ -240,7 +240,7 @@ public final class VideoUploadManager: NSObject, ObservableObject {
         }
     }
 
-    private static func contentType(forExtension ext: String) -> String {
+    static func contentType(forExtension ext: String) -> String {
         // Mirrors SUPPORTED_VIDEO_TYPES in app/player_video_upload.py —
         // an unrecognized extension still gets a best-effort generic
         // type; the backend, not this client, is the source of truth

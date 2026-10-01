@@ -125,6 +125,13 @@ public final class AssessmentSessionViewModel: ObservableObject {
     @Published public private(set) var trackingCoordinator: TrackingCoordinator?
     private var telemetryUploader: TelemetryUploader?
     private let videoUploadManager = VideoUploadManager()
+    /// Direct-to-R2 multipart path (Phase 2.5 Part C/D) — only invoked
+    /// for recordings VideoUploadRouter routes to .multipartUpload; small
+    /// recordings keep using videoUploadManager above, unchanged. Owns
+    /// its own durable per-recording progress store so a crash/restart
+    /// mid-upload resumes rather than restarting from part 1.
+    private let multipartUploadStateStore: MultipartUploadStateStore
+    private let multipartUploader: MultipartVideoUploader
     private var cancellables = Set<AnyCancellable>()
     // Strong reference required: CameraCaptureManager.frameDelegate is
     // `weak` (by design, to avoid a retain cycle back to the manager),
@@ -164,6 +171,9 @@ public final class AssessmentSessionViewModel: ObservableObject {
         self.apiClient = apiClient
         self.telemetryReplay = TelemetryReplayService(apiClient: apiClient)
         self.backendDiagnostics = BackendDiagnostics(baseURL: apiClient.baseURL)
+        let multipartUploadStateStore = MultipartUploadStateStore()
+        self.multipartUploadStateStore = multipartUploadStateStore
+        self.multipartUploader = MultipartVideoUploader(apiClient: apiClient, stateStore: multipartUploadStateStore)
         videoUploadManager.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in self?.videoUploadState = state }
@@ -407,6 +417,21 @@ public final class AssessmentSessionViewModel: ObservableObject {
     /// doesn't get hammered every time the app happens to launch/
     /// foreground/reconnect.
     public func retryAllPending() async {
+        // Phase 2.5 safety fix (2026-10-01): this project has no separate
+        // minimal XCTest host target, so running XCTest on a physical
+        // device launches the REAL app binary and its REAL lifecycle
+        // (start()/scenePhase/NWPathMonitor), which all funnel into this
+        // function. Without this guard, ordinary test runs were silently
+        // retrying real pending uploads — confirmed once incrementing a
+        // real, already-failing recording's uploadAttempts (16 -> 19)
+        // with no deliberate action taken. This applies ONLY to the
+        // automatic triggers that call retryAllPending(); the manual
+        // "Retry" UI calls retryUpload(recordId:) -> finalizeAndUpload(_:)
+        // directly and never passes through here, so it is unaffected.
+        guard !RuntimeEnvironment.isRunningAsXCTestHost else {
+            log.notice("Automatic pending upload retry suppressed: XCTest host")
+            return
+        }
         Task { await telemetryReplay.replayPending() }   // signal only; the service owns replay
         for record in pendingStore.pendingUploads where record.isRetryable {
             if record.uploadAttempts > 0, let lastAttemptAt = record.lastAttemptAt {
@@ -995,6 +1020,18 @@ public final class AssessmentSessionViewModel: ObservableObject {
             pendingStore.upsert(record)
             lastError = "Assessment saved on this iPhone. Upload could not complete — see Pending Uploads."
             log.error("finalizeAndUpload identity conflict: \(conflict.detail)")
+        } catch MultipartUploadError.finalizeIdentityMismatch {
+            // The multipart path's own identity-conflict analog (Phase
+            // 2.5 Part F): the backend's /finalize succeeded but returned
+            // an identity that does not match what this recording
+            // expected. Same reasoning as VideoIdentityConflict above —
+            // deterministic, so retrying would hit the identical mismatch
+            // forever; never treated as success, local video preserved.
+            record.uploadState = .failedPermanent
+            record.lastError = "Upload conflict: the server's finalized video identity did not match this recording — needs manual review."
+            pendingStore.upsert(record)
+            lastError = "Assessment saved on this iPhone. Upload could not complete — see Pending Uploads."
+            log.error("finalizeAndUpload multipart identity mismatch for record \(recordId)")
         } catch KemetAPIError.server(let status, let detail) where (400..<500).contains(status) {
             // The server rejected this exact request in a way retrying
             // will never fix (e.g. a validation error) — still never
@@ -1041,13 +1078,90 @@ public final class AssessmentSessionViewModel: ObservableObject {
     private func uploadVideoIdempotent(record: PendingAssessmentRecord, sessionId: String) async throws -> String {
         let stableVideoId = "VID-\(record.id)"
         let stableRecordId = "REC-\(record.id)"
-        let metadata = PlayerVideoUploadMetadata(
+        let fileURL = pendingStore.localVideoURL(for: record)
+        let fileSizeBytes = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? Int64) ?? 0
+
+        // Phase 2.5 Part D: the ONE routing decision point, never a
+        // scattered inline size check. A file over the threshold (e.g.
+        // the real 1.35GB match recording) always goes multipart; the
+        // legacy direct-upload path below is otherwise unchanged.
+        switch VideoUploadRouter.route(forFileSizeBytes: fileSizeBytes) {
+        case .multipartUpload:
+            return try await uploadVideoViaMultipart(
+                record: record, sessionId: sessionId, stableVideoId: stableVideoId, stableRecordId: stableRecordId,
+                fileURL: fileURL, fileSizeBytes: fileSizeBytes
+            )
+        case .legacyDirectUpload:
+            let metadata = PlayerVideoUploadMetadata(
+                videoId: stableVideoId,
+                recordId: stableRecordId,
+                playerId: record.playerId,
+                videoType: "assessment_smart_tracking",
+                durationSeconds: record.durationSeconds ?? 0,
+                sessionId: sessionId,
+                locationId: "kemetfc_ios_field_capture",
+                captureDevice: "iPhone (KemetFCTracker)",
+                resolution: record.resolution ?? "",
+                frameRateFps: record.frameRateFps ?? 0,
+                schemaVersion: "1.0",
+                createdBy: coachIdentifier
+            )
+            do {
+                return try await videoUploadManager.uploadVideo(fileURL: fileURL, metadata: metadata, apiClient: apiClient)
+            } catch KemetAPIError.server(409, _) {
+                struct ExistingVideo: Decodable {
+                    let video_id: String
+                    let record_id: String
+                    let session_id: String
+                }
+                let existing = try await apiClient.get(path: "/videos/\(stableVideoId)", as: ExistingVideo.self)
+                guard existing.video_id == stableVideoId,
+                      existing.record_id == stableRecordId,
+                      existing.session_id == sessionId
+                else {
+                    throw VideoIdentityConflict(
+                        videoId: stableVideoId,
+                        detail: "GET /videos/\(stableVideoId) returned record_id=\(existing.record_id) session_id=\(existing.session_id), expected record_id=\(stableRecordId) session_id=\(sessionId)"
+                    )
+                }
+                // Verified: the existing server-side video genuinely belongs
+                // to THIS recording (matching record_id AND session_id, both
+                // themselves derived from/tied to this recording's own
+                // clientRecordingId) — the 409 really does mean "already
+                // uploaded by us," not a collision.
+                return stableVideoId
+            }
+        }
+    }
+
+    /// Direct-to-R2 multipart path (Phase 2.5 Part C). Mirrors the legacy
+    /// path's identity contract exactly: `stableVideoId`/`stableRecordId`
+    /// are the SAME deterministic values derived from `record.id`, and
+    /// `MultipartVideoUploader.finalizeUpload` already verifies the
+    /// backend's returned identity matches before this ever returns
+    /// (throwing `.finalizeIdentityMismatch` otherwise) — so, unlike the
+    /// legacy path, there is no separate 409-verification branch here:
+    /// both `/uploads/initiate` and `/uploads/{id}/finalize` are
+    /// themselves idempotent on the server (Phase 1), and
+    /// `MultipartVideoUploader.resolveState`/`reconcile` already resume
+    /// from persisted/server state rather than restarting. The original
+    /// MOV is never touched by any step of this path — only R2 part PUTs
+    /// and small JSON requests.
+    private func uploadVideoViaMultipart(
+        record: PendingAssessmentRecord, sessionId: String, stableVideoId: String, stableRecordId: String,
+        fileURL: URL, fileSizeBytes: Int64
+    ) async throws -> String {
+        let metadata = MultipartInitiateRequest(
             videoId: stableVideoId,
             recordId: stableRecordId,
             playerId: record.playerId,
+            sessionId: sessionId,
+            recordingId: record.id,
+            filename: fileURL.lastPathComponent,
+            contentType: VideoUploadManager.contentType(forExtension: fileURL.pathExtension.lowercased()),
+            fileSizeBytes: fileSizeBytes,
             videoType: "assessment_smart_tracking",
             durationSeconds: record.durationSeconds ?? 0,
-            sessionId: sessionId,
             locationId: "kemetfc_ios_field_capture",
             captureDevice: "iPhone (KemetFCTracker)",
             resolution: record.resolution ?? "",
@@ -1055,31 +1169,8 @@ public final class AssessmentSessionViewModel: ObservableObject {
             schemaVersion: "1.0",
             createdBy: coachIdentifier
         )
-        do {
-            return try await videoUploadManager.uploadVideo(fileURL: pendingStore.localVideoURL(for: record), metadata: metadata, apiClient: apiClient)
-        } catch KemetAPIError.server(409, _) {
-            struct ExistingVideo: Decodable {
-                let video_id: String
-                let record_id: String
-                let session_id: String
-            }
-            let existing = try await apiClient.get(path: "/videos/\(stableVideoId)", as: ExistingVideo.self)
-            guard existing.video_id == stableVideoId,
-                  existing.record_id == stableRecordId,
-                  existing.session_id == sessionId
-            else {
-                throw VideoIdentityConflict(
-                    videoId: stableVideoId,
-                    detail: "GET /videos/\(stableVideoId) returned record_id=\(existing.record_id) session_id=\(existing.session_id), expected record_id=\(stableRecordId) session_id=\(sessionId)"
-                )
-            }
-            // Verified: the existing server-side video genuinely belongs
-            // to THIS recording (matching record_id AND session_id, both
-            // themselves derived from/tied to this recording's own
-            // clientRecordingId) — the 409 really does mean "already
-            // uploaded by us," not a collision.
-            return stableVideoId
-        }
+        let response = try await multipartUploader.upload(fileURL: fileURL, metadata: metadata)
+        return response.videoId
     }
 
     private func recordDiagnostics(request: String, startedAt: Date, error: String?) {
