@@ -109,6 +109,21 @@ public final class KemetAPIClient: @unchecked Sendable {
         try await request(path: path, method: "GET", body: Optional<Int>.none, as: type)
     }
 
+    /// 2026-10-01, multipart upload abort — the only DELETE this client
+    /// makes with a JSON body (matches the backend's own
+    /// `DELETE /videos/uploads/{upload_id}` contract, Phase 1).
+    public func delete<Body: Encodable>(path: String, body: Body) async throws {
+        var urlRequest = URLRequest(url: url(for: path))
+        urlRequest.httpMethod = "DELETE"
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let csrfToken {
+            urlRequest.setValue(csrfToken, forHTTPHeaderField: "X-CSRF-Token")
+        }
+        urlRequest.httpBody = try JSONEncoder.kemet.encode(body)
+        let (data, response) = try await performOrThrow(urlRequest)
+        try Self.validate(response: response, data: data)
+    }
+
     /// Exposed for VideoUploadManager, which needs a raw URLRequest (not
     /// this client's own JSON-body `request(...)`) to attach a
     /// multipart/form-data body and stream it via

@@ -45,6 +45,10 @@ struct StubReply {
     var delay: TimeInterval = 0
     /// Simulates no connectivity: the request fails before any response.
     var transportFailure = false
+    /// Additional response headers — e.g. a presigned-upload stub
+    /// simulating R2's own `ETag` response header (2026-10-01, multipart
+    /// upload tests). Merged with the default Content-Type below.
+    var headers: [String: String] = [:]
 
     static func json(_ status: Int, _ object: [String: Any], delay: TimeInterval = 0) -> StubReply {
         StubReply(status: status, body: (try? JSONSerialization.data(withJSONObject: object)) ?? Data(), delay: delay)
@@ -124,9 +128,11 @@ final class StubServer: URLProtocol {
                 client?.urlProtocol(protocolInstance, didFailWithError: URLError(.notConnectedToInternet))
                 return
             }
+            var headerFields = ["Content-Type": "application/json"]
+            for (key, value) in reply.headers { headerFields[key] = value }
             let response = HTTPURLResponse(
                 url: url, statusCode: reply.status, httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
+                headerFields: headerFields
             )!
             client?.urlProtocol(protocolInstance, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(protocolInstance, didLoad: reply.body)
