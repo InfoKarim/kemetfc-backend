@@ -39,16 +39,20 @@ class V1ConflictError(V1ValidationError):
 class V1AssessmentService:
     def __init__(self, db: Session):
         self.db = db
+        # True when the last create call returned an already-saved record (a retry).
+        self.replayed = False
 
     # -- assessments, station runs, trials -----------------------------------------
 
     def create_assessment(self, player_id, assessment_date, created_by_user_id,
                           title=None, client_entry_id=None) -> V1AssessmentDB:
+        self.replayed = False
         if client_entry_id is not None:
             existing = self.db.query(V1AssessmentDB).filter_by(client_entry_id=client_entry_id).one_or_none()
             if existing is not None:
                 if (existing.player_id, existing.assessment_date) != (player_id, assessment_date):
                     raise V1ConflictError("client_entry_id was already used for a different assessment")
+                self.replayed = True
                 return existing
         player = self.db.get(PlayerDB, player_id)
         if player is None or is_anonymised_player(player):
@@ -136,12 +140,14 @@ class V1AssessmentService:
 
     def _record(self, trial_id, metric_id, status, centiseconds, reason, unit, source,
                 entered_by_user_id, client_entry_id):
+        self.replayed = False
         if client_entry_id is not None:
             existing = self.db.query(V1ManualMeasurementDB).filter_by(client_entry_id=client_entry_id).one_or_none()
             if existing is not None:
                 if (existing.trial_id, existing.metric_id, existing.entry_status,
                         existing.value_centiseconds) != (trial_id, metric_id, status, centiseconds):
                     raise V1ConflictError("client_entry_id was already used for a different entry")
+                self.replayed = True
                 return existing
         if source != d.MEASUREMENT_SOURCE_MANUAL:
             raise V1ValidationError("Official V1 times are HUMAN_MANUAL only")
@@ -160,7 +166,14 @@ class V1AssessmentService:
         if unit != definition.unit:
             raise V1ValidationError(f"Unit must be {definition.unit}")
         self._require_user(entered_by_user_id)
-        if self.db.query(V1ManualMeasurementDB).filter_by(trial_id=trial_id, metric_id=metric_id).first():
+        saved = self.db.query(V1ManualMeasurementDB).filter_by(trial_id=trial_id, metric_id=metric_id).first()
+        if saved is not None:
+            if client_entry_id is not None and saved.client_entry_id == client_entry_id:
+                # The same request, committed by a racing twin between our two lookups.
+                if (saved.entry_status, saved.value_centiseconds) != (status, centiseconds):
+                    raise V1ConflictError("client_entry_id was already used for a different entry")
+                self.replayed = True
+                return saved
             raise V1ConflictError("This trial already has an entry for this metric; correct it instead")
         measurement = V1ManualMeasurementDB(
             manual_measurement_id=next_entity_id(self.db, "v1_manual_measurement"),

@@ -331,7 +331,9 @@ def test_there_is_no_delete_or_update_operation_for_v1_data(svc, ctx):
     source = "".join(p.read_text() for p in Path(v1_service_module.__file__).parent.glob("*.py"))
     assert ".delete(" not in source and "DELETE FROM" not in source.upper()
     paths = app.openapi()["paths"]
-    assert not [p for p, ops in paths.items() if "v1" in p.lower()]  # no V1 routes at all in S1A
+    for path, ops in paths.items():  # the V1 API (S1B1) is get/post only
+        if path.startswith("/v1"):
+            assert set(ops) <= {"get", "post"}, path
 
 
 def test_saved_v1_records_cannot_be_edited_or_deleted_through_the_orm(svc, ctx):

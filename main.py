@@ -160,6 +160,7 @@ from app.routers import matches as matches_router
 from app.routers import messaging as messaging_router
 from app.routers import player_assessments as player_assessments_router
 from app.routers import player_checkin as player_checkin_router
+from app.routers import v1_assessments as v1_assessments_router
 from app.routers import seasons as seasons_router
 from app.routers import teams as teams_router
 from app.routers import tracking as tracking_router
@@ -175,6 +176,7 @@ app.include_router(player_checkin_router.router)
 app.include_router(seasons_router.router)
 app.include_router(teams_router.router)
 app.include_router(tracking_router.router)
+app.include_router(v1_assessments_router.router)
 app.include_router(training_plans_router.router)
 app.include_router(videos_router.router)
 
@@ -421,6 +423,10 @@ def required_feature_for_path(path: str) -> str | None:
         # "players", since guardians are never granted the staff-only
         # "players" feature, which would otherwise make these endpoints
         # permanently unreachable for every guardian account.
+        return "assessments"
+    if path.startswith("/v1/"):
+        # Assessment V1 (manual timing). Reviewer/guardian limits are enforced by the
+        # role middleware and by the routes themselves.
         return "assessments"
     if path.startswith("/players"):
         return "players"
