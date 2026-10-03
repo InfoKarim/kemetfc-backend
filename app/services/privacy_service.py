@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import uuid4
 
 from sqlalchemy import func, or_
@@ -16,6 +16,7 @@ from app.db_models import (
     MLPredictionDB,
     MonteCarloSimulationDB,
     PlayerAssessmentDB,
+    PlayerCheckInTokenDB,
     PlayerDB,
     PlayerMetricDB,
     PredictionOutcomeDB,
@@ -32,6 +33,81 @@ from app.services.auth_service import utcnow
 
 
 VIDEO_ANALYSIS_PURPOSE = "video_analysis"
+
+# The state complete_deletion_request leaves a player in. There is no separate
+# "deleted" flag: this is the existing anonymised-player marker.
+ANONYMISED_FIRST_NAME = "Deleted"
+ANONYMISED_LAST_NAME = "Player"
+ANONYMISED_DATE_OF_BIRTH = date(1900, 1, 1)
+
+# What the guardian export says about itself. It must never imply "all data":
+# each category states whether it is in the export, and where it is not, why.
+# SEPARATE_DOWNLOAD names the intended contract; "download_available" says
+# whether that download exists yet.
+EXPORT_COMPLETENESS_STATEMENT = (
+    "This export lists the categories below. It is not a complete copy of every "
+    "piece of data held about the child: read the state of each category."
+)
+_NOT_PACKAGED = "NOT_INCLUDED"
+
+
+def export_completeness() -> dict:
+    included = {"state": "INCLUDED"}
+
+    def not_included(note: str) -> dict:
+        return {"state": _NOT_PACKAGED, "note": note}
+
+    return {
+        "statement": EXPORT_COMPLETENESS_STATEMENT,
+        "categories": {
+            "player": included,
+            "data_records": {"state": "INCLUDED", "note": "File paths are not exported."},
+            "videos": {"state": "INCLUDED", "note": "Metadata only; file paths are not exported."},
+            "video_files": not_included(
+                "Video files are not packaged in this export. Copies on devices, "
+                "in backups or in other storage are not covered by it."
+            ),
+            "analyses": included,
+            "training_plans": included,
+            "player_assessments": included,
+            "player_metrics": included,
+            "ml_predictions": included,
+            "monte_carlo_simulations": included,
+            "prediction_outcomes": included,
+            "coach_message": included,
+            "tracking_sessions": {
+                "state": "INCLUDED",
+                "note": "Sessions with events, derived features and coach labels.",
+            },
+            "tracking_samples": {
+                "state": "SEPARATE_DOWNLOAD",
+                "download_available": False,
+                "note": (
+                    "Raw per-frame tracking samples are not part of this export. "
+                    "They will be offered as a separate download; that download "
+                    "does not exist yet. Only a sample count per session is listed."
+                ),
+            },
+            "consents": {"state": "INCLUDED", "note": "Without guardian name or email."},
+            "avatar_file": not_included("The image file is not packaged in this export."),
+            "assessment_registrations": not_included("Policy decision pending."),
+            "billing_records": not_included("Policy decision pending."),
+            "dataset_entries": not_included("Policy decision pending."),
+            "external_dataset_copies": not_included(
+                "Copies made outside the platform are not tracked or exported by it."
+            ),
+            "check_in_tokens": not_included("Opaque access codes, not child data."),
+            "audit_records": not_included("Internal operational records."),
+        },
+    }
+
+
+def is_anonymised_player(player: PlayerDB) -> bool:
+    return (
+        player.first_name_en == ANONYMISED_FIRST_NAME
+        and player.last_name_en == ANONYMISED_LAST_NAME
+        and player.date_of_birth == ANONYMISED_DATE_OF_BIRTH
+    )
 
 
 class PrivacyService:
@@ -286,6 +362,7 @@ class PrivacyService:
             "prediction_outcomes": [values(item) for item in outcomes],
             "coach_message": values(coach_message) if coach_message else None,
             "tracking_sessions": tracking_export,
+            "completeness": export_completeness(),
             "consents": [
                 {
                     "consent_id": consent.consent_id,
@@ -302,6 +379,18 @@ class PrivacyService:
             action="child_data_exported",
             resource_type="player",
             resource_id=player_id,
+            details={
+                "result": "exported",
+                "counts": {
+                    "data_records": len(records),
+                    "videos": len(videos),
+                    "analyses": len(analyses),
+                    "training_plans": len(plans),
+                    "player_assessments": len(assessments),
+                    "player_metrics": len(metrics),
+                    "tracking_sessions": len(tracking_sessions),
+                },
+            },
         )
         return export
 
@@ -425,6 +514,10 @@ class PrivacyService:
         )
         video_ids = [video.video_id for video in videos]
         removed = self._erase_assessment_and_tracking_data(player_id, video_ids)
+        revoked_tokens = self.db.query(PlayerCheckInTokenDB).filter(
+            PlayerCheckInTokenDB.player_id == player_id,
+            PlayerCheckInTokenDB.revoked_at.is_(None),
+        ).update({"revoked_at": utcnow()}, synchronize_session=False)
 
         if video_ids:
             from app.db_models import VideoAnalysisJobDB
@@ -481,11 +574,14 @@ class PrivacyService:
         player = self.db.get(PlayerDB, player_id)
 
         if player is not None:
-            player.first_name_ar = "Deleted"
-            player.last_name_ar = "Player"
-            player.first_name_en = "Deleted"
-            player.last_name_en = "Player"
-            player.date_of_birth = datetime(1900, 1, 1).date()
+            player.first_name_ar = ANONYMISED_FIRST_NAME
+            player.last_name_ar = ANONYMISED_LAST_NAME
+            player.first_name_en = ANONYMISED_FIRST_NAME
+            player.last_name_en = ANONYMISED_LAST_NAME
+            player.date_of_birth = ANONYMISED_DATE_OF_BIRTH
+            # Database reference only. The image file itself is not touched
+            # here: a safe file-deletion strategy has not been decided.
+            player.photo_filename = None
             player.sex = "undisclosed"
             player.team_id = None
             player.tactical_profile = None
@@ -538,7 +634,13 @@ class PrivacyService:
             action="child_deletion_completed",
             resource_type="privacy_request",
             resource_id=request_id,
-            details={"player_id": player_id, "removed_counts": removed},
+            details={
+                "player_id": player_id,
+                "result": "completed",
+                "removed_counts": removed,
+                "revoked_counts": {"player_checkin_tokens": revoked_tokens},
+                "cleared_references": ["photo_filename"],
+            },
         )
         self.db.commit()
         self.db.refresh(privacy_request)

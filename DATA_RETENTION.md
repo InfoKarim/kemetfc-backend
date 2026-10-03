@@ -19,6 +19,11 @@ player key so the legal request record remains referentially valid. The same
 completion also removes the child's assessments and derived metrics, forecasts
 (predictions, simulations, outcomes), coach message, tracking sessions with
 their telemetry, events, features and coach labels, and any ML-dataset
-candidate entries tied to the removed videos or consents. Billing, registration
-and check-in-token rows are not touched by this step (decision pending).
+candidate entries tied to the removed videos or consents. Every check-in token for the
+child is revoked and the player's photo reference is cleared (the image file is
+not deleted by this step). Billing and registration rows are not touched by this
+step (policy decision pending). Which tables are exported, deleted or retained,
+and why, is recorded in `app/privacy_classification.py`, and a test fails when a
+new player-linked table is not classified. The guardian export lists what it
+contains and what it leaves out; it is not a complete copy of everything held.
 

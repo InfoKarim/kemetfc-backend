@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.db_models import PlayerCheckInTokenDB, PlayerDB
 from app.services.auth_service import hash_session_token, utcnow
 from app.services.id_service import next_entity_id
+from app.services.privacy_service import is_anonymised_player
 
 TOKEN_PREFIX = "KEMETCHK"
 # A player's printed/displayed QR badge is meant to last a full season,
@@ -97,7 +98,9 @@ class PlayerCheckInService:
             )
 
         player = self.db.get(PlayerDB, record.player_id)
-        if player is None:
+        # A player whose privacy deletion was completed keeps only an
+        # anonymised row; a code that still points at it must not resolve.
+        if player is None or is_anonymised_player(player):
             raise CheckInTokenError(
                 "invalid",
                 "The player for this check-in code no longer exists.",

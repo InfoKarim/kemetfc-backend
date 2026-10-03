@@ -4867,6 +4867,7 @@ def test_guardian_exports_child_data_and_requests_deletion():
         "prediction_outcomes",
         "coach_message",
         "tracking_sessions",
+        "completeness",
         "consents",
     }
     serialized_export = str(export.json())
