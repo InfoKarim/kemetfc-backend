@@ -2,7 +2,9 @@
 
 Routes (all under /v1, no DELETE and no generic PUT/PATCH anywhere):
 
+  GET  /v1/sprint, /v1/sprint.js                         the coach web page for the S1 sprint workflow
   POST /v1/assessments                                   create assessment (201, replay 200)
+  GET  /v1/players/{player_id}/assessments               assessment summaries for one player (read)
   GET  /v1/assessments/{assessment_id}                   assessment tree with facts only
   POST /v1/assessments/{assessment_id}/station-runs      create or get a station run (201 / 200)
   POST /v1/station-runs/{station_run_id}/trials          create a trial (201 / replay 200)
@@ -19,7 +21,10 @@ import random
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pathlib import Path
+
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -46,6 +51,7 @@ from app.v1.service import V1AssessmentService, V1ConflictError, V1ValidationErr
 from app.v1.timing import InvalidTimeValue, format_seconds, parse_seconds_to_centiseconds
 
 router = APIRouter(prefix="/v1", tags=["assessment-v1"])
+STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 WRITE_ROLES = {"admin", "coach"}
 READ_ROLES = {"admin", "coach", "reviewer"}
@@ -209,6 +215,17 @@ def create_assessment(body: CreateAssessmentBody, request: Request, db: Session 
 
     assessment, created = _once_or_reconcile(db, act)
     return _respond(_assessment_view(db, assessment, with_runs=False), created=created)
+
+
+@router.get("/players/{player_id}/assessments")
+def list_player_assessments(player_id: str, request: Request, db: Session = Depends(get_db)):
+    """Summaries only (no times), so a coach can reopen an assessment after leaving the page."""
+    _actor(request, READ_ROLES)
+    if db.get(PlayerDB, player_id) is None:
+        raise HTTPException(status_code=404, detail="Player not found")
+    rows = (db.query(V1AssessmentDB).filter_by(player_id=player_id)
+            .order_by(V1AssessmentDB.created_at.desc(), V1AssessmentDB.assessment_id.desc()).all())
+    return jsonable_encoder({"assessments": [_assessment_view(db, a, with_runs=False) for a in rows]})
 
 
 @router.get("/assessments/{assessment_id}")
@@ -403,3 +420,15 @@ def correct_manual_measurement(measurement_id: str, body: CorrectMeasurementBody
     correction, created = _once_or_reconcile(db, act)
     view = measurement_view(db, measurement)
     return _respond({"correction": _correction_view(correction), "measurement": view}, created=created)
+
+
+# ----------------------------------------------------------------------- web page (S1B2)
+
+@router.get("/sprint", include_in_schema=False)
+def sprint_page():
+    return FileResponse(STATIC_DIR / "v1_sprint.html", media_type="text/html")
+
+
+@router.get("/sprint.js", include_in_schema=False)
+def sprint_script():
+    return FileResponse(STATIC_DIR / "v1_sprint.js", media_type="application/javascript")

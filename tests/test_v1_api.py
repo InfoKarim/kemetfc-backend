@@ -610,7 +610,7 @@ def test_no_v1_delete_or_generic_update_routes_exist(api):
     for path, methods in paths.items():
         assert methods <= {"get", "post"}, (path, methods)
     assert sorted(paths) == sorted([
-        "/v1/assessments", "/v1/assessments/{assessment_id}",
+        "/v1/assessments", "/v1/assessments/{assessment_id}", "/v1/players/{player_id}/assessments",
         "/v1/assessments/{assessment_id}/station-runs", "/v1/station-runs/{station_run_id}/trials",
         "/v1/trials/{trial_id}/manual-measurements", "/v1/manual-measurements/{measurement_id}",
         "/v1/manual-measurements/{measurement_id}/corrections"])

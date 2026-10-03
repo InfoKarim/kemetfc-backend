@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>S1 20 m Sprint | Kemet FC</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/design-system.css">
+  <style>
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    .skip { position: absolute; left: -999px; top: 0; padding: 10px 14px; background: #F5C45D; color: #071A2B; z-index: 10; }
+    .skip:focus { left: 8px; top: 8px; }
+    header.top { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: baseline; justify-content: space-between;
+      padding: 16px clamp(14px, 4vw, 32px); border-bottom: 1px solid rgba(244,247,250,.14); }
+    .brand { margin: 0; color: #F5C45D !important; font-size: 20px; font-weight: 800; letter-spacing: .04em; }
+    .brand small { display: block; color: #C7D4E4; font-size: 12px; font-weight: 600; letter-spacing: .12em; }
+    .who { color: #8CA1BB; font-size: 14px; }
+    .who a { margin-left: 12px; }
+    main { max-width: 760px; margin: 0 auto; padding: 18px clamp(14px, 4vw, 32px) 80px; display: grid; gap: 18px; }
+    .card { padding: 18px; border: 1px solid rgba(244,247,250,.14); border-radius: 16px; background: #0D2A45; }
+    h1 { margin: 0 0 4px; font-size: clamp(22px, 5vw, 30px); }
+    h2 { margin: 0 0 8px; font-size: 20px; }
+    h3 { margin: 0; font-size: 18px; }
+    .muted { color: #8CA1BB; }
+    .field { display: grid; gap: 6px; margin-top: 12px; }
+    label { font-size: 15px; font-weight: 700; }
+    input, select { width: 100%; min-height: 52px; padding: 12px 14px; border: 2px solid #3C5878; border-radius: 12px;
+      background: #071A2B; color: #F4F7FA; font: inherit; font-size: 18px; }
+    input[aria-invalid="true"], select[aria-invalid="true"] { border-color: #E1685C; }
+    input[readonly] { opacity: .75; }
+    .time-input { font-size: clamp(34px, 11vw, 52px); font-weight: 800; letter-spacing: .02em; text-align: center; min-height: 76px;
+      font-variant-numeric: tabular-nums; }
+    button { min-height: 52px; padding: 12px 18px; border-radius: 12px; border: 2px solid transparent; font: inherit; font-size: 17px;
+      font-weight: 800; cursor: pointer; }
+    button.big { flex: 1 1 220px; min-height: 64px; font-size: 20px; }
+    button.primary { background: #F5C45D !important; color: #071A2B !important; border-color: #F5C45D !important; }
+    button.ghost { background: transparent !important; color: #F4F7FA !important; border-color: #8CA1BB !important; box-shadow: none !important; }
+    button.small { min-height: 44px; font-size: 15px; padding: 8px 14px; }
+    .time.none { font-size: 22px; font-weight: 700; color: #C7D4E4; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+    ul, ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+    #assessment-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+    li.attempt { padding: 16px; border: 1px solid rgba(244,247,250,.18); border-radius: 14px; background: #071A2B; display: grid; gap: 8px; }
+    .time-line { margin: 0; }
+    .time { font-size: clamp(30px, 9vw, 44px); font-weight: 800; font-variant-numeric: tabular-nums; color: #F4F7FA; }
+    .facts { margin: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: #F4F7FA !important; }
+    .chip { display: inline-block; padding: 4px 10px; border-radius: 999px; border: 1px solid #8CA1BB; font-size: 14px; font-weight: 700; }
+    .chip.ok::before { content: "\2713  "; }
+    .chip.warn::before { content: "!  "; }
+    .chip.ok { border-color: #16A66A; }
+    .chip.warn { border-color: #F5C45D; }
+    .msg { margin: 8px 0 0; font-size: 16px; font-weight: 700; }
+    .msg[hidden] { display: none; }
+    .msg.error { color: #FF9A8F !important; }
+    .msg.error::before { content: "Error: "; }
+    .msg.warn { color: #F5C45D !important; }
+    .msg.saving { color: #8CC4FF !important; }
+    .msg.saved { color: #5FE3A6 !important; font-size: 20px; }
+    .history { font-size: 16px; color: #F4F7FA; padding-top: 6px; }
+    summary { cursor: pointer; font-weight: 700; padding: 8px 0; min-height: 44px; }
+    .nr { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #3C5878; }
+    form.correction { padding: 14px; border: 2px solid #F5C45D; border-radius: 12px; }
+    .no-js { padding: 18px; }
+    @media (max-width: 480px) { button.big { flex-basis: 100%; } .row button { flex: 1 1 100%; } }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to the assessment</a>
+  <header class="top">
+    <p class="brand">KEMET FC <small>PLAYER ASSESSMENT</small></p>
+    <p class="who"><span id="who"></span><a href="/dashboard">Dashboard</a></p>
+  </header>
+  <main id="main" tabindex="-1">
+    <p id="notice" class="msg" role="alert" hidden></p>
+    <noscript><p class="no-js">This screen needs JavaScript.</p></noscript>
+
+    <section class="card picker" id="player-card" aria-labelledby="player-h">
+      <h2 id="player-h">Player</h2>
+      <div class="field">
+        <label for="player-filter">Find a player</label>
+        <input id="player-filter" type="search" autocomplete="off" placeholder="Start typing a name">
+      </div>
+      <div class="field">
+        <label for="player-select">Player being assessed</label>
+        <select id="player-select"><option value="">Select a player</option></select>
+      </div>
+    </section>
+
+    <section class="card picker" id="assessments-card" aria-labelledby="assessments-h" hidden>
+      <h2 id="assessments-h">V1 assessments for <span id="player-name"></span></h2>
+      <ul id="assessment-list"></ul>
+      <div class="row">
+        <button type="button" class="primary" id="start-assessment" data-action="start-assessment">START NEW ASSESSMENT</button>
+      </div>
+      <p id="assessment-msg" class="msg" role="alert" hidden></p>
+    </section>
+
+    <section class="card" id="sprint" aria-labelledby="sprint-h" hidden>
+      <div class="row" style="margin-top:0;justify-content:space-between;align-items:center">
+        <p class="muted" style="margin:0">Assessing</p>
+        <button type="button" class="ghost small" id="change-player">Change player</button>
+      </div>
+      <h1 id="assessment-player"></h1>
+      <h2 id="sprint-h">S1 — 20 m Sprint</h2>
+      <p class="muted">The player runs 20 metres. The official time is the number shown on the stopwatch.</p>
+      <p id="readonly-note" class="msg warn" hidden>Read-only view. Your account cannot enter or change times.</p>
+      <ul id="attempts" aria-label="Attempts"></ul>
+      <div id="write-actions" hidden>
+        <div class="row">
+          <button type="button" class="primary" id="add-attempt">ADD ATTEMPT</button>
+          <button type="button" class="ghost" id="add-invalid-attempt">ADD ATTEMPT THAT WAS NOT VALID</button>
+        </div>
+        <div id="invalid-box" class="nr" hidden>
+          <div class="field">
+            <label for="invalid-reason">Which rule was broken?</label>
+            <select id="invalid-reason"><option value="">Select a reason</option></select>
+          </div>
+          <div class="row"><button type="button" class="primary" id="invalid-save">SAVE NOT VALID ATTEMPT</button></div>
+        </div>
+        <p id="attempt-msg" class="msg" role="alert" hidden></p>
+      </div>
+    </section>
+  </main>
+  <script src="/auth-client.js"></script>
+  <script src="/v1/sprint.js"></script>
+</body>
+</html>

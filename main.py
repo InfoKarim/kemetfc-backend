@@ -309,6 +309,7 @@ HTML_PAGE_PATHS = {
     "/payment-control",
     "/payment-settings",
     "/tracking-analysis",
+    "/v1/sprint",
 }
 
 FEATURE_PAGE_PATHS = {
