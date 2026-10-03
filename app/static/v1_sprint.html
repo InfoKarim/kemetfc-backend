@@ -9,6 +9,8 @@
   <style>
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
+    /* A quick second tap on a button must not zoom the page. */
+    button, input, select, summary, a { touch-action: manipulation; }
     body { margin: 0; font-family: system-ui, sans-serif; }
     .skip { position: absolute; left: -999px; top: 0; padding: 10px 14px; background: #F5C45D; color: #071A2B; z-index: 10; }
     .skip:focus { left: 8px; top: 8px; }
@@ -22,11 +24,11 @@
     .card { padding: 18px; border: 1px solid rgba(244,247,250,.14); border-radius: 16px; background: #0D2A45; }
     h1 { margin: 0 0 4px; font-size: clamp(22px, 5vw, 30px); }
     h2 { margin: 0 0 8px; font-size: 20px; }
-    h3 { margin: 0; font-size: 18px; }
+    h3 { margin: 0; font-size: 20px; }
     .muted { color: #8CA1BB; }
     .field { display: grid; gap: 6px; margin-top: 12px; }
     label { font-size: 15px; font-weight: 700; }
-    input, select { width: 100%; min-height: 52px; padding: 12px 14px; border: 2px solid #3C5878; border-radius: 12px;
+    input, select { width: 100%; min-height: 52px; padding: 12px 14px; border: 2px solid #7F9BBB; border-radius: 12px;
       background: #071A2B; color: #F4F7FA; font: inherit; font-size: 18px; }
     input[aria-invalid="true"], select[aria-invalid="true"] { border-color: #E1685C; }
     input[readonly] { opacity: .75; }

@@ -130,6 +130,9 @@ def test_reason_lists_in_the_screen_equal_the_backend_lists():
         return re.findall(r'\["([A-Z_]+)",', block)
 
     assert codes("NOT_RECORDED_REASONS") == list(d.NOT_RECORDED_REASONS)
+    labels = dict(re.findall(r'\["([A-Z_]+)", "([^"]+)"\]', re.search(
+        r"const NOT_RECORDED_REASONS = \[(.*?)\n  \];", SCRIPT, re.S).group(1)))
+    assert labels == d.NOT_RECORDED_REASON_LABELS
     assert set(codes("INVALID_REASONS")) == d.INVALID_REASONS["S1"] and len(codes("INVALID_REASONS")) == 5
     assert codes("CORRECTION_REASONS") == list(d.CORRECTION_REASONS)
     assert f'SPRINT_METRIC = "{d.METRIC_DEFINITIONS[0].metric_id}"' in SCRIPT
@@ -163,7 +166,7 @@ def test_no_real_child_names_were_introduced():
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_browser_logic_tests_pass_under_node():
-    result = subprocess.run(["node", "--test", "tests/js/v1_sprint.test.js"], cwd=ROOT,
+    result = subprocess.run(["node", "--test", "tests/js/v1_sprint.test.js", "tests/js/login_next.test.js"], cwd=ROOT,
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-1000:]
     assert re.search(r"# fail 0", result.stdout) and not re.search(r"# pass 0\b", result.stdout)

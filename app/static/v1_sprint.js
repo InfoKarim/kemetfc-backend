@@ -30,10 +30,11 @@
 
   // Backend-supported lists (kept equal to app/v1/definitions.py by a test).
   const NOT_RECORDED_REASONS = [
-    ["TIMER_FAILURE", "Stopwatch failed or stopped working"],
-    ["TIMER_MISSED_STOP", "Timer missed the stop"],
-    ["TIMER_RESET_EARLY", "Stopwatch was reset before the time was written down"],
-    ["TIMER_WRONG_EVENT", "Timer stopped on the wrong moment"],
+    ["TIMER_MISSED_STOP", "Timer missed the finish"],
+    ["TIMER_RESET_BEFORE_ENTRY", "Stopwatch was reset before the time was written down"],
+    ["DEVICE_FAILURE", "Stopwatch stopped working"],
+    ["EVENT_UNCERTAIN", "Timer was not sure of the exact moment"],
+    ["OTHER", "Another timing problem"],
   ];
   const INVALID_REASONS = [
     ["FALSE_START", "False start (moved before the signal)"],
@@ -82,7 +83,7 @@
     }
     if (status === 422) {
       if (context === "time") return TIME_HELP;
-      if (context === "correction") return "Check the corrected time, the reason and the person confirming.";
+      if (context === "correction") return "Check the corrected time, the reason and the second person.";
       if (context === "station") return "This station is not available yet.";
       return "The server did not accept this entry. Check it and try again.";
     }
@@ -230,8 +231,8 @@
       if (reasonCode === "OTHER" && !String(reasonText || "").trim()) {
         return { state: "INVALID_INPUT", message: "Write the reason for the correction.", field: "reason-text" };
       }
-      if (!confirmerId) return { state: "INVALID_INPUT", message: "Choose the second person who confirms this correction.", field: "confirmer" };
-      if (confirmerId === selfId) return { state: "INVALID_INPUT", message: "The person confirming must be someone other than you.", field: "confirmer" };
+      if (!confirmerId) return { state: "INVALID_INPUT", message: "Choose the second person to record with this correction.", field: "confirmer" };
+      if (confirmerId === selfId) return { state: "INVALID_INPUT", message: "The second person must be someone other than you.", field: "confirmer" };
       const body = {
         corrected_value: checked.value, expected_effective_value: expectedEffective,
         reason_code: reasonCode, confirmed_by_user_id: confirmerId,
@@ -323,14 +324,13 @@
     }
 
     async function loadPlayers() {
-      const r = await load("/players");
-      if (r.status !== 200 || !Array.isArray(r.body)) {
+      const r = await load("/v1/player-picker");
+      if (r.status !== 200 || !r.body || !Array.isArray(r.body.players)) {
         say(friendlyMessage(r.status, detailOf(r)), "error");
         return;
       }
-      // Keep only what the screen needs; the rest of each profile is dropped here.
-      state.players = r.body.map((p) => ({ id: p.player_id, name: `${p.first_name_en || ""} ${p.last_name_en || ""}`.trim() }));
-      state.players.sort((a, b) => a.name.localeCompare(b.name));
+      // The server sends only an id and a display name.
+      state.players = r.body.players.map((p) => ({ id: p.player_id, name: p.display_name }));
       renderPlayerOptions("");
     }
 
@@ -347,12 +347,10 @@
 
     async function loadConfirmers() {
       if (state.confirmers || !canWrite()) return;
-      const r = await load("/messages/recipients");
-      if (r.status !== 200 || !Array.isArray(r.body)) { state.confirmersFailed = true; state.confirmers = []; return; }
-      // Only active coaches and admins can confirm (the server enforces the same rule).
-      state.confirmers = r.body
-        .filter((u) => (u.role === "coach" || u.role === "admin") && u.user_id !== state.me.user_id)
-        .map((u) => ({ id: u.user_id, name: u.username }));
+      const r = await load("/v1/eligible-confirmers");
+      if (r.status !== 200 || !r.body || !Array.isArray(r.body.confirmers)) { state.confirmersFailed = true; state.confirmers = []; return; }
+      // The server lists only active coaches and admins other than you.
+      state.confirmers = r.body.confirmers.map((u) => ({ id: u.user_id, name: u.username }));
     }
 
     async function refreshTree() {
@@ -477,7 +475,7 @@
     function renderEntryForm(trial) {
       const id = `time-${trial.trial_id}`;
       const input = el("input", {
-        id, type: "text", inputmode: "decimal", autocomplete: "off", spellcheck: "false",
+        id, type: "text", inputmode: "decimal", enterkeyhint: "done", autocomplete: "off", spellcheck: "false",
         class: "time-input", "aria-describedby": `${id}-msg`, "data-trial": trial.trial_id,
       });
       const form = el("form", { class: "entry", novalidate: true });
@@ -501,6 +499,10 @@
       const msg = form.querySelector(`#${CSS.escape(id)}-msg`);
       const nrMsg = nrBox.querySelector(`#${CSS.escape(`nr-${trial.trial_id}`)}-msg`);
 
+      // The phone keyboard can cover the SAVE button; bring the whole form into view.
+      input.addEventListener("focus", () => {
+        setTimeout(() => form.scrollIntoView({ block: "center", behavior: "smooth" }), 300);
+      });
       input.addEventListener("input", () => {
         const v = input.value.trim() === "" ? { ok: true } : validateTimeText(input.value);
         showError(msg, v.ok ? "" : v.message);
@@ -570,12 +572,13 @@
       const confirmer = el("select", { id: `${base}-confirmer`, "aria-describedby": `${base}-confirmer-msg` });
       confirmer.append(el("option", { value: "", text: "Select the second person" }));
       for (const c of state.confirmers || []) confirmer.append(el("option", { value: c.id, text: c.name }));
-      form.append(field(`${base}-confirmer`, "Confirmed by (a different coach or admin)", confirmer, `${base}-confirmer-msg`));
+      form.append(field(`${base}-confirmer`, "Second person (a different coach or admin)", confirmer, `${base}-confirmer-msg`));
+      form.append(el("p", { class: "muted", text: "The person you choose is recorded with this correction. They are not asked to approve it." }));
       const unavailable = !(state.confirmers && state.confirmers.length);
       if (unavailable) {
         form.append(el("p", { class: "msg warn", role: "alert", text: state.confirmersFailed
-          ? "The list of people who can confirm could not be loaded, so corrections are unavailable on this screen."
-          : "No other active coach or admin is available to confirm, so a correction cannot be made right now." }));
+          ? "The list of people who can be named as the second person could not be loaded, so corrections are unavailable on this screen."
+          : "No other active coach or admin is available to be named as the second person, so a correction cannot be made right now." }));
       }
       const status = el("p", { id: `${base}-status`, class: "msg", role: "status", hidden: true });
       const submit = el("button", { type: "submit", class: "primary", text: "SUBMIT CORRECTION", "data-action": `correct-${trial.trial_id}` });

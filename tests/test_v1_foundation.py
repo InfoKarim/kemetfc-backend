@@ -207,10 +207,10 @@ def test_one_entry_per_trial_and_metric_and_idempotent_retry(svc, ctx):
 
 def test_timer_failure_is_not_recorded_with_no_number_and_no_verdict(svc, ctx):
     _, _, trials = build(svc, attempts=2)
-    measurement = svc.record_not_recorded(trials[1].trial_id, SPRINT, "TIMER_FAILURE", "COACH")
+    measurement = svc.record_not_recorded(trials[1].trial_id, SPRINT, "DEVICE_FAILURE", "COACH")
     assert measurement.entry_status == "NOT_RECORDED"
     assert measurement.value_centiseconds is None
-    assert measurement.not_recorded_reason == "TIMER_FAILURE"
+    assert measurement.not_recorded_reason == "DEVICE_FAILURE"
     with ctx.db() as db:
         trial = db.get(V1TrialDB, trials[1].trial_id)
         # The child's attempt is not marked as a failure or as invalid.
@@ -228,8 +228,8 @@ def test_database_refuses_placeholder_numbers_for_not_recorded(svc, ctx):
                     metric_definition_version="1.0.0", unit="seconds",
                     measurement_source="HUMAN_MANUAL", measurement_method="MANUAL_STOPWATCH",
                     entered_by_user_id="COACH", entered_at=utcnow())
-        for fields in (dict(entry_status="NOT_RECORDED", value_centiseconds=0, not_recorded_reason="TIMER_FAILURE"),
-                       dict(entry_status="NOT_RECORDED", value_centiseconds=99900, not_recorded_reason="TIMER_FAILURE"),
+        for fields in (dict(entry_status="NOT_RECORDED", value_centiseconds=0, not_recorded_reason="DEVICE_FAILURE"),
+                       dict(entry_status="NOT_RECORDED", value_centiseconds=99900, not_recorded_reason="DEVICE_FAILURE"),
                        dict(entry_status="NOT_RECORDED", value_centiseconds=None, not_recorded_reason=None),
                        dict(entry_status="RECORDED", value_centiseconds=0),
                        dict(entry_status="RECORDED", value_centiseconds=-5),
@@ -250,8 +250,9 @@ def test_invalid_trial_stores_its_reason(svc, ctx):
         assert (stored.validity, stored.invalid_reason) == ("INVALID", "FALSE_START")
     with pytest.raises(V1ValidationError):
         svc.add_trial(run.station_run_id, 3, "COACH", validity="INVALID")
-    with pytest.raises(V1ValidationError):  # TIMER_FAILURE is never a child's invalid reason
-        svc.add_trial(run.station_run_id, 3, "COACH", validity="INVALID", invalid_reason="TIMER_FAILURE")
+    for timing_reason in d.NOT_RECORDED_REASONS:  # a timing problem is never a child's invalid reason
+        with pytest.raises(V1ValidationError):
+            svc.add_trial(run.station_run_id, 3, "COACH", validity="INVALID", invalid_reason=timing_reason)
     with pytest.raises(V1ValidationError):  # a reason from another station's list
         svc.add_trial(run.station_run_id, 3, "COACH", validity="INVALID", invalid_reason="MISSED_CONE")
     with pytest.raises(V1ValidationError):
@@ -389,7 +390,7 @@ def seed_two_children(svc):
         assessment, run, trials = build(svc, player=player, attempts=2)
         m = svc.record_manual_time(trials[0].trial_id, SPRINT, "4.52", "seconds", "COACH")
         svc.correct_manual_time(m.manual_measurement_id, "4.25", "COACH", "TYPING_ERROR")
-        svc.record_not_recorded(trials[1].trial_id, SPRINT, "TIMER_FAILURE", "COACH")
+        svc.record_not_recorded(trials[1].trial_id, SPRINT, "DEVICE_FAILURE", "COACH")
 
 
 def test_privacy_export_includes_assessment_measurement_and_correction_history(svc, ctx):
@@ -492,3 +493,19 @@ def test_this_session_uses_scratch_storage_and_real_data_is_unchanged_so_far():
     assert database_file is None or not guard._inside_repo(database_file)
     for path in guard._GUARDED_PATHS:
         assert guard._fingerprint(path) == guard._BEFORE[str(path)], str(path)
+
+
+# ---- NOT_RECORDED contract (S1B3) ------------------------------------------------------------------
+
+def test_not_recorded_reasons_are_the_frozen_standards_list(svc):
+    assert d.NOT_RECORDED_REASONS == ("TIMER_MISSED_STOP", "TIMER_RESET_BEFORE_ENTRY", "DEVICE_FAILURE",
+                                      "EVENT_UNCERTAIN", "OTHER")
+    assert set(d.NOT_RECORDED_REASON_LABELS) == set(d.NOT_RECORDED_REASONS)
+    assert not set(d.NOT_RECORDED_REASONS) & {r for reasons in d.INVALID_REASONS.values() for r in reasons}
+    _, _, trials = build(svc, attempts=len(d.NOT_RECORDED_REASONS) + 1)
+    for trial, reason in zip(trials, d.NOT_RECORDED_REASONS):
+        saved = svc.record_not_recorded(trial.trial_id, SPRINT, reason, "COACH")
+        assert saved.not_recorded_reason == reason and saved.value_centiseconds is None
+    for old in ("TIMER_FAILURE", "TIMER_RESET_EARLY", "TIMER_WRONG_EVENT"):   # S1A's retired codes
+        with pytest.raises(V1ValidationError):
+            svc.record_not_recorded(trials[-1].trial_id, SPRINT, old, "COACH")

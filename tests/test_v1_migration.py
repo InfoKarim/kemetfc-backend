@@ -92,7 +92,7 @@ def test_migration_check_constraints_exist_in_the_migrated_schema(tmp_path):
         "INSERT INTO v1_trials VALUES ('T4','R1','',1,'VALID',NULL,'U1','2026-09-12')",
         "INSERT INTO v1_manual_measurements VALUES ('M1','T1','PHYS-SPR-020M-MAN-001','1.0.0','RECORDED',0,'seconds',NULL,'HUMAN_MANUAL','MANUAL_STOPWATCH','U1','2026-09-12',NULL)",
         "INSERT INTO v1_manual_measurements VALUES ('M2','T1','PHYS-SPR-020M-MAN-001','1.0.0','RECORDED',425,'seconds',NULL,'AI','MANUAL_STOPWATCH','U1','2026-09-12',NULL)",
-        "INSERT INTO v1_manual_measurements VALUES ('M3','T1','PHYS-SPR-020M-MAN-001','1.0.0','NOT_RECORDED',0,'seconds','TIMER_FAILURE','HUMAN_MANUAL','MANUAL_STOPWATCH','U1','2026-09-12',NULL)",
+        "INSERT INTO v1_manual_measurements VALUES ('M3','T1','PHYS-SPR-020M-MAN-001','1.0.0','NOT_RECORDED',0,'seconds','DEVICE_FAILURE','HUMAN_MANUAL','MANUAL_STOPWATCH','U1','2026-09-12',NULL)",
     ]
     for statement in bad_rows:
         with pytest.raises(IntegrityError):

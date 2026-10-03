@@ -152,29 +152,29 @@ test("the pending store keeps keys only, never assessment content", async () => 
 // ---- NOT_RECORDED ---------------------------------------------------------------------------
 
 test("not recorded sends a reason and no number", async () => {
-  const body = { ...measurementBody(null), entry_status: "NOT_RECORDED", not_recorded_reason: "TIMER_FAILURE" };
+  const body = { ...measurementBody(null), entry_status: "NOT_RECORDED", not_recorded_reason: "DEVICE_FAILURE" };
   const { flows, calls } = flowsWith([{ status: 201, body }]);
-  const r = await flows.saveNotRecorded({ trialId: "t", reason: "TIMER_FAILURE" });
+  const r = await flows.saveNotRecorded({ trialId: "t", reason: "DEVICE_FAILURE" });
   assert.equal(r.state, "SAVED");
   assert.equal(calls[0].body.entry_status, "NOT_RECORDED");
-  assert.equal(calls[0].body.not_recorded_reason, "TIMER_FAILURE");
+  assert.equal(calls[0].body.not_recorded_reason, "DEVICE_FAILURE");
   assert.equal("displayed_value" in calls[0].body, false);
   assert.doesNotMatch(calls[0].raw, /\b0\b|999/);
 });
 
 test("not recorded needs one of the backend's reasons", async () => {
   const { flows, calls } = flowsWith([]);
-  for (const reason of ["", "SLOW", "OTHER", null]) {
+  for (const reason of ["", "SLOW", "TIMER_FAILURE", "TIMER_RESET_EARLY", "TIMER_WRONG_EVENT", null]) {
     assert.equal((await flows.saveNotRecorded({ trialId: "t", reason })).state, "INVALID_INPUT");
   }
   assert.equal(calls.length, 0);
   assert.deepEqual(S.NOT_RECORDED_REASONS.map((r) => r[0]),
-    ["TIMER_FAILURE", "TIMER_MISSED_STOP", "TIMER_RESET_EARLY", "TIMER_WRONG_EVENT"]);
+    ["TIMER_MISSED_STOP", "TIMER_RESET_BEFORE_ENTRY", "DEVICE_FAILURE", "EVENT_UNCERTAIN", "OTHER"]);
 });
 
 test("a timer problem is described as a recording problem, never as the player failing", () => {
   const trial = { attempt_number: 3, validity: "VALID", invalid_reason: null, manual_measurements: [
-    { entry_status: "NOT_RECORDED", not_recorded_reason: "TIMER_FAILURE", effective_value: null, corrections: [] }] };
+    { entry_status: "NOT_RECORDED", not_recorded_reason: "DEVICE_FAILURE", effective_value: null, corrections: [] }] };
   const d = S.describeAttempt(trial);
   assert.equal(d.validity, "Valid attempt");
   assert.equal(d.time, "Time not recorded");

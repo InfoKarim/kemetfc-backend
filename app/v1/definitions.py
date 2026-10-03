@@ -40,10 +40,22 @@ INVALID_REASONS = {
            "INTERFERENCE"},
 }
 
-# Standard section 5.8. NOT_RECORDED means the timing failed, never the child.
-NOT_RECORDED_REASONS = (
-    "TIMER_FAILURE", "TIMER_MISSED_STOP", "TIMER_RESET_EARLY", "TIMER_WRONG_EVENT",
-)
+# NOT_RECORDED means the timing failed, never the child. The codes are the frozen standard's
+# own list (section 6.1, with the situations of sections 5.5 and 5.8). S1A first shipped a
+# different list (TIMER_FAILURE, TIMER_MISSED_STOP, TIMER_RESET_EARLY, TIMER_WRONG_EVENT);
+# S1B3 replaced it with the standard's. Only synthetic V1 records existed, and no database
+# CHECK names these values, so no migration was needed. Old code -> new code, if one is ever
+# met in a stored row: TIMER_FAILURE -> DEVICE_FAILURE, TIMER_RESET_EARLY ->
+# TIMER_RESET_BEFORE_ENTRY, TIMER_WRONG_EVENT -> EVENT_UNCERTAIN, TIMER_MISSED_STOP unchanged.
+# In every case the attempt is repeated and is not counted against the attempt limit.
+NOT_RECORDED_REASON_LABELS = {
+    "TIMER_MISSED_STOP": "Timer missed the finish",
+    "TIMER_RESET_BEFORE_ENTRY": "Stopwatch was reset before the time was written down",
+    "DEVICE_FAILURE": "Stopwatch stopped working",
+    "EVENT_UNCERTAIN": "Timer was not sure of the exact moment",
+    "OTHER": "Another timing problem",
+}
+NOT_RECORDED_REASONS = tuple(NOT_RECORDED_REASON_LABELS)
 
 # Standard section 6.3.
 CORRECTION_REASONS = ("DECIMAL_SLIP", "TYPING_ERROR", "MISREAD_DISPLAY", "WRONG_TRIAL", "OTHER")

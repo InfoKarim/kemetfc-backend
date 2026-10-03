@@ -85,6 +85,9 @@
       text-decoration: none;
     }
 
+    .header-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
+    .primary.outline { border: 2px solid var(--blue); background: transparent; }
+
     .stats {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -333,7 +336,10 @@
             <strong>"Add Assessment"</strong> to create your first one.
           </p>
         </div>
-        <a class="primary" href="/add-assessment">Add Assessment</a>
+        <div class="header-actions">
+          <a class="primary outline" id="v1-sprint-link" href="/v1/sprint">Player Assessment: 20 m Sprint</a>
+          <a class="primary" href="/add-assessment">Add Assessment</a>
+        </div>
       </header>
 
       <section class="stats">

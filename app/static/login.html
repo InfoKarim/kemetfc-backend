@@ -107,9 +107,24 @@
     const form = document.querySelector("#login-form");
     const status = document.querySelector("#login-status");
     const button = document.querySelector("#login-button");
+    // BEGIN safeNext
+    // Only a same-origin relative path (with its query) is accepted. Anything else, including
+    // //host, /\host, control characters and absolute URLs, is ignored.
+    function safeNext(value, origin) {
+      if (typeof value !== "string" || value === "" || value.length > 512) return null;
+      if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return null;
+      if (/[\u0000-\u001f\u007f]/.test(value)) return null;
+      let url;
+      try { url = new URL(value, origin); } catch (error) { return null; }
+      if (url.origin !== origin) return null;
+      const target = url.pathname + url.search;
+      // Normalising can turn "/..//host" into "//host", which a browser reads as another site.
+      if (!target.startsWith("/") || target.startsWith("//") || target.includes("\\")) return null;
+      return target;
+    }
+    // END safeNext
     const requestedNext = new URLSearchParams(location.search).get("next");
-    const next = requestedNext && requestedNext.startsWith("/") &&
-      !requestedNext.startsWith("//") ? requestedNext : "/dashboard";
+    const next = safeNext(requestedNext, location.origin);
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -147,7 +162,7 @@
         const fallback = result.user?.role === "admin"
           ? "/dashboard"
           : landingPages[enabled[0]] || "/dashboard";
-        location.assign(requestedNext ? next : fallback);
+        location.assign(next || fallback);
       } catch (error) {
         status.textContent = error.message;
         button.disabled = false;

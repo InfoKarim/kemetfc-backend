@@ -3,6 +3,8 @@
 Routes (all under /v1, no DELETE and no generic PUT/PATCH anywhere):
 
   GET  /v1/sprint, /v1/sprint.js                         the coach web page for the S1 sprint workflow
+  GET  /v1/player-picker                                 player_id + display_name only (read)
+  GET  /v1/eligible-confirmers                           active coach/admin other than the caller (write roles)
   POST /v1/assessments                                   create assessment (201, replay 200)
   GET  /v1/players/{player_id}/assessments               assessment summaries for one player (read)
   GET  /v1/assessments/{assessment_id}                   assessment tree with facts only
@@ -31,7 +33,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.db_models import PlayerDB, UserDB
-from app.services.privacy_service import PrivacyService
+from app.services.privacy_service import PrivacyService, is_anonymised_player
 from app.v1 import definitions as d
 from app.v1.models import (
     V1AssessmentDB,
@@ -215,6 +217,29 @@ def create_assessment(body: CreateAssessmentBody, request: Request, db: Session 
 
     assessment, created = _once_or_reconcile(db, act)
     return _respond(_assessment_view(db, assessment, with_runs=False), created=created)
+
+
+@router.get("/player-picker")
+def player_picker(request: Request, db: Session = Depends(get_db)):
+    """The only player fields the sprint screen needs. No profile, date of birth, team,
+    guardian or medical data, and no anonymised (deleted) players."""
+    _actor(request, READ_ROLES)
+    players = [p for p in db.query(PlayerDB).all() if not is_anonymised_player(p)]
+    rows = [{"player_id": p.player_id,
+             "display_name": f"{p.first_name_en or ''} {p.last_name_en or ''}".strip()} for p in players]
+    rows.sort(key=lambda r: (r["display_name"].lower(), r["player_id"]))
+    return {"players": rows}
+
+
+@router.get("/eligible-confirmers")
+def eligible_confirmers(request: Request, db: Session = Depends(get_db)):
+    """Who may be named as the second person on a correction: active coaches and admins other
+    than the caller, the same rule the correction route enforces. Nobody else is listed."""
+    actor = _actor(request, WRITE_ROLES)
+    users = (db.query(UserDB)
+             .filter(UserDB.active.is_(True), UserDB.role.in_(sorted(WRITE_ROLES)), UserDB.user_id != actor)
+             .order_by(UserDB.username).all())
+    return {"confirmers": [{"user_id": u.user_id, "username": u.username} for u in users]}
 
 
 @router.get("/players/{player_id}/assessments")

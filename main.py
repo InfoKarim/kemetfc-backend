@@ -479,7 +479,13 @@ async def enforce_authentication(request: Request, call_next):
 
     if authenticated is None:
         if request.method == "GET" and path in HTML_PAGE_PATHS:
-            target = quote(str(request.url.path), safe="/")
+            # Keep the query (for example ?assessment=<id>) so the user lands back on the same
+            # screen. It is percent-encoded into one parameter; login.html accepts only a
+            # same-origin relative path.
+            wanted = request.url.path
+            if request.url.query:
+                wanted = f"{wanted}?{request.url.query}"
+            target = quote(wanted, safe="/")
             return RedirectResponse(
                 url=f"/login?next={target}",
                 status_code=303,

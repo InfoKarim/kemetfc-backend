@@ -180,6 +180,8 @@ def test_invalid_trial_uses_protocol_reasons_and_timer_failure_is_not_one(api):
     ok = api.coach.post(path, json={"attempt_number": 2, "validity": "INVALID", "invalid_reason": "FALSE_START"})
     assert ok.status_code == 201 and ok.json()["invalid_reason"] == "FALSE_START"
     for bad in ({"attempt_number": 3, "validity": "INVALID"},
+                {"attempt_number": 3, "validity": "INVALID", "invalid_reason": "DEVICE_FAILURE"},
+                {"attempt_number": 3, "validity": "INVALID", "invalid_reason": "EVENT_UNCERTAIN"},
                 {"attempt_number": 3, "validity": "INVALID", "invalid_reason": "TIMER_FAILURE"},
                 {"attempt_number": 3, "validity": "INVALID", "invalid_reason": "MISSED_CONE"},
                 {"attempt_number": 3, "validity": "VALID", "invalid_reason": "FALSE_START"},
@@ -279,12 +281,12 @@ def test_wrong_metric_unit_source_or_missing_trial_is_rejected(api):
 def test_timer_failure_is_not_recorded_without_a_number_and_the_trial_stays_valid(api):
     assessment, _, trial = setup_trial(api)
     response = api.coach.post(f"/v1/trials/{trial['trial_id']}/manual-measurements", json={
-        "metric_id": SPRINT, "entry_status": "NOT_RECORDED", "not_recorded_reason": "TIMER_FAILURE",
+        "metric_id": SPRINT, "entry_status": "NOT_RECORDED", "not_recorded_reason": "DEVICE_FAILURE",
         "client_entry_id": key()})
     assert response.status_code == 201
     body = response.json()
     assert body["entry_status"] == "NOT_RECORDED" and body["displayed_value"] is None
-    assert body["effective_value"] is None and body["not_recorded_reason"] == "TIMER_FAILURE"
+    assert body["effective_value"] is None and body["not_recorded_reason"] == "DEVICE_FAILURE"
     with api.db() as db:
         row = db.get(V1ManualMeasurementDB, body["measurement_id"])
         assert row.value_centiseconds is None
@@ -300,9 +302,9 @@ def test_timer_failure_is_not_recorded_without_a_number_and_the_trial_stays_vali
 @pytest.mark.parametrize("fields", [
     {"entry_status": "NOT_RECORDED"},
     {"entry_status": "NOT_RECORDED", "not_recorded_reason": "SLOW"},
-    {"entry_status": "NOT_RECORDED", "not_recorded_reason": "TIMER_FAILURE", "displayed_value": "0"},
-    {"entry_status": "NOT_RECORDED", "not_recorded_reason": "TIMER_FAILURE", "displayed_value": "999"},
-    {"entry_status": "RECORDED", "not_recorded_reason": "TIMER_FAILURE", "displayed_value": "4.25"},
+    {"entry_status": "NOT_RECORDED", "not_recorded_reason": "DEVICE_FAILURE", "displayed_value": "0"},
+    {"entry_status": "NOT_RECORDED", "not_recorded_reason": "DEVICE_FAILURE", "displayed_value": "999"},
+    {"entry_status": "RECORDED", "not_recorded_reason": "DEVICE_FAILURE", "displayed_value": "4.25"},
     {"entry_status": "RECORDED"},
 ])
 def test_inconsistent_entry_shapes_are_rejected(api, fields):
@@ -381,7 +383,7 @@ def test_other_reason_with_text_is_accepted_and_not_recorded_cannot_be_corrected
     assert correct(api.coach, mid, "4.25", "4.52", reason="OTHER", reason_text="read the wrong line").status_code == 201
     t2 = api.coach.post(f"/v1/station-runs/{trial['station_run_id']}/trials", json={"attempt_number": 2}).json()
     missing = api.coach.post(f"/v1/trials/{t2['trial_id']}/manual-measurements", json={
-        "metric_id": SPRINT, "entry_status": "NOT_RECORDED", "not_recorded_reason": "TIMER_FAILURE",
+        "metric_id": SPRINT, "entry_status": "NOT_RECORDED", "not_recorded_reason": "DEVICE_FAILURE",
         "client_entry_id": key()}).json()["measurement_id"]
     assert correct(api.coach, missing, "4.25", "4.52").status_code in (409, 422)
 
@@ -611,6 +613,7 @@ def test_no_v1_delete_or_generic_update_routes_exist(api):
         assert methods <= {"get", "post"}, (path, methods)
     assert sorted(paths) == sorted([
         "/v1/assessments", "/v1/assessments/{assessment_id}", "/v1/players/{player_id}/assessments",
+        "/v1/player-picker", "/v1/eligible-confirmers",
         "/v1/assessments/{assessment_id}/station-runs", "/v1/station-runs/{station_run_id}/trials",
         "/v1/trials/{trial_id}/manual-measurements", "/v1/manual-measurements/{measurement_id}",
         "/v1/manual-measurements/{measurement_id}/corrections"])
