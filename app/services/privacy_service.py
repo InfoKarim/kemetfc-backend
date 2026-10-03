@@ -1,16 +1,29 @@
 from datetime import datetime
 from uuid import uuid4
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.db_models import (
     AnalysisDB,
     AuditEventDB,
+    CoachMessageDB,
+    CoachValidationLabelDB,
     DataRecordDB,
     GuardianConsentDB,
     GuardianPlayerLinkDB,
+    MLDatasetEntryDB,
+    MLPredictionDB,
+    MonteCarloSimulationDB,
+    PlayerAssessmentDB,
     PlayerDB,
+    PlayerMetricDB,
+    PredictionOutcomeDB,
     PrivacyRequestDB,
+    TrackingEventDB,
+    TrackingFeatureSetDB,
+    TrackingSampleDB,
+    TrackingSessionDB,
     TrainingPlanDB,
     UserDB,
     VideoDB,
@@ -182,6 +195,77 @@ class PrivacyService:
                 if column.name not in blocked
             }
 
+        # Assessment, derived-progress and tracking data are already
+        # readable by the linked guardian through the guardian-allowed
+        # routes, so the export includes them. Raw per-frame telemetry
+        # (TrackingSampleDB) is staff-only everywhere else in the app, so it
+        # is reported only as a count per session, never as rows.
+        assessments = (
+            self.db.query(PlayerAssessmentDB)
+            .filter(PlayerAssessmentDB.player_id == player_id)
+            .order_by(PlayerAssessmentDB.created_at, PlayerAssessmentDB.assessment_id)
+            .all()
+        )
+        metrics = (
+            self.db.query(PlayerMetricDB)
+            .filter(PlayerMetricDB.player_id == player_id)
+            .order_by(PlayerMetricDB.metric_id)
+            .all()
+        )
+        predictions = (
+            self.db.query(MLPredictionDB)
+            .filter(MLPredictionDB.player_id == player_id)
+            .order_by(MLPredictionDB.created_at, MLPredictionDB.prediction_id)
+            .all()
+        )
+        simulations = (
+            self.db.query(MonteCarloSimulationDB)
+            .filter(MonteCarloSimulationDB.player_id == player_id)
+            .order_by(MonteCarloSimulationDB.created_at, MonteCarloSimulationDB.simulation_id)
+            .all()
+        )
+        outcomes = (
+            self.db.query(PredictionOutcomeDB)
+            .filter(PredictionOutcomeDB.player_id == player_id)
+            .order_by(PredictionOutcomeDB.created_at, PredictionOutcomeDB.outcome_id)
+            .all()
+        )
+        coach_message = self.db.get(CoachMessageDB, player_id)
+        tracking_sessions = (
+            self.db.query(TrackingSessionDB)
+            .filter(TrackingSessionDB.player_id == player_id)
+            .order_by(TrackingSessionDB.started_at, TrackingSessionDB.session_id)
+            .all()
+        )
+        tracking_export = []
+
+        for session in tracking_sessions:
+            feature_set = self.db.get(TrackingFeatureSetDB, session.session_id)
+            events = (
+                self.db.query(TrackingEventDB)
+                .filter(TrackingEventDB.session_id == session.session_id)
+                .order_by(TrackingEventDB.occurred_at, TrackingEventDB.event_id)
+                .all()
+            )
+            labels = (
+                self.db.query(CoachValidationLabelDB)
+                .filter(CoachValidationLabelDB.session_id == session.session_id)
+                .order_by(CoachValidationLabelDB.created_at, CoachValidationLabelDB.label_id)
+                .all()
+            )
+            sample_count = (
+                self.db.query(func.count(TrackingSampleDB.sample_id))
+                .filter(TrackingSampleDB.session_id == session.session_id)
+                .scalar()
+            )
+            tracking_export.append({
+                **values(session),
+                "sample_count": sample_count or 0,
+                "feature_set": values(feature_set) if feature_set else None,
+                "events": [values(event) for event in events],
+                "coach_labels": [values(label) for label in labels],
+            })
+
         export = {
             "generated_at": utcnow(),
             "player": values(player),
@@ -195,6 +279,13 @@ class PrivacyService:
                 for analysis in analyses
             ],
             "training_plans": [values(plan) for plan in plans],
+            "player_assessments": [values(item) for item in assessments],
+            "player_metrics": [values(item) for item in metrics],
+            "ml_predictions": [values(item) for item in predictions],
+            "monte_carlo_simulations": [values(item) for item in simulations],
+            "prediction_outcomes": [values(item) for item in outcomes],
+            "coach_message": values(coach_message) if coach_message else None,
+            "tracking_sessions": tracking_export,
             "consents": [
                 {
                     "consent_id": consent.consent_id,
@@ -333,6 +424,7 @@ class PrivacyService:
             else []
         )
         video_ids = [video.video_id for video in videos]
+        removed = self._erase_assessment_and_tracking_data(player_id, video_ids)
 
         if video_ids:
             from app.db_models import VideoAnalysisJobDB
@@ -369,8 +461,13 @@ class PrivacyService:
             AnalysisDB.player_id == player_id
         ).delete(synchronize_session=False)
 
+        # No ORM relationship links these tables, so the unit of work does not
+        # order the two deletes itself: flush the videos first, otherwise the
+        # data_records DELETE runs while videos still reference it and fails
+        # on any database that enforces foreign keys (PostgreSQL).
         for video in videos:
             self.db.delete(video)
+        self.db.flush()
         for record in records:
             self.db.delete(record)
 
@@ -391,6 +488,8 @@ class PrivacyService:
             player.date_of_birth = datetime(1900, 1, 1).date()
             player.sex = "undisclosed"
             player.team_id = None
+            player.tactical_profile = None
+            player.weak_foot_profile = None
             player.physical_profile = {
                 "height_cm": 0.0,
                 "weight_kg": 0.0,
@@ -439,11 +538,123 @@ class PrivacyService:
             action="child_deletion_completed",
             resource_type="privacy_request",
             resource_id=request_id,
-            details={"player_id": player_id},
+            details={"player_id": player_id, "removed_counts": removed},
         )
         self.db.commit()
         self.db.refresh(privacy_request)
         return privacy_request
+
+    def _erase_assessment_and_tracking_data(
+        self,
+        player_id: str,
+        video_ids: list[str],
+    ) -> dict[str, int]:
+        """Hard-deletes the child's assessment, derived-progress and tracking
+        rows, the same way complete_deletion_request already hard-deletes the
+        child's videos, analyses and plans. Runs inside the caller's
+        transaction (no commit here) and touches only database rows - no
+        files. Rows that belong to another player but point at something
+        being removed are un-linked, never deleted.
+
+        Returns row counts per table for the audit event (no row content).
+        """
+        db = self.db
+        counts: dict[str, int] = {}
+
+        def delete(name: str, query) -> None:
+            counts[name] = query.delete(synchronize_session=False)
+
+        session_ids = [
+            row[0]
+            for row in db.query(TrackingSessionDB.session_id)
+            .filter(TrackingSessionDB.player_id == player_id)
+            .all()
+        ]
+        assessment_ids = [
+            row[0]
+            for row in db.query(PlayerAssessmentDB.assessment_id)
+            .filter(PlayerAssessmentDB.player_id == player_id)
+            .all()
+        ]
+        prediction_ids = [
+            row[0]
+            for row in db.query(MLPredictionDB.prediction_id)
+            .filter(MLPredictionDB.player_id == player_id)
+            .all()
+        ]
+        consent_ids = [
+            row[0]
+            for row in db.query(GuardianConsentDB.consent_id)
+            .filter(GuardianConsentDB.player_id == player_id)
+            .all()
+        ]
+
+        # Forecast chain: outcome / simulation -> prediction.
+        delete("prediction_outcomes", db.query(PredictionOutcomeDB).filter(or_(
+            PredictionOutcomeDB.player_id == player_id,
+            PredictionOutcomeDB.prediction_id.in_(prediction_ids),
+        )))
+        delete("monte_carlo_simulations", db.query(MonteCarloSimulationDB).filter(or_(
+            MonteCarloSimulationDB.player_id == player_id,
+            MonteCarloSimulationDB.prediction_id.in_(prediction_ids),
+        )))
+        delete("ml_predictions", db.query(MLPredictionDB).filter(
+            MLPredictionDB.player_id == player_id
+        ))
+
+        # Another player's assessment must never be deleted just because it
+        # points at one of this child's tracking sessions: un-link it.
+        if session_ids:
+            db.query(PlayerAssessmentDB).filter(
+                PlayerAssessmentDB.player_id != player_id,
+                PlayerAssessmentDB.tracking_session_id.in_(session_ids),
+            ).update(
+                {PlayerAssessmentDB.tracking_session_id: None},
+                synchronize_session=False,
+            )
+
+        delete("player_metrics", db.query(PlayerMetricDB).filter(or_(
+            PlayerMetricDB.player_id == player_id,
+            PlayerMetricDB.assessment_id.in_(assessment_ids),
+        )))
+        delete("player_assessments", db.query(PlayerAssessmentDB).filter(
+            PlayerAssessmentDB.player_id == player_id
+        ))
+        delete("coach_messages", db.query(CoachMessageDB).filter(
+            CoachMessageDB.player_id == player_id
+        ))
+
+        delete("coach_validation_labels", db.query(CoachValidationLabelDB).filter(
+            CoachValidationLabelDB.session_id.in_(session_ids)
+        ))
+        delete("tracking_events", db.query(TrackingEventDB).filter(
+            TrackingEventDB.session_id.in_(session_ids)
+        ))
+        delete("tracking_feature_sets", db.query(TrackingFeatureSetDB).filter(
+            TrackingFeatureSetDB.session_id.in_(session_ids)
+        ))
+        delete("tracking_samples", db.query(TrackingSampleDB).filter(
+            TrackingSampleDB.session_id.in_(session_ids)
+        ))
+        delete("tracking_sessions", db.query(TrackingSessionDB).filter(
+            TrackingSessionDB.player_id == player_id
+        ))
+
+        # A video being erased may be referenced by another player's tracking
+        # session: keep that session, drop only the dead video reference.
+        if video_ids:
+            db.query(TrackingSessionDB).filter(
+                TrackingSessionDB.video_id.in_(video_ids)
+            ).update({TrackingSessionDB.video_id: None}, synchronize_session=False)
+
+        # Dataset candidates reference the child's video and consent, both of
+        # which this request removes.
+        delete("ml_dataset_entries", db.query(MLDatasetEntryDB).filter(or_(
+            MLDatasetEntryDB.video_id.in_(video_ids),
+            MLDatasetEntryDB.consent_id.in_(consent_ids),
+        )))
+
+        return counts
 
     def withdraw_consent(
         self,

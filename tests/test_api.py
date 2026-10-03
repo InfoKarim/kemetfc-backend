@@ -4860,6 +4860,13 @@ def test_guardian_exports_child_data_and_requests_deletion():
         "videos",
         "analyses",
         "training_plans",
+        "player_assessments",
+        "player_metrics",
+        "ml_predictions",
+        "monte_carlo_simulations",
+        "prediction_outcomes",
+        "coach_message",
+        "tracking_sessions",
         "consents",
     }
     serialized_export = str(export.json())

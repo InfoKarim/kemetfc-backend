@@ -15,5 +15,10 @@ Default operational policy (confirm with counsel for each operating region):
 Deletion requests move from `pending` to `in_review` only after identity
 verification. Setting the request to `completed` removes associated videos,
 analysis artifacts, plans, consent/link records, and anonymizes the remaining
-player key so the legal request record remains referentially valid.
+player key so the legal request record remains referentially valid. The same
+completion also removes the child's assessments and derived metrics, forecasts
+(predictions, simulations, outcomes), coach message, tracking sessions with
+their telemetry, events, features and coach labels, and any ML-dataset
+candidate entries tied to the removed videos or consents. Billing, registration
+and check-in-token rows are not touched by this step (decision pending).
 
