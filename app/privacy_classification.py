@@ -92,6 +92,27 @@ TABLE_CLASSIFICATIONS: dict[str, TableClassification] = {
     "tracking_samples": _entry("SEPARATE_EXPORT", "DELETED", _DONE,
         "Raw per-frame movement and pose data. Deleted on completed deletion. The export "
         "lists only a sample count; the separate download is not built yet."),
+    # --- V1 assessment (all removable only by the approved privacy workflow) -------
+    "v1_metric_definitions": _entry("NOT_APPLICABLE", "NOT_APPLICABLE", _DONE,
+        "Versioned reference data: no child data, so nothing to export or erase. Never "
+        "deleted by a privacy request; protected from normal edits by being versioned.",
+        privileged_deletion_only=True),
+    "v1_assessments": _entry("EXPORTED", "DELETED", _DONE,
+        "One assessment occasion per player. Append-only in normal use (no delete route); "
+        "removed in dependency order by completed privacy deletion.",
+        privileged_deletion_only=True),
+    "v1_station_runs": _entry("EXPORTED", "DELETED", _DONE,
+        "Station inside an assessment. Exported inside its assessment; removed by completed "
+        "privacy deletion.", privileged_deletion_only=True),
+    "v1_trials": _entry("EXPORTED", "DELETED", _DONE,
+        "Attempts with validity and invalid reason. Immutable through the ORM; removed by "
+        "completed privacy deletion.", privileged_deletion_only=True),
+    "v1_manual_measurements": _entry("EXPORTED", "DELETED", _DONE,
+        "Human-entered stopwatch times (exact centiseconds) with original values. Immutable "
+        "through the ORM; removed by completed privacy deletion.", privileged_deletion_only=True),
+    "v1_manual_measurement_corrections": _entry("EXPORTED", "DELETED", _DONE,
+        "Append-only correction history. Exported with its measurement and removed with it by "
+        "completed privacy deletion.", privileged_deletion_only=True),
     # --- policy pending --------------------------------------------------------
     "assessment_registrations": _entry("NOT_EXPORTED", "RETAINED_WITH_REASON", _PENDING,
         "Holds child and guardian names, contact details and date of birth. The principle "

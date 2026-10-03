@@ -24,6 +24,8 @@ child is revoked and the player's photo reference is cleared (the image file is
 not deleted by this step). Billing and registration rows are not touched by this
 step (policy decision pending). Which tables are exported, deleted or retained,
 and why, is recorded in `app/privacy_classification.py`, and a test fails when a
-new player-linked table is not classified. The guardian export lists what it
+new player-linked table is not classified. V1 assessment data (assessments, station runs, attempts, manual times and
+their full correction history) is exported and, on completed deletion, removed in
+dependency order; normal use has no delete path for it. The guardian export lists what it
 contains and what it leaves out; it is not a complete copy of everything held.
 

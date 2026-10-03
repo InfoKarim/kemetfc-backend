@@ -63,6 +63,12 @@ EXPECTED_TABLES = {
     "tracking_sessions",
     "training_plans",
     "users",
+    "v1_assessments",
+    "v1_manual_measurement_corrections",
+    "v1_manual_measurements",
+    "v1_metric_definitions",
+    "v1_station_runs",
+    "v1_trials",
     "video_analysis_jobs",
     "videos",
 }
@@ -99,7 +105,7 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
             text("SELECT version_num FROM alembic_version")
         ).scalar_one()
 
-    assert revision == "c9e1a4b7d302"
+    assert revision == "d4b7e9a1c635"
     job_columns = {
         column["name"]
         for column in inspect(engine).get_columns("video_analysis_jobs")
@@ -144,7 +150,7 @@ def test_migrations_build_fresh_sqlite_database(tmp_path):
     assert "absolute_error" in outcome_columns
 
     with engine.connect() as connection:
-        assert require_database_at_head(connection) == ("c9e1a4b7d302",)
+        assert require_database_at_head(connection) == ("d4b7e9a1c635",)
 
 
 def test_migration_health_rejects_database_without_migrations(tmp_path):

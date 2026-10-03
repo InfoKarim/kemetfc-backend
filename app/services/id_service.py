@@ -34,6 +34,13 @@ from app.db_models import (
     VideoAnalysisJobDB,
     VideoDB,
 )
+from app.v1.models import (
+    V1AssessmentDB,
+    V1ManualMeasurementCorrectionDB,
+    V1ManualMeasurementDB,
+    V1StationRunDB,
+    V1TrialDB,
+)
 
 
 ENTITY_CONFIG = {
@@ -68,6 +75,11 @@ ENTITY_CONFIG = {
     "ml_prediction": ("PRED", MLPredictionDB),
     "monte_carlo_simulation": ("SIM", MonteCarloSimulationDB),
     "prediction_outcome": ("OUT", PredictionOutcomeDB),
+    "v1_assessment": ("V1A", V1AssessmentDB),
+    "v1_station_run": ("V1SR", V1StationRunDB),
+    "v1_trial": ("V1T", V1TrialDB),
+    "v1_manual_measurement": ("V1MM", V1ManualMeasurementDB),
+    "v1_manual_measurement_correction": ("V1MMC", V1ManualMeasurementCorrectionDB),
 }
 
 

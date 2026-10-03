@@ -1563,3 +1563,7 @@ class CoachValidationLabelDB(Base):
         ForeignKey("users.user_id"),
     )
     created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+# V1 assessment tables register themselves on the same metadata.
+from app.v1 import models as _v1_models  # noqa: E402,F401

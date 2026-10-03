@@ -129,7 +129,8 @@ def test_legacy_assessment_delete_is_marked_and_not_for_v1():
     for name in ("player_assessments", "player_metrics"):
         entry = TABLE_CLASSIFICATIONS[name]
         assert entry.legacy_not_for_v1 and "LEGACY - NOT FOR V1" in entry.reason
-    assert not any(n.startswith("v1_") for n in TABLE_CLASSIFICATIONS)
+    v1_entries = {n: e for n, e in TABLE_CLASSIFICATIONS.items() if n.startswith("v1_")}
+    assert v1_entries and not any(e.legacy_not_for_v1 for e in v1_entries.values())
 
 
 def test_a_v1_entry_must_be_privilege_only_and_not_legacy():
@@ -150,3 +151,25 @@ def test_v1_tables_have_no_delete_route_yet():
     delete_paths = [p for p, ops in app.openapi()["paths"].items() if "delete" in ops]
     assert delete_paths  # the schema is really being read
     assert not any("v1" in p.lower() for p in delete_paths)
+
+
+def test_every_actual_v1_table_is_classified_and_requires_privileged_deletion():
+    actual = {n for n in Base.metadata.tables if n.startswith("v1_")}
+    assert actual == {
+        "v1_metric_definitions", "v1_assessments", "v1_station_runs", "v1_trials",
+        "v1_manual_measurements", "v1_manual_measurement_corrections",
+    }
+    for name in actual:
+        entry = TABLE_CLASSIFICATIONS[name]
+        assert entry.privileged_deletion_only, name
+        assert entry.status == "IMPLEMENTED" and not entry.legacy_not_for_v1, name
+        assert validate_classification(name, entry) == []
+    # Child data is exported and erased; reference data holds none.
+    for name in actual - {"v1_metric_definitions"}:
+        assert (TABLE_CLASSIFICATIONS[name].export, TABLE_CLASSIFICATIONS[name].erase) == ("EXPORTED", "DELETED")
+    assert TABLE_CLASSIFICATIONS["v1_metric_definitions"].erase == "NOT_APPLICABLE"
+
+
+def test_removing_a_v1_classification_makes_the_guard_fail():
+    without = {k: v for k, v in TABLE_CLASSIFICATIONS.items() if k != "v1_manual_measurements"}
+    assert unclassified_tables(Base.metadata, without) == ["v1_manual_measurements"]

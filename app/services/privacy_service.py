@@ -30,6 +30,14 @@ from app.db_models import (
     VideoDB,
 )
 from app.services.auth_service import utcnow
+from app.v1.models import (
+    V1AssessmentDB,
+    V1ManualMeasurementCorrectionDB,
+    V1ManualMeasurementDB,
+    V1StationRunDB,
+    V1TrialDB,
+)
+from app.v1.timing import format_seconds
 
 
 VIDEO_ANALYSIS_PURPOSE = "video_analysis"
@@ -78,6 +86,11 @@ def export_completeness() -> dict:
             "tracking_sessions": {
                 "state": "INCLUDED",
                 "note": "Sessions with events, derived features and coach labels.",
+            },
+            "v1_assessments": {
+                "state": "INCLUDED",
+                "note": "V1 assessments with station runs, attempts, manual times and the "
+                        "full correction history (original values are kept).",
             },
             "tracking_samples": {
                 "state": "SEPARATE_DOWNLOAD",
@@ -313,6 +326,7 @@ class PrivacyService:
             .order_by(TrackingSessionDB.started_at, TrackingSessionDB.session_id)
             .all()
         )
+        v1_export = self._export_v1_assessments(player_id)
         tracking_export = []
 
         for session in tracking_sessions:
@@ -362,6 +376,7 @@ class PrivacyService:
             "prediction_outcomes": [values(item) for item in outcomes],
             "coach_message": values(coach_message) if coach_message else None,
             "tracking_sessions": tracking_export,
+            "v1_assessments": v1_export,
             "completeness": export_completeness(),
             "consents": [
                 {
@@ -389,10 +404,73 @@ class PrivacyService:
                     "player_assessments": len(assessments),
                     "player_metrics": len(metrics),
                     "tracking_sessions": len(tracking_sessions),
+                    "v1_assessments": len(v1_export),
                 },
             },
         )
         return export
+
+    def _export_v1_assessments(self, player_id: str) -> list[dict]:
+        """V1 assessments as a nested tree. Times are exact decimal strings; every
+        measurement carries its full correction history."""
+        db = self.db
+
+        def values(row) -> dict:
+            return {c.name: getattr(row, c.name) for c in row.__table__.columns}
+
+        result = []
+        assessments = (
+            db.query(V1AssessmentDB).filter(V1AssessmentDB.player_id == player_id)
+            .order_by(V1AssessmentDB.created_at, V1AssessmentDB.assessment_id).all()
+        )
+        for assessment in assessments:
+            runs = (
+                db.query(V1StationRunDB)
+                .filter(V1StationRunDB.assessment_id == assessment.assessment_id)
+                .order_by(V1StationRunDB.station_id).all()
+            )
+            run_export = []
+            for run in runs:
+                trials = (
+                    db.query(V1TrialDB).filter(V1TrialDB.station_run_id == run.station_run_id)
+                    .order_by(V1TrialDB.series_key, V1TrialDB.attempt_number).all()
+                )
+                trial_export = []
+                for trial in trials:
+                    measurements = (
+                        db.query(V1ManualMeasurementDB)
+                        .filter(V1ManualMeasurementDB.trial_id == trial.trial_id)
+                        .order_by(V1ManualMeasurementDB.manual_measurement_id).all()
+                    )
+                    measurement_export = []
+                    for measurement in measurements:
+                        corrections = (
+                            db.query(V1ManualMeasurementCorrectionDB)
+                            .filter(V1ManualMeasurementCorrectionDB.manual_measurement_id
+                                    == measurement.manual_measurement_id)
+                            .order_by(V1ManualMeasurementCorrectionDB.sequence_number).all()
+                        )
+                        effective = (
+                            corrections[-1].corrected_centiseconds if corrections
+                            else measurement.value_centiseconds
+                        )
+                        measurement_export.append({
+                            **values(measurement),
+                            "value_seconds": format_seconds(measurement.value_centiseconds),
+                            "effective_value_seconds": format_seconds(effective),
+                            "corrections": [
+                                {
+                                    **values(c),
+                                    "original_seconds": format_seconds(c.original_centiseconds),
+                                    "corrected_seconds": format_seconds(c.corrected_centiseconds),
+                                }
+                                for c in corrections
+                            ],
+                        })
+                    trial_export.append({**values(trial), "manual_measurements": measurement_export})
+                run_export.append({**values(run), "trials": trial_export})
+            result.append({**values(assessment), "station_runs": run_export})
+        return result
 
     def create_deletion_request(
         self,
@@ -690,6 +768,33 @@ class PrivacyService:
             .filter(GuardianConsentDB.player_id == player_id)
             .all()
         ]
+
+        # V1 assessment data, child to parent. Bulk deletes on purpose: the V1 models
+        # refuse ORM deletes, so only this approved-privacy-request path can remove them.
+        v1_assessment_ids = [
+            row[0] for row in db.query(V1AssessmentDB.assessment_id)
+            .filter(V1AssessmentDB.player_id == player_id).all()
+        ]
+        v1_run_ids = [
+            row[0] for row in db.query(V1StationRunDB.station_run_id)
+            .filter(V1StationRunDB.assessment_id.in_(v1_assessment_ids)).all()
+        ]
+        v1_trial_ids = [
+            row[0] for row in db.query(V1TrialDB.trial_id)
+            .filter(V1TrialDB.station_run_id.in_(v1_run_ids)).all()
+        ]
+        v1_measurement_ids = [
+            row[0] for row in db.query(V1ManualMeasurementDB.manual_measurement_id)
+            .filter(V1ManualMeasurementDB.trial_id.in_(v1_trial_ids)).all()
+        ]
+        delete("v1_manual_measurement_corrections", db.query(V1ManualMeasurementCorrectionDB).filter(
+            V1ManualMeasurementCorrectionDB.manual_measurement_id.in_(v1_measurement_ids)))
+        delete("v1_manual_measurements", db.query(V1ManualMeasurementDB).filter(
+            V1ManualMeasurementDB.trial_id.in_(v1_trial_ids)))
+        delete("v1_trials", db.query(V1TrialDB).filter(V1TrialDB.station_run_id.in_(v1_run_ids)))
+        delete("v1_station_runs", db.query(V1StationRunDB).filter(
+            V1StationRunDB.assessment_id.in_(v1_assessment_ids)))
+        delete("v1_assessments", db.query(V1AssessmentDB).filter(V1AssessmentDB.player_id == player_id))
 
         # Forecast chain: outcome / simulation -> prediction.
         delete("prediction_outcomes", db.query(PredictionOutcomeDB).filter(or_(
