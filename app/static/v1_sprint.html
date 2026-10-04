@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>S1 20 m Sprint | Kemet FC</title>
+  <title>Player Assessment | Kemet FC</title>
   <link rel="icon" type="image/png" href="/favicon.png">
   <link rel="stylesheet" href="/design-system.css">
   <style>
@@ -73,6 +73,27 @@
     .player-row.selected { background: #F5C45D !important; color: #071A2B !important; border-color: #F5C45D !important; }
     .player-row.selected::before { content: "\2713  "; }
     .selected-line { margin: 12px 0 0; font-size: 18px; font-weight: 800; color: #F4F7FA !important; }
+    .station-list { gap: 12px; margin-top: 14px; }
+    #overview-note { margin: 12px 0 0; }
+    .station-row { display: grid; gap: 8px; padding: 16px; border: 1px solid rgba(244,247,250,.18); border-radius: 14px; background: #071A2B; }
+    .station-row.soon { opacity: .72; }
+    .station-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+    .station-name { font-size: 20px; font-weight: 800; }
+    .station-detail { margin: 0; }
+    .chip.state-complete { border-color: #16A66A; }
+    .chip.state-in-progress { border-color: #F5C45D; }
+    .chip.state-coming-soon { border-style: dashed; }
+    .summary-grid { display: grid; gap: 4px; margin: 10px 0 0; }
+    .summary-grid p { margin: 0; }
+    .seg-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    button.seg { flex: 1 1 160px; background: #071A2B !important; color: #F4F7FA !important; border-color: #7F9BBB !important; }
+    button.seg[aria-pressed="true"], button.seg.selected { background: #F5C45D !important; color: #071A2B !important; border-color: #F5C45D !important; }
+    #sync-box { padding: 14px 18px; border: 2px solid #F5C45D; border-radius: 14px; background: #0D2A45; }
+    #sync-box .msg { margin: 0 0 10px; }
+    form.attempt-form { padding: 16px; border: 2px solid #8CC4FF; border-radius: 14px; margin-top: 14px; display: grid; gap: 4px; }
+    li.attempt.queued { border-style: dashed; }
+    fieldset { border: 0; margin: 0; padding: 0; }
+    legend { font-size: 15px; font-weight: 700; padding: 0; }
     @media (max-width: 480px) { button.big { flex-basis: 100%; } .row button { flex: 1 1 100%; } }
   </style>
 </head>
@@ -86,8 +107,14 @@
     <p id="notice" class="msg" role="alert" hidden></p>
     <noscript><p class="no-js">This screen needs JavaScript.</p></noscript>
 
+    <section id="sync-box" aria-labelledby="sync-h" hidden>
+      <h2 id="sync-h" class="muted" style="font-size:16px">Saved on this device</h2>
+      <p id="sync-text" class="msg" role="status"></p>
+      <button type="button" class="ghost" id="sync-now" data-action="sync-now" hidden>SEND NOW</button>
+    </section>
+
     <section class="card picker" id="player-card" aria-labelledby="player-h">
-      <h2 id="player-h">Player</h2>
+      <h2 id="player-h">Select player</h2>
       <div class="field">
         <label for="player-filter">Find a player</label>
         <input id="player-filter" type="search" autocomplete="off" placeholder="Start typing a name">
@@ -100,41 +127,92 @@
     </section>
 
     <section class="card picker" id="assessments-card" aria-labelledby="assessments-h" hidden>
-      <h2 id="assessments-h">V1 assessments for <span id="player-name"></span></h2>
+      <h2 id="assessments-h">Assessments for <span id="player-name"></span></h2>
       <ul id="assessment-list"></ul>
       <div class="row">
+        <button type="button" class="primary" id="continue-assessment" hidden>CONTINUE ASSESSMENT</button>
         <button type="button" class="primary" id="start-assessment" data-action="start-assessment">START NEW ASSESSMENT</button>
       </div>
       <p id="assessment-msg" class="msg" role="alert" hidden></p>
     </section>
 
-    <section class="card" id="sprint" aria-labelledby="sprint-h" hidden>
+    <section class="card" id="overview" aria-labelledby="overview-h" hidden>
       <div class="row" style="margin-top:0;justify-content:space-between;align-items:center">
         <p class="muted" style="margin:0">Assessing</p>
+        <button type="button" class="ghost small" id="change-player-overview">Change player</button>
+      </div>
+      <h1 id="overview-h">PLAYER ASSESSMENT</h1>
+      <div class="summary-grid">
+        <p><span class="muted">Player:</span> <strong id="overview-player"></strong></p>
+        <p><span class="muted">Assessment:</span> <strong id="overview-assessment"></strong></p>
+        <p><span class="muted">Status:</span> <strong id="overview-status"></strong></p>
+      </div>
+      <p id="overview-note" class="msg warn" hidden></p>
+      <ol id="station-list" class="station-list" aria-label="Stations"></ol>
+    </section>
+
+    <section class="card" id="station" aria-labelledby="station-h" hidden>
+      <div class="row" style="margin-top:0;justify-content:space-between;align-items:center">
+        <button type="button" class="ghost small" id="back-to-overview">All stations</button>
         <button type="button" class="ghost small" id="change-player">Change player</button>
       </div>
+      <p class="muted" style="margin:14px 0 0">Assessing</p>
       <h1 id="assessment-player"></h1>
-      <h2 id="sprint-h">S1 — 20 m Sprint</h2>
-      <p class="muted">The player runs 20 metres. The official time is the number shown on the stopwatch.</p>
+      <h2 id="station-h"></h2>
+      <p id="station-description" class="muted"></p>
       <p id="readonly-note" class="msg warn" hidden>Read-only view. Your account cannot enter or change times.</p>
+      <div id="series-tabs" class="seg-row" role="group" aria-label="Turning foot" hidden></div>
+      <p id="series-progress" class="muted" role="status"></p>
       <ul id="attempts" aria-label="Attempts"></ul>
       <div id="write-actions" hidden>
         <div class="row">
-          <button type="button" class="primary" id="add-attempt">ADD ATTEMPT</button>
-          <button type="button" class="ghost" id="add-invalid-attempt">ADD ATTEMPT THAT WAS NOT VALID</button>
+          <button type="button" class="primary big" id="add-attempt">ADD ATTEMPT</button>
         </div>
-        <div id="invalid-box" class="nr" hidden>
-          <div class="field">
-            <label for="invalid-reason">Which rule was broken?</label>
-            <select id="invalid-reason"><option value="">Select a reason</option></select>
+        <form id="attempt-form" class="attempt-form" novalidate hidden aria-labelledby="form-title">
+          <h3 id="form-title"></h3>
+          <fieldset>
+            <legend>How did the attempt go?</legend>
+            <div class="seg-row">
+              <button type="button" class="seg" id="validity-valid" aria-pressed="true">Valid attempt</button>
+              <button type="button" class="seg" id="validity-invalid" aria-pressed="false">Not a valid attempt</button>
+            </div>
+          </fieldset>
+          <div id="valid-panel">
+            <div id="time-field" class="field">
+              <label for="time-input">STOPWATCH TIME (seconds)</label>
+              <input id="time-input" type="text" inputmode="decimal" enterkeyhint="done" autocomplete="off" spellcheck="false"
+                class="time-input" aria-describedby="time-input-msg">
+              <p id="time-input-msg" class="msg" role="alert" hidden></p>
+            </div>
+            <div class="row"><button type="button" class="ghost" id="toggle-nr">TIMER PROBLEM / TIME NOT RECORDED</button></div>
+            <div id="nr-panel" class="nr" hidden>
+              <p class="muted">No number is saved. The player did not fail the attempt; it can be repeated.</p>
+              <div class="field">
+                <label for="nr-reason">What went wrong?</label>
+                <select id="nr-reason" aria-describedby="nr-reason-msg"><option value="">What went wrong?</option></select>
+                <p id="nr-reason-msg" class="msg" role="alert" hidden></p>
+              </div>
+            </div>
           </div>
-          <div class="row"><button type="button" class="primary" id="invalid-save">SAVE NOT VALID ATTEMPT</button></div>
-        </div>
+          <div id="invalid-panel" class="nr" hidden>
+            <div class="field">
+              <label for="invalid-reason">Which rule was broken?</label>
+              <select id="invalid-reason" aria-describedby="invalid-reason-msg"><option value="">Select a reason</option></select>
+              <p id="invalid-reason-msg" class="msg" role="alert" hidden></p>
+            </div>
+          </div>
+          <div class="row">
+            <button type="submit" class="primary big" id="save-attempt">SAVE ATTEMPT</button>
+            <button type="button" class="ghost" id="cancel-attempt">Cancel</button>
+          </div>
+          <p id="attempt-status" class="msg" role="status" hidden></p>
+        </form>
         <p id="attempt-msg" class="msg" role="alert" hidden></p>
       </div>
     </section>
   </main>
   <script src="/auth-client.js"></script>
+  <script src="/v1/outbox.js"></script>
   <script src="/v1/sprint.js"></script>
 </body>
 </html>

@@ -1,19 +1,23 @@
-/* Kemet V1 - S1 20 m sprint manual time entry (coach web page).
+/* Kemet V1 - Player Assessment (coach web page): pick a player, start or continue an assessment,
+ * see all eight stations, and enter official manual times for Sprint, Agility and Dribbling.
  *
  * Two parts in one file:
- *   1. Logic (no DOM): input validation, plain-language errors, idempotency keys, and the
- *      save/retry/correct flows. Exported for node (`module.exports`) so it can be tested
- *      without a browser (tests/test_v1_sprint_ui.py runs them with `node --test` when node
- *      is installed).
+ *   1. Logic (no DOM): input validation, plain-language errors, idempotency keys, the save and
+ *      correct flows, and the words/models the screen shows. Exported for node (`module.exports`)
+ *      so it can be tested without a browser (tests/test_v1_sprint_ui.py runs them with
+ *      `node --test` when node is installed).
  *   2. Page wiring (only when `document` exists): builds the screen with textContent, never
  *      innerHTML, so assessment content is never interpreted as markup.
  *
  * Rules kept here on purpose:
  *   - Official times are STRINGS. Nothing here parses a time into a JS number.
- *   - The server response is the only source of truth: "Saved" appears after a 200/201.
+ *   - The server response is the only source of truth: "SAVED" appears after a 200/201. Until
+ *     then an attempt is only "saved on this device" (see v1_outbox.js, the offline queue).
+ *   - Only the stations the server says are open take entries. The others show COMING SOON.
  *   - No plausibility thresholds, scores, benchmarks, age bands or AI anywhere.
- *   - Nothing about an assessment is kept in the browser except in-flight idempotency keys
- *     (sessionStorage, key only, removed as soon as the server answers definitively).
+ *   - Nothing about an assessment is kept in the browser except (a) in-flight idempotency keys
+ *     (sessionStorage, key only) and (b) the offline queue's unsent attempts (v1_outbox.js).
+ *   - Recording is not part of this screen yet; there is no camera or video control.
  */
 (function (root, factory) {
   const api = factory();
@@ -23,10 +27,8 @@
 })(typeof window !== "undefined" ? window : globalThis, function () {
   "use strict";
 
-  // The metric behind "S1 - 20 m sprint time". The coach never sees this id.
-  const SPRINT_METRIC = "PHYS-SPR-020M-MAN-001";
-  const STATION = "S1";
   const REQUEST_TIMEOUT_MS = 15000;
+  const SYNC_INTERVAL_MS = 20000;
 
   // Backend-supported lists (kept equal to app/v1/definitions.py by a test).
   const NOT_RECORDED_REASONS = [
@@ -36,13 +38,33 @@
     ["EVENT_UNCERTAIN", "Timer was not sure of the exact moment"],
     ["OTHER", "Another timing problem"],
   ];
-  const INVALID_REASONS = [
-    ["FALSE_START", "False start (moved before the signal)"],
-    ["LANE_VIOLATION", "Left the lane"],
-    ["STOPPED_EARLY", "Stopped before the line"],
-    ["FALL_OR_TRIP", "Fell or tripped"],
-    ["INTERFERENCE", "Interference"],
-  ];
+  const INVALID_REASONS_BY_STATION = {
+    S1: [
+      ["FALSE_START", "False start (moved before the signal)"],
+      ["LANE_VIOLATION", "Left the lane"],
+      ["STOPPED_EARLY", "Stopped before the line"],
+      ["FALL_OR_TRIP", "Fell or tripped"],
+      ["INTERFERENCE", "Interference"],
+    ],
+    S2: [
+      ["FALSE_START", "False start (moved before the signal)"],
+      ["TURNED_BEFORE_L", "Turned before reaching L"],
+      ["FOOT_NOT_AT_L", "Foot was not at L"],
+      ["WRONG_TURN_SIDE", "Turned on the wrong side"],
+      ["FALL_OR_TRIP", "Fell or tripped"],
+      ["LANE_VIOLATION", "Left the lane"],
+      ["INTERFERENCE", "Interference"],
+    ],
+    S4: [
+      ["MISSED_CONE", "Missed a mandatory cone or gate"],
+      ["HANDS_USED", "Used the hands"],
+      ["FALSE_START", "False start (moved before the signal)"],
+      ["BALL_NOT_CONTROLLED_AT_START", "Ball was not under control at the start"],
+      ["BALL_NOT_CONTROLLED_AT_FINISH", "Ball was more than 1.5 m away at the finish"],
+      ["INTERFERENCE", "Interference"],
+      ["FALL_OR_TRIP", "Fell or tripped"],
+    ],
+  };
   const CORRECTION_REASONS = [
     ["DECIMAL_SLIP", "Decimal point in the wrong place"],
     ["TYPING_ERROR", "Typing error"],
@@ -50,6 +72,9 @@
     ["WRONG_TRIAL", "Entered on the wrong attempt"],
     ["OTHER", "Other (write the reason)"],
   ];
+  const STATE_WORDS = {
+    NOT_STARTED: "NOT STARTED", IN_PROGRESS: "IN PROGRESS", COMPLETE: "COMPLETE", COMING_SOON: "COMING SOON",
+  };
 
   const TIME_HELP = "Enter the stopwatch reading using seconds and up to two decimal places.";
 
@@ -79,7 +104,7 @@
     if (status === 404) return "This item could not be found. Refresh the page and try again.";
     if (status === 409) {
       if (context === "correction") return "The saved time changed since you opened it. Refresh and check it before correcting.";
-      return "This attempt already has a different saved entry. Refresh before continuing.";
+      return "This attempt number already has a different saved entry. Refresh before continuing.";
     }
     if (status === 422) {
       if (context === "time") return TIME_HELP;
@@ -168,6 +193,21 @@
 
   // ------------------------------------------------------------------ flows (testable)
 
+  /** The request body for one whole attempt. Null fields are left out. `entry.op_id` is the
+   *  idempotency key (the operation id the offline queue created), so every retry of one
+   *  attempt carries the same key. The time stays a string exactly as typed. */
+  function attemptBody(entry) {
+    const p = entry.payload;
+    const body = {
+      station_id: p.station_id, series_key: p.series_key || "", attempt_number: p.attempt_number,
+      validity: p.validity, client_entry_id: entry.op_id,
+    };
+    for (const key of ["invalid_reason", "entry_status", "displayed_value", "not_recorded_reason"]) {
+      if (p[key] != null) body[key] = p[key];
+    }
+    return body;
+  }
+
   function makeFlows(deps) {
     const { fetchImpl, store } = deps;
 
@@ -182,44 +222,10 @@
       return done;
     }
 
-    async function ensureStationRun(assessmentId) {
-      const result = await request(fetchImpl, "POST", `/v1/assessments/${assessmentId}/station-runs`, { station_id: STATION });
-      return outcome(result, "station", (b) => ({ run: b }));
-    }
-
-    async function addAttempt({ runId, attemptNumber, invalidReason }) {
-      const body = { attempt_number: attemptNumber, validity: invalidReason ? "INVALID" : "VALID" };
-      if (invalidReason) body.invalid_reason = invalidReason;
-      const result = await request(fetchImpl, "POST", `/v1/station-runs/${runId}/trials`, body);
-      return outcome(result, "attempt", (b) => ({ trial: b }));
-    }
-
-    async function saveTime({ trialId, text }) {
-      const checked = validateTimeText(text);
-      if (!checked.ok) return { state: "INVALID_INPUT", message: checked.message, code: checked.code };
-      const scope = `mm:${trialId}`;
-      const key = store.getKey(scope);
-      // The value is sent exactly as typed, as a string.
-      const result = await request(fetchImpl, "POST", `/v1/trials/${trialId}/manual-measurements`, {
-        metric_id: SPRINT_METRIC, displayed_value: checked.value, client_entry_id: key,
-      });
-      const done = outcome(result, "time", (b) => ({ measurement: b }));
-      if (done.state !== "UNCERTAIN") store.clear(scope);
-      return done;
-    }
-
-    async function saveNotRecorded({ trialId, reason }) {
-      if (!NOT_RECORDED_REASONS.some(([code]) => code === reason)) {
-        return { state: "INVALID_INPUT", message: "Choose what went wrong with the stopwatch." };
-      }
-      const scope = `nr:${trialId}`;
-      const key = store.getKey(scope);
-      const result = await request(fetchImpl, "POST", `/v1/trials/${trialId}/manual-measurements`, {
-        metric_id: SPRINT_METRIC, entry_status: "NOT_RECORDED", not_recorded_reason: reason, client_entry_id: key,
-      });
-      const done = outcome(result, "time", (b) => ({ measurement: b }));
-      if (done.state !== "UNCERTAIN") store.clear(scope);
-      return done;
+    /** Send one whole attempt in one request. Used for the first send and for every retry. */
+    async function saveAttempt({ assessmentId, entry }) {
+      const result = await request(fetchImpl, "POST", `/v1/assessments/${encodeURIComponent(assessmentId)}/attempts`, attemptBody(entry));
+      return outcome(result, "attempt", (b) => ({ trial: b.trial, station_run: b.station_run, created: b.created }));
     }
 
     async function correct({ measurementId, text, expectedEffective, reasonCode, reasonText, confirmerId, selfId }) {
@@ -242,14 +248,21 @@
       return outcome(result, "correction", (b) => ({ measurement: b.measurement, correction: b.correction }));
     }
 
-    return { createAssessment, ensureStationRun, addAttempt, saveTime, saveNotRecorded, correct };
+    return { createAssessment, saveAttempt, correct };
   }
 
-  function nextAttemptNumber(trials) {
-    return (trials || []).reduce((max, t) => Math.max(max, t.attempt_number), 0) + 1;
+  // ------------------------------------------------------------------ attempts and stations (models)
+
+  /** The next attempt number in one series: after the highest number the server holds and the
+   *  highest number waiting in the offline queue, so two attempts entered offline never clash. */
+  function nextAttemptNumber(trials, queuedPayloads, seriesKey) {
+    const key = seriesKey || "";
+    const fromServer = (trials || []).filter((t) => (t.series_key || "") === key).map((t) => t.attempt_number);
+    const fromQueue = (queuedPayloads || []).filter((p) => (p.series_key || "") === key).map((p) => p.attempt_number);
+    return Math.max(0, ...fromServer, ...fromQueue) + 1;
   }
 
-  /** Words for one attempt row, from server facts only. Trial validity and the time
+  /** Words for one saved attempt, from server facts only. Trial validity and the time
    *  recording status are kept apart: a timer problem never reads as the child failing. */
   function describeAttempt(trial) {
     const m = (trial.manual_measurements || [])[0] || null;
@@ -259,6 +272,47 @@
     else if (m.entry_status === "NOT_RECORDED") time = "Time not recorded";
     else time = `${m.effective_value} sec`;
     return { validity, time, measurement: m };
+  }
+
+  /** Words for an attempt that is still in the offline queue. */
+  function describeQueued(entry) {
+    const p = entry.payload || {};
+    const validity = p.validity === "VALID" ? "Valid attempt" : "Not a valid attempt";
+    let time;
+    if (p.validity !== "VALID") time = "No time for this attempt";
+    else if (p.entry_status === "NOT_RECORDED") time = "Time not recorded";
+    else time = `${p.displayed_value} sec`;
+    let status;
+    if (entry.state === "SYNC_FAILED") {
+      const why = entry.last_error && entry.last_error.message ? entry.last_error.message : "the server did not accept it";
+      status = `Not accepted by the server: ${why}`;
+    } else if (entry.state === "SYNCING") status = "Sending to the server…";
+    else status = "Saved on this device. Waiting to reach the server.";
+    return { validity, time, status, failed: entry.state === "SYNC_FAILED", state: entry.state };
+  }
+
+  /** What one row of the eight-station list shows. Only open stations can be opened. */
+  function stationRowModel(station) {
+    const label = `${station.order}. ${station.name}`;
+    const stateText = STATE_WORDS[station.state] || station.state;
+    let detail = "";
+    if (station.enabled) {
+      const parts = (station.series || []).map((s) =>
+        `${s.label ? `${s.label}: ` : ""}valid attempts ${s.valid_recorded} of ${s.required_valid}`);
+      detail = parts.join(" · ");
+    }
+    return { id: station.station_id, label, stateText, state: station.state, detail, canOpen: !!station.enabled };
+  }
+
+  /** The sync banner, from queue counts only. */
+  function syncBannerModel(counts) {
+    const waiting = (counts.LOCAL_PENDING || 0) + (counts.SYNCING || 0);
+    const failed = counts.SYNC_FAILED || 0;
+    if (!waiting && !failed) return { visible: false, text: "", tone: "", showSync: false };
+    const parts = [];
+    if (waiting) parts.push(`${waiting} attempt${waiting === 1 ? "" : "s"} saved on this device, waiting to reach the server.`);
+    if (failed) parts.push(`${failed} attempt${failed === 1 ? " was" : "s were"} not accepted by the server and need${failed === 1 ? "s" : ""} your attention.`);
+    return { visible: true, text: parts.join(" "), tone: failed ? "warn" : "saving", showSync: waiting > 0 };
   }
 
   // ------------------------------------------------------------------ player list (no native <select>)
@@ -312,22 +366,25 @@
 
   const exported = {
     filterPlayers, playerListModel, selectedLabel, renderPlayerRows,
-    SPRINT_METRIC, NOT_RECORDED_REASONS, INVALID_REASONS, CORRECTION_REASONS, TIME_HELP,
-    validateTimeText, friendlyMessage, newKey, createPendingStore, request, outcome, makeFlows,
-    nextAttemptNumber, describeAttempt,
+    NOT_RECORDED_REASONS, INVALID_REASONS_BY_STATION, CORRECTION_REASONS, STATE_WORDS, TIME_HELP,
+    validateTimeText, friendlyMessage, newKey, createPendingStore, request, outcome, makeFlows, attemptBody,
+    nextAttemptNumber, describeAttempt, describeQueued, stationRowModel, syncBannerModel,
   };
 
   // ==================================================================== page wiring
   exported.start = function start() {
     const $ = (id) => document.getElementById(id);
     const state = {
-      me: null, players: [], player: null, assessmentId: null, tree: null, runId: null,
-      confirmers: null, confirmersFailed: false, busy: new Set(), open: null, flash: null,
-      playersStatus: "loading", playerFilter: "",
+      me: null, players: [], player: null, assessmentId: null, tree: null, overview: null,
+      stationId: null, seriesKey: "", confirmers: null, confirmersFailed: false, busy: new Set(),
+      open: null, flash: null, playersStatus: "loading", playerFilter: "", mode: "valid-time",
+      formNumber: null, discardAsked: null,
     };
     const store = createPendingStore(window.sessionStorage);
     const flows = makeFlows({ fetchImpl: (u, i) => window.fetch(u, i), store });
+    const outbox = window.V1Outbox.createDefaultOutbox();
     const canWrite = () => state.me && (state.me.role === "admin" || state.me.role === "coach");
+    const owner = () => (state.me ? state.me.user_id : null);
 
     function el(tag, attrs, ...children) {
       const node = document.createElement(tag);
@@ -370,8 +427,7 @@
 
     // ---------------------------------------------------------------- data
     async function load(path) {
-      const r = await request((u, i) => window.fetch(u, i), "GET", path);
-      return r;
+      return request((u, i) => window.fetch(u, i), "GET", path);
     }
 
     // For reading data the generic "could not confirm save" wording would be wrong.
@@ -422,22 +478,25 @@
       state.confirmers = r.body.confirmers.map((u) => ({ id: u.user_id, name: u.username }));
     }
 
-    async function refreshTree() {
+    async function refreshAssessment() {
       if (!state.assessmentId) return;
-      const r = await load(`/v1/assessments/${state.assessmentId}`);
-      if (r.status !== 200) { say(friendlyMessage(r.status, detailOf(r)), "error"); return; }
-      state.tree = r.body;
-      const run = (r.body.station_runs || []).find((x) => x.station_id === STATION);
-      state.runId = run ? run.station_run_id : null;
-      renderAssessment();
+      const [tree, overview] = await Promise.all([
+        load(`/v1/assessments/${encodeURIComponent(state.assessmentId)}`),
+        load(`/v1/assessments/${encodeURIComponent(state.assessmentId)}/stations`),
+      ]);
+      if (tree.status !== 200) { say(friendlyMessage(tree.status, detailOf(tree)), "error"); return; }
+      if (overview.status !== 200) { say(friendlyMessage(overview.status, detailOf(overview)), "error"); return; }
+      state.tree = tree.body;
+      state.overview = overview.body;
+      render();
     }
 
     async function selectPlayer(playerId) {
       const found = state.players.find((p) => p.id === playerId) || null;
-      state.player = found; state.assessmentId = null; state.tree = null; state.runId = null;
+      state.player = found; state.assessmentId = null; state.tree = null; state.overview = null; state.stationId = null;
       history.replaceState(null, "", location.pathname);
       renderPlayers();
-      renderAssessment();
+      render();
       $("assessments-card").hidden = !found;
       if (!found) return;
       $("player-name").textContent = found.name;
@@ -445,52 +504,182 @@
     }
 
     async function refreshAssessmentList() {
-      const r = await load(`/v1/players/${state.player.id}/assessments`);
+      const r = await load(`/v1/players/${encodeURIComponent(state.player.id)}/assessments`);
       const list = $("assessment-list");
       list.replaceChildren();
+      const cont = $("continue-assessment");
+      cont.hidden = true;
       if (r.status !== 200) { say(friendlyMessage(r.status, detailOf(r)), "error"); return; }
       const rows = r.body.assessments || [];
-      if (!rows.length) list.append(el("li", { class: "muted", text: "No V1 assessment yet for this player." }));
+      if (!rows.length) list.append(el("li", { class: "muted", text: "No assessment yet for this player." }));
+      const inProgress = rows.find((a) => a.status === "IN_PROGRESS") || null;
+      if (inProgress && canWrite()) {
+        cont.hidden = false;
+        cont.dataset.assessment = inProgress.assessment_id;
+        cont.textContent = "CONTINUE ASSESSMENT";
+      }
+      $("start-assessment").className = inProgress && canWrite() ? "ghost" : "primary";
       for (const a of rows) {
         const open = el("button", { type: "button", class: "ghost", text: "Open" });
         open.setAttribute("aria-label", `Open assessment from ${a.assessment_date}`);
         open.addEventListener("click", () => openAssessment(a.assessment_id));
-        list.append(el("li", {}, el("span", { text: `${a.title || "V1 assessment"} · ${a.assessment_date} · ${a.status === "IN_PROGRESS" ? "In progress" : a.status}` }), open));
+        list.append(el("li", {}, el("span", { text: `${a.title || "Assessment"} · ${a.assessment_date} · ${a.status === "IN_PROGRESS" ? "In progress" : a.status}` }), open));
       }
     }
 
     async function openAssessment(id) {
       state.assessmentId = id;
+      state.stationId = null;
       history.replaceState(null, "", `${location.pathname}?assessment=${encodeURIComponent(id)}`);
       await loadConfirmers();
-      if (canWrite()) {
-        const run = await flows.ensureStationRun(id);
-        if (run.state !== "SAVED") { say(run.message, "error"); }
-      }
-      await refreshTree();
+      await refreshAssessment();
     }
 
-    // ---------------------------------------------------------------- render
-    function renderAssessment() {
-      const panel = $("sprint");
-      panel.hidden = !state.tree;
-      // While an assessment is open the player pickers step aside, so the entry area is on screen.
+    // ---------------------------------------------------------------- views
+    function view() {
+      if (state.tree && state.stationId) return "station";
+      if (state.tree) return "overview";
+      return "players";
+    }
+
+    function render() {
+      const v = view();
       for (const section of document.querySelectorAll(".picker")) {
-        section.hidden = section.id === "assessments-card" ? (!state.player || !!state.tree) : !!state.tree;
+        section.hidden = section.id === "assessments-card" ? (!state.player || v !== "players") : v !== "players";
       }
-      if (!state.tree) return;
-      const player = state.players.find((p) => p.id === state.tree.player_id);
-      $("assessment-player").textContent = player ? player.name : "Player";
+      $("overview").hidden = v !== "overview";
+      $("station").hidden = v !== "station";
+      renderSyncBox();
+      if (v === "overview") renderOverview();
+      if (v === "station") renderStation();
+    }
+
+    function playerName() {
+      const p = state.players.find((x) => x.id === (state.tree && state.tree.player_id));
+      return p ? p.name : "Player";
+    }
+
+    function renderOverview() {
+      const o = state.overview;
+      $("overview-player").textContent = playerName();
+      $("overview-assessment").textContent = o.assessment_id;
+      $("overview-status").textContent = o.status === "IN_PROGRESS" ? "IN PROGRESS" : o.status;
+      $("overview-note").textContent = o.completion_note || "";
+      $("overview-note").hidden = !o.completion_note;
+      const list = $("station-list");
+      list.replaceChildren();
+      for (const s of o.stations) {
+        const m = stationRowModel(s);
+        const row = el("li", { class: `station-row ${m.canOpen ? "open" : "soon"}`, "data-station": m.id });
+        const head = el("div", { class: "station-head" },
+          el("span", { class: "station-name", text: m.label }),
+          el("span", { class: `chip state-${m.state.toLowerCase().replace(/_/g, "-")}`, text: m.stateText }));
+        row.append(head);
+        if (m.detail) row.append(el("p", { class: "muted station-detail", text: m.detail }));
+        if (m.canOpen) {
+          const open = el("button", { type: "button", class: "primary", text: "OPEN" });
+          open.setAttribute("aria-label", `Open ${s.name}`);
+          open.addEventListener("click", () => openStation(s.station_id));
+          row.append(open);
+        }
+        list.append(row);
+      }
+    }
+
+    function openStation(stationId) {
+      const s = state.overview.stations.find((x) => x.station_id === stationId);
+      if (!s || !s.enabled) return;
+      state.stationId = stationId;
+      state.seriesKey = s.series.length ? s.series[0].series_key : "";
+      state.open = null; state.flash = null;
+      closeForm();
+      render();
+      window.scrollTo(0, 0);
+    }
+
+    function currentStation() {
+      return state.overview.stations.find((x) => x.station_id === state.stationId);
+    }
+
+    function trialsOfStation() {
+      const run = ((state.tree && state.tree.station_runs) || []).find((r) => r.station_id === state.stationId);
+      return run ? run.trials : [];
+    }
+
+    function queuedOfStation() {
+      if (!owner() || !state.assessmentId) return [];
+      return outbox.list(owner()).filter((e) => e.assessment_id === state.assessmentId
+        && e.payload && e.payload.station_id === state.stationId);
+    }
+
+    function reasonLabel(list, code) {
+      const found = list.find(([c]) => c === code);
+      return found ? found[1] : "Reason recorded";
+    }
+
+    function invalidReasons() { return INVALID_REASONS_BY_STATION[state.stationId] || []; }
+
+    function renderStation() {
+      const station = currentStation();
+      $("assessment-player").textContent = playerName();
+      $("station-h").textContent = `${station.order}. ${station.name}`;
+      $("station-description").textContent = station.description;
       $("write-actions").hidden = !canWrite();
-      $("readonly-note").hidden = canWrite();
+      $("readonly-note").hidden = !!canWrite();
+      // Turning-foot choice (Agility): one list of attempts per foot.
+      const tabs = $("series-tabs");
+      tabs.replaceChildren();
+      tabs.hidden = station.series.length < 2;
+      if (!tabs.hidden) {
+        for (const s of station.series) {
+          const b = el("button", { type: "button", class: s.series_key === state.seriesKey ? "seg selected" : "seg", text: s.label,
+            "aria-pressed": s.series_key === state.seriesKey ? "true" : "false" });
+          b.addEventListener("click", () => { state.seriesKey = s.series_key; closeForm(); renderStation(); });
+          tabs.append(b);
+        }
+      }
+      const series = station.series.find((s) => s.series_key === state.seriesKey) || station.series[0];
+      $("series-progress").textContent = series
+        ? `Valid attempts: ${series.valid_recorded} of ${series.required_valid}` +
+          (series.over_attempt_limit ? ` · more than ${series.max_attempts} attempts have been used` : "")
+        : "";
       const list = $("attempts");
       list.replaceChildren();
-      const run = (state.tree.station_runs || []).find((x) => x.station_id === STATION);
-      const trials = run ? run.trials : [];
-      if (!trials.length) list.append(el("li", { class: "muted", text: "No attempts yet." }));
-      for (const t of trials) list.append(renderAttempt(t));
-      $("add-attempt").disabled = !canWrite() || !state.runId;
-      $("add-invalid-attempt").disabled = !canWrite() || !state.runId;
+      const trials = trialsOfStation().filter((t) => (t.series_key || "") === state.seriesKey);
+      const queued = queuedOfStation().filter((e) => (e.payload.series_key || "") === state.seriesKey);
+      const items = [
+        ...trials.map((t) => ({ number: t.attempt_number, trial: t })),
+        ...queued.map((e) => ({ number: e.payload.attempt_number, entry: e })),
+      ].sort((a, b) => a.number - b.number);
+      if (!items.length) list.append(el("li", { class: "muted", text: "No attempts yet." }));
+      for (const item of items) list.append(item.trial ? renderAttempt(item.trial) : renderQueuedAttempt(item.entry));
+      $("add-attempt").disabled = !canWrite();
+    }
+
+    function renderQueuedAttempt(entry) {
+      const d = describeQueued(entry);
+      const card = el("li", { class: "attempt queued", "data-op": entry.op_id });
+      card.append(el("h3", { text: `Attempt ${entry.payload.attempt_number}` }));
+      card.append(el("p", { class: "time-line" }, el("span", { class: d.time.endsWith("sec") ? "time" : "time none", text: d.time })));
+      card.append(el("p", { class: d.failed ? "msg warn" : "msg saving", role: "status", text: d.status }));
+      card.append(el("p", { class: "facts" },
+        el("span", { class: `chip ${entry.payload.validity === "VALID" ? "ok" : "warn"}`, text: d.validity }),
+        entry.payload.invalid_reason ? el("span", { class: "chip", text: reasonLabel(invalidReasons(), entry.payload.invalid_reason) }) : null,
+        entry.payload.entry_status === "NOT_RECORDED"
+          ? el("span", { class: "chip", text: `Stopwatch problem: ${reasonLabel(NOT_RECORDED_REASONS, entry.payload.not_recorded_reason)}` }) : null));
+      if (outbox.isStale(entry)) card.append(el("p", { class: "msg warn", text: "This attempt has been waiting for a long time. Open this page with a connection to send it." }));
+      if (entry.state === "SYNC_FAILED") {
+        const retry = el("button", { type: "button", class: "ghost small", text: "TRY AGAIN" });
+        retry.addEventListener("click", () => { outbox.retry(entry.op_id, owner()); syncNow(); renderStation(); });
+        const ask = state.discardAsked === entry.op_id;
+        const discard = el("button", { type: "button", class: "ghost small", text: ask ? "CONFIRM: DISCARD THIS ATTEMPT" : "DISCARD" });
+        discard.addEventListener("click", () => {
+          if (!ask) { state.discardAsked = entry.op_id; renderStation(); return; }
+          outbox.discard(entry.op_id, owner()); state.discardAsked = null; render();
+        });
+        card.append(el("div", { class: "row" }, retry, discard));
+      }
+      return card;
     }
 
     function renderAttempt(trial) {
@@ -505,7 +694,7 @@
       }
       card.append(el("p", { class: "facts" },
         el("span", { class: `chip ${trial.validity === "VALID" ? "ok" : "warn"}`, text: d.validity }),
-        trial.invalid_reason ? el("span", { class: "chip", text: reasonLabel(INVALID_REASONS, trial.invalid_reason) }) : null,
+        trial.invalid_reason ? el("span", { class: "chip", text: reasonLabel(invalidReasons(), trial.invalid_reason) }) : null,
         m && m.entry_status === "NOT_RECORDED"
           ? el("span", { class: "chip", text: `Stopwatch problem: ${reasonLabel(NOT_RECORDED_REASONS, m.not_recorded_reason)}` }) : null));
       if (m && m.entry_status === "NOT_RECORDED") {
@@ -522,131 +711,174 @@
         }
         card.append(el("details", {}, el("summary", { text: "Correction history" }), hist));
       }
-      if (canWrite() && !m && trial.validity === "VALID") card.append(renderEntryForm(trial));
+      if (canWrite() && !m && trial.validity === "VALID") {
+        const add = el("button", { type: "button", class: "ghost", text: "ENTER THE TIME FOR THIS ATTEMPT" });
+        add.addEventListener("click", () => openForm({ number: trial.attempt_number, mode: "valid-time" }));
+        card.append(add);
+      }
       if (canWrite() && m && m.entry_status === "RECORDED") {
         const btn = el("button", { type: "button", class: "ghost", text: "CORRECT ENTRY" });
         btn.setAttribute("aria-label", `Correct entry for attempt ${trial.attempt_number}`);
-        btn.addEventListener("click", () => { state.open = trial.trial_id; renderAssessment(); });
+        btn.addEventListener("click", () => { state.open = trial.trial_id; renderStation(); });
         if (state.open !== trial.trial_id) card.append(btn);
         else card.append(renderCorrectionForm(trial, m));
       }
       return card;
     }
 
-    function reasonLabel(list, code) {
-      const found = list.find(([c]) => c === code);
-      return found ? found[1] : "Reason recorded";
-    }
-
     function field(id, labelText, control, helpId) {
       return el("div", { class: "field" }, el("label", { for: id, text: labelText }), control, el("p", { id: helpId, class: "msg", hidden: true, role: "alert" }));
     }
 
-    function renderEntryForm(trial) {
-      const id = `time-${trial.trial_id}`;
-      const input = el("input", {
-        id, type: "text", inputmode: "decimal", enterkeyhint: "done", autocomplete: "off", spellcheck: "false",
-        class: "time-input", "aria-describedby": `${id}-msg`, "data-trial": trial.trial_id,
-      });
-      const form = el("form", { class: "entry", novalidate: true });
-      form.append(field(id, "STOPWATCH TIME (seconds)", input, `${id}-msg`));
-      const save = el("button", { type: "submit", class: "primary big", text: "SAVE TIME", "data-action": `save-${trial.trial_id}` });
-      const problem = el("button", { type: "button", class: "ghost", text: "TIMER PROBLEM / TIME NOT RECORDED", "data-action": `nr-${trial.trial_id}` });
-      form.append(el("div", { class: "row" }, save, problem));
-      const status = el("p", { id: `${id}-status`, class: "msg", role: "status", hidden: true });
-      form.append(status);
-      const nrBox = el("div", { class: "nr", hidden: true });
-      const sel = el("select", { id: `nr-${trial.trial_id}` });
-      sel.append(el("option", { value: "", text: "What went wrong?" }));
-      for (const [c, t] of NOT_RECORDED_REASONS) sel.append(el("option", { value: c, text: t }));
-      nrBox.append(el("p", { class: "muted", text: "No number is saved. The player did not fail the attempt; it can be repeated." }));
-      nrBox.append(field(`nr-${trial.trial_id}`, "Reason", sel, `nr-${trial.trial_id}-msg`));
-      const confirm = el("button", { type: "button", class: "primary", text: "SAVE AS NOT RECORDED", "data-action": `nrsave-${trial.trial_id}` });
-      nrBox.append(confirm);
-      form.append(nrBox);
+    // ---------------------------------------------------------------- the attempt form
+    const form = () => $("attempt-form");
 
-      const showError = (box, message) => { box.textContent = message; box.hidden = !message; };
-      const msg = form.querySelector(`#${CSS.escape(id)}-msg`);
-      const nrMsg = nrBox.querySelector(`#${CSS.escape(`nr-${trial.trial_id}`)}-msg`);
-
-      // The phone keyboard can cover the SAVE button; bring the whole form into view.
-      input.addEventListener("focus", () => {
-        setTimeout(() => form.scrollIntoView({ block: "center", behavior: "smooth" }), 300);
-      });
-      input.addEventListener("input", () => {
-        const v = input.value.trim() === "" ? { ok: true } : validateTimeText(input.value);
-        showError(msg, v.ok ? "" : v.message);
-        input.setAttribute("aria-invalid", v.ok ? "false" : "true");
-      });
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        await once(`save-${trial.trial_id}`, async () => {
-          showError(msg, ""); status.hidden = false; status.className = "msg saving"; status.textContent = "Saving…";
-          const result = await flows.saveTime({ trialId: trial.trial_id, text: input.value });
-          await afterSave(result, { input, msg, status, retryLabel: save });
-        });
-      });
-      problem.addEventListener("click", () => { nrBox.hidden = !nrBox.hidden; if (!nrBox.hidden) sel.focus(); });
-      confirm.addEventListener("click", async () => {
-        await once(`nrsave-${trial.trial_id}`, async () => {
-          showError(nrMsg, ""); status.hidden = false; status.className = "msg saving"; status.textContent = "Saving…";
-          const result = await flows.saveNotRecorded({ trialId: trial.trial_id, reason: sel.value });
-          await afterSave(result, { input: sel, msg: nrMsg, status, retryLabel: confirm });
-        });
-      });
-      return form;
+    function closeForm() {
+      state.formNumber = null;
+      if ($("attempt-form")) form().hidden = true;
     }
 
-    async function afterSave(result, ui) {
-      if (result.state === "INVALID_INPUT") {
-        ui.status.hidden = true; ui.msg.textContent = result.message; ui.msg.hidden = false; ui.msg.className = "msg error";
-        ui.input.setAttribute("aria-invalid", "true"); ui.input.focus();
-        return;
-      }
-      if (result.state === "SAVED") {
-        const m = result.measurement;
-        ui.status.className = "msg saved";
-        ui.status.textContent = m.entry_status === "NOT_RECORDED" ? "SAVED: time not recorded" : `SAVED ${m.displayed_value} sec`;
-        state.flash = { trialId: m.trial_id, text: ui.status.textContent };
-        await refreshTree();
-        return;
-      }
-      if (result.state === "UNCERTAIN") {
-        // Keep the typed value; the retry reuses the same key, so it cannot save twice.
-        ui.status.className = "msg warn";
-        ui.status.textContent = `${result.message} Press the button again to retry safely.`;
-        ui.input.setAttribute("readonly", "true");
-        return;
-      }
-      ui.status.hidden = true; ui.msg.textContent = `${result.message} (code ${result.status})`; ui.msg.hidden = false; ui.msg.className = "msg error";
-      ui.input.setAttribute("aria-invalid", "true");
-      if (result.status === 403) ui.input.setAttribute("readonly", "true"); // no bypass for consent or role
+    function setMode(mode) {
+      state.mode = mode;
+      $("valid-panel").hidden = mode === "invalid";
+      $("nr-panel").hidden = mode !== "valid-nr";
+      $("time-field").hidden = mode === "valid-nr";
+      $("invalid-panel").hidden = mode !== "invalid";
+      $("validity-valid").setAttribute("aria-pressed", mode === "invalid" ? "false" : "true");
+      $("validity-invalid").setAttribute("aria-pressed", mode === "invalid" ? "true" : "false");
+      $("toggle-nr").textContent = mode === "valid-nr" ? "ENTER THE TIME INSTEAD" : "TIMER PROBLEM / TIME NOT RECORDED";
+      $("save-attempt").textContent = mode === "invalid" ? "SAVE NOT VALID ATTEMPT" : mode === "valid-nr" ? "SAVE AS NOT RECORDED" : "SAVE ATTEMPT";
     }
 
+    function clearFormMessages() {
+      for (const id of ["time-input-msg", "nr-reason-msg", "invalid-reason-msg"]) { $(id).hidden = true; $(id).textContent = ""; }
+      for (const id of ["time-input", "nr-reason", "invalid-reason"]) $(id).setAttribute("aria-invalid", "false");
+      $("attempt-status").hidden = true;
+    }
+
+    function openForm({ number, mode }) {
+      const station = currentStation();
+      const queuedPayloads = queuedOfStation().map((e) => e.payload);
+      state.formNumber = number || nextAttemptNumber(trialsOfStation(), queuedPayloads, state.seriesKey);
+      $("time-input").value = "";
+      $("nr-reason").value = "";
+      $("invalid-reason").value = "";
+      clearFormMessages();
+      const label = station.series.length > 1 ? ` (${(station.series.find((s) => s.series_key === state.seriesKey) || {}).label || ""})` : "";
+      $("form-title").textContent = `Attempt ${state.formNumber}${label}`;
+      setMode(mode || "valid-time");
+      form().hidden = false;
+      $("time-input").focus();
+    }
+
+    function fieldError(id, message) {
+      $(`${id}-msg`).textContent = message; $(`${id}-msg`).hidden = false; $(`${id}-msg`).className = "msg error";
+      $(id).setAttribute("aria-invalid", "true"); $(id).focus();
+    }
+
+    /** Validate the form and build the attempt, or show the first problem and return null. */
+    function readForm() {
+      const base = { station_id: state.stationId, series_key: state.seriesKey, attempt_number: state.formNumber };
+      if (state.mode === "invalid") {
+        if (!$("invalid-reason").value) { fieldError("invalid-reason", "Choose the rule that was broken."); return null; }
+        return { ...base, validity: "INVALID", invalid_reason: $("invalid-reason").value };
+      }
+      if (state.mode === "valid-nr") {
+        if (!NOT_RECORDED_REASONS.some(([c]) => c === $("nr-reason").value)) { fieldError("nr-reason", "Choose what went wrong with the stopwatch."); return null; }
+        return { ...base, validity: "VALID", entry_status: "NOT_RECORDED", not_recorded_reason: $("nr-reason").value };
+      }
+      const checked = validateTimeText($("time-input").value);
+      if (!checked.ok) { fieldError("time-input", checked.message); return null; }
+      // The value is kept exactly as typed, as a string.
+      return { ...base, validity: "VALID", entry_status: "RECORDED", displayed_value: checked.value };
+    }
+
+    async function syncNow() {
+      if (!owner()) return null;
+      const summary = await outbox.flush({
+        owner: owner(),
+        send: (entry) => flows.saveAttempt({ assessmentId: entry.assessment_id, entry }),
+      });
+      if (summary.synced && state.assessmentId) await refreshAssessment();
+      else render();
+      return summary;
+    }
+
+    async function submitAttempt(event) {
+      event.preventDefault();
+      await once("save-attempt", async () => {
+        clearFormMessages();
+        const payload = readForm();
+        if (!payload) return;
+        const status = $("attempt-status");
+        status.hidden = false; status.className = "msg saving"; status.textContent = "Saving…";
+        let entry;
+        try {
+          entry = outbox.enqueue({ owner: owner(), assessmentId: state.assessmentId, payload });
+        } catch (error) {
+          // This browser would not keep a copy. Send it straight to the server, and say so.
+          const direct = await flows.saveAttempt({ assessmentId: state.assessmentId, entry: { op_id: newKey(), payload } });
+          if (direct.state === "SAVED") { status.className = "msg saved"; status.textContent = "SAVED"; closeForm(); await refreshAssessment(); return; }
+          status.className = "msg warn";
+          status.textContent = `${direct.message} This device could not keep a local copy, so enter the attempt again if it did not save.`;
+          return;
+        }
+        // It is on the device now. Show it, then send it.
+        closeForm();
+        render();
+        await syncNow();
+        const after = outbox.list(owner(), true).find((e) => e.op_id === entry.op_id);
+        if (after && after.state === "SYNCED") {
+          say("", "", "attempt-msg");
+          state.flash = { trialId: after.result && after.result.trial_id, text: payload.validity === "INVALID" ? "SAVED: not valid attempt"
+            : payload.entry_status === "NOT_RECORDED" ? "SAVED: time not recorded" : `SAVED ${payload.displayed_value} sec` };
+          await refreshAssessment();
+          return;
+        }
+        if (after && after.state === "SYNC_FAILED") {
+          say(`${describeQueued(after).status}`, "error", "attempt-msg");
+        } else {
+          say("Saved on this device. It will be sent to the server as soon as the connection is back.", "warn", "attempt-msg");
+        }
+      });
+    }
+
+    // ---------------------------------------------------------------- the sync banner
+    function renderSyncBox() {
+      const box = $("sync-box");
+      if (!owner()) { box.hidden = true; return; }
+      const model = syncBannerModel(outbox.counts(owner()));
+      box.hidden = !model.visible;
+      $("sync-text").textContent = model.text;
+      $("sync-text").className = `msg ${model.tone}`.trim();
+      $("sync-now").hidden = !model.showSync;
+    }
+
+    // ---------------------------------------------------------------- corrections (online only)
     function renderCorrectionForm(trial, m) {
       const base = `corr-${trial.trial_id}`;
-      const form = el("form", { class: "correction", novalidate: true, "aria-label": `Correct entry for attempt ${trial.attempt_number}` });
-      form.append(el("p", { class: "facts", text: `Current saved time: ${m.effective_value} sec` }));
+      const f = el("form", { class: "correction", novalidate: true, "aria-label": `Correct entry for attempt ${trial.attempt_number}` });
+      f.append(el("p", { class: "facts", text: `Current saved time: ${m.effective_value} sec` }));
       const value = el("input", { id: `${base}-value`, type: "text", inputmode: "decimal", autocomplete: "off", class: "time-input", "aria-describedby": `${base}-value-msg` });
-      form.append(field(`${base}-value`, "Corrected time (seconds)", value, `${base}-value-msg`));
+      f.append(field(`${base}-value`, "Corrected time (seconds)", value, `${base}-value-msg`));
       const reason = el("select", { id: `${base}-reason`, "aria-describedby": `${base}-reason-msg` });
       reason.append(el("option", { value: "", text: "Select a reason" }));
       for (const [c, t] of CORRECTION_REASONS) reason.append(el("option", { value: c, text: t }));
-      form.append(field(`${base}-reason`, "Reason", reason, `${base}-reason-msg`));
+      f.append(field(`${base}-reason`, "Reason", reason, `${base}-reason-msg`));
       const reasonText = el("input", { id: `${base}-reason-text`, type: "text", maxlength: "200", autocomplete: "off", "aria-describedby": `${base}-reason-text-msg` });
       const textWrap = field(`${base}-reason-text`, "Write the reason", reasonText, `${base}-reason-text-msg`);
       textWrap.hidden = true;
-      form.append(textWrap);
+      f.append(textWrap);
       reason.addEventListener("change", () => { textWrap.hidden = reason.value !== "OTHER"; });
 
       const confirmer = el("select", { id: `${base}-confirmer`, "aria-describedby": `${base}-confirmer-msg` });
       confirmer.append(el("option", { value: "", text: "Select the second person" }));
       for (const c of state.confirmers || []) confirmer.append(el("option", { value: c.id, text: c.name }));
-      form.append(field(`${base}-confirmer`, "Second person (a different coach or admin)", confirmer, `${base}-confirmer-msg`));
-      form.append(el("p", { class: "muted", text: "The person you choose is recorded with this correction. They are not asked to approve it." }));
+      f.append(field(`${base}-confirmer`, "Second person (a different coach or admin)", confirmer, `${base}-confirmer-msg`));
+      f.append(el("p", { class: "muted", text: "The person you choose is recorded with this correction. They are not asked to approve it." }));
       const unavailable = !(state.confirmers && state.confirmers.length);
       if (unavailable) {
-        form.append(el("p", { class: "msg warn", role: "alert", text: state.confirmersFailed
+        f.append(el("p", { class: "msg warn", role: "alert", text: state.confirmersFailed
           ? "The list of people who can be named as the second person could not be loaded, so corrections are unavailable on this screen."
           : "No other active coach or admin is available to be named as the second person, so a correction cannot be made right now." }));
       }
@@ -654,18 +886,18 @@
       const submit = el("button", { type: "submit", class: "primary", text: "SUBMIT CORRECTION", "data-action": `correct-${trial.trial_id}` });
       submit.disabled = unavailable;
       const cancel = el("button", { type: "button", class: "ghost", text: "Cancel" });
-      cancel.addEventListener("click", () => { state.open = null; renderAssessment(); });
-      form.append(el("div", { class: "row" }, submit, cancel), status);
+      cancel.addEventListener("click", () => { state.open = null; renderStation(); });
+      f.append(el("div", { class: "row" }, submit, cancel), status);
 
       const boxes = { value: `${base}-value-msg`, reason: `${base}-reason-msg`, "reason-text": `${base}-reason-text-msg`, confirmer: `${base}-confirmer-msg` };
       const controls = { value, reason, "reason-text": reasonText, confirmer };
-      function clearErrors() { for (const id of Object.values(boxes)) { const b = form.querySelector(`#${CSS.escape(id)}`); b.hidden = true; b.textContent = ""; } }
-      function fieldError(name, message) {
-        const b = form.querySelector(`#${CSS.escape(boxes[name] || boxes.value)}`);
+      function clearErrors() { for (const id of Object.values(boxes)) { const b = f.querySelector(`#${CSS.escape(id)}`); b.hidden = true; b.textContent = ""; } }
+      function correctionError(name, message) {
+        const b = f.querySelector(`#${CSS.escape(boxes[name] || boxes.value)}`);
         b.textContent = message; b.hidden = false; b.className = "msg error";
         const c = controls[name] || value; c.setAttribute("aria-invalid", "true"); c.focus();
       }
-      form.addEventListener("submit", async (event) => {
+      f.addEventListener("submit", async (event) => {
         event.preventDefault();
         await once(`correct-${trial.trial_id}`, async () => {
           clearErrors(); status.hidden = false; status.className = "msg saving"; status.textContent = "Saving…";
@@ -673,63 +905,81 @@
             measurementId: m.measurement_id, text: value.value, expectedEffective: m.effective_value,
             reasonCode: reason.value, reasonText: reasonText.value, confirmerId: confirmer.value, selfId: state.me.user_id,
           });
-          if (result.state === "INVALID_INPUT") { status.hidden = true; fieldError(result.field || "value", result.message); return; }
+          if (result.state === "INVALID_INPUT") { status.hidden = true; correctionError(result.field || "value", result.message); return; }
           if (result.state === "SAVED") {
             status.className = "msg saved";
             status.textContent = `SAVED: ${result.measurement.original_value} → ${result.measurement.effective_value} sec`;
             state.flash = { trialId: result.measurement.trial_id, text: status.textContent };
-            state.open = null; await refreshTree(); return;
+            state.open = null; await refreshAssessment(); return;
           }
           if (result.state === "UNCERTAIN") { status.className = "msg warn"; status.textContent = `${result.message} Press the button again to retry safely.`; return; }
-          status.hidden = true; fieldError("value", `${result.message} (code ${result.status})`);
+          status.hidden = true; correctionError("value", `${result.message} (code ${result.status})`);
         });
       });
-      return form;
+      return f;
     }
 
     // ---------------------------------------------------------------- page actions
+    function leaveAssessment() {
+      state.tree = null; state.overview = null; state.assessmentId = null; state.stationId = null;
+      state.open = null; state.flash = null;
+      closeForm();
+      history.replaceState(null, "", location.pathname);
+      render();
+      if (state.player) refreshAssessmentList();
+      renderPlayers();
+    }
+
     function wireStaticControls() {
-      $("change-player").addEventListener("click", () => {
-        state.tree = null; state.assessmentId = null; state.runId = null; state.open = null; state.flash = null;
-        history.replaceState(null, "", location.pathname);
-        renderAssessment();
-        if (state.player) refreshAssessmentList();
-        renderPlayers();
-        focusPlayerList();
-      });
+      $("change-player").addEventListener("click", () => { leaveAssessment(); focusPlayerList(); });
+      $("change-player-overview").addEventListener("click", () => { leaveAssessment(); focusPlayerList(); });
+      $("back-to-overview").addEventListener("click", () => { state.stationId = null; state.open = null; closeForm(); render(); refreshAssessment(); });
       $("player-filter").addEventListener("input", (e) => { state.playerFilter = e.target.value; renderPlayers(); });
       $("player-retry").addEventListener("click", () => once("player-retry", loadPlayers));
+      $("continue-assessment").addEventListener("click", () => {
+        const id = $("continue-assessment").dataset.assessment;
+        if (id) openAssessment(id);
+      });
       $("start-assessment").addEventListener("click", async () => {
         if (!state.player) { say("Select a player first.", "error", "assessment-msg"); focusPlayerList(); return; }
         await once("start-assessment", async () => {
           say("Starting…", "saving", "assessment-msg");
-          const result = await flows.createAssessment({ playerId: state.player.id, date: today(), title: "V1 assessment" });
+          const result = await flows.createAssessment({ playerId: state.player.id, date: today(), title: "Assessment" });
           if (result.state === "SAVED") { say("", "", "assessment-msg"); await refreshAssessmentList(); await openAssessment(result.assessment.assessment_id); return; }
           if (result.state === "UNCERTAIN") { say(`${result.message} Press START again to retry safely.`, "warn", "assessment-msg"); return; }
           say(`${result.message} (code ${result.status})`, "error", "assessment-msg");
         });
       });
-      const add = async (invalidReason) => {
-        if (!state.runId) return;
-        await once("add-attempt", async () => {
-          const trials = ((state.tree.station_runs || []).find((x) => x.station_id === STATION) || {}).trials || [];
-          const result = await flows.addAttempt({ runId: state.runId, attemptNumber: nextAttemptNumber(trials), invalidReason });
-          if (result.state === "SAVED") { say("", "", "attempt-msg"); $("invalid-box").hidden = true; await refreshTree(); return; }
-          say(result.state === "UNCERTAIN" ? `${result.message} Check the list, then press ADD ATTEMPT again.` : `${result.message} (code ${result.status})`, "error", "attempt-msg");
-          if (result.state === "UNCERTAIN") await refreshTree();
-        });
-      };
-      $("add-attempt").setAttribute("data-action", "add-attempt");
-      $("add-invalid-attempt").setAttribute("data-action", "add-attempt");
-      $("add-attempt").addEventListener("click", () => add(null));
-      $("add-invalid-attempt").addEventListener("click", () => { $("invalid-box").hidden = !$("invalid-box").hidden; if (!$("invalid-box").hidden) $("invalid-reason").focus(); });
+      // The attempt form (one form, reused for whichever attempt is being entered).
       const reasons = $("invalid-reason");
-      for (const [c, t] of INVALID_REASONS) reasons.append(el("option", { value: c, text: t }));
-      $("invalid-save").setAttribute("data-action", "add-attempt");
-      $("invalid-save").addEventListener("click", () => {
-        if (!reasons.value) { say("Choose the rule that was broken.", "error", "attempt-msg"); reasons.focus(); return; }
-        add(reasons.value);
+      const nrReasons = $("nr-reason");
+      for (const [c, t] of NOT_RECORDED_REASONS) nrReasons.append(el("option", { value: c, text: t }));
+      $("add-attempt").setAttribute("data-action", "add-attempt");
+      $("add-attempt").addEventListener("click", () => {
+        // Fill the reasons for the station on screen.
+        reasons.replaceChildren(el("option", { value: "", text: "Select a reason" }));
+        for (const [c, t] of invalidReasons()) reasons.append(el("option", { value: c, text: t }));
+        openForm({ mode: "valid-time" });
       });
+      $("validity-valid").addEventListener("click", () => { setMode("valid-time"); $("time-input").focus(); });
+      $("validity-invalid").addEventListener("click", () => {
+        reasons.replaceChildren(el("option", { value: "", text: "Select a reason" }));
+        for (const [c, t] of invalidReasons()) reasons.append(el("option", { value: c, text: t }));
+        setMode("invalid"); reasons.focus();
+      });
+      $("toggle-nr").addEventListener("click", () => { setMode(state.mode === "valid-nr" ? "valid-time" : "valid-nr"); });
+      $("cancel-attempt").addEventListener("click", () => { closeForm(); $("add-attempt").focus(); });
+      $("save-attempt").setAttribute("data-action", "save-attempt");
+      form().addEventListener("submit", submitAttempt);
+      const timeInput = $("time-input");
+      timeInput.addEventListener("focus", () => { setTimeout(() => form().scrollIntoView({ block: "center", behavior: "smooth" }), 300); });
+      timeInput.addEventListener("input", () => {
+        const v = timeInput.value.trim() === "" ? { ok: true } : validateTimeText(timeInput.value);
+        $("time-input-msg").textContent = v.ok ? "" : v.message; $("time-input-msg").hidden = v.ok;
+        timeInput.setAttribute("aria-invalid", v.ok ? "false" : "true");
+      });
+      $("sync-now").addEventListener("click", () => once("sync-now", syncNow));
+      window.addEventListener("online", () => { syncNow(); });
     }
 
     async function init() {
@@ -743,6 +993,8 @@
       }
       state.me = me.body.user || me.body;
       $("who").textContent = `${state.me.username} · ${state.me.role}`;
+      outbox.load();
+      renderSyncBox();
       await loadPlayers();
       const wanted = new URLSearchParams(location.search).get("assessment");
       if (wanted) {
@@ -753,6 +1005,9 @@
           await openAssessment(wanted);
         } else say(friendlyMessage(r.status, detailOf(r)), "error");
       }
+      // Anything saved on this device earlier is sent now, and again whenever the connection returns.
+      await syncNow();
+      setInterval(() => { if (outbox.counts(owner()).LOCAL_PENDING) syncNow(); }, SYNC_INTERVAL_MS);
       document.body.dataset.ready = "true";
     }
     init().catch(() => {
