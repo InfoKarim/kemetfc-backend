@@ -31,7 +31,8 @@ def test_the_web_screen_defaults_still_open_the_full_dashboard_unrestricted():
 def test_player_assessment_opens_the_sprint_page_in_a_restricted_web_view():
     cover = re.search(r"\.fullScreenCover\(isPresented: \$showPlayerAssessment\) \{(.*?)\n        \}", HOME, re.S).group(1)
     assert 'pagePath: "v1/sprint"' in cover and "restrictToOrigin: true" in cover
-    assert "baseURL: webDashboardBaseURL" in cover            # the app's own configured origin, nothing hard-coded
+    # The app's own configured origin, nothing hard-coded; the optional assessment-only override resolves to it when absent.
+    assert "baseURL: AssessmentWebConfiguration.baseURL(fallback: webDashboardBaseURL)" in cover
     assert "Player Assessment" in HOME and "Manual measurements" in HOME
 
 

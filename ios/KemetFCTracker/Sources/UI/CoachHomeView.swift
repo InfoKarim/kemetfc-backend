@@ -133,7 +133,7 @@ struct CoachHomeView: View {
         }
         .fullScreenCover(isPresented: $showPlayerAssessment) {
             WebDashboardScreen(
-                baseURL: webDashboardBaseURL,
+                baseURL: AssessmentWebConfiguration.baseURL(fallback: webDashboardBaseURL),
                 pagePath: "v1/sprint",
                 restrictToOrigin: true,
                 onClose: { showPlayerAssessment = false }
