@@ -26,6 +26,7 @@ struct CoachHomeView: View {
     let onSignOut: () async -> Void
 
     @State private var isSigningOut = false
+    @State private var showPlayerAssessment = false
     @State private var showWebDashboard = false
 
     var body: some View {
@@ -50,9 +51,37 @@ struct CoachHomeView: View {
                 .padding(.horizontal, 28)
 
                 VStack(spacing: 12) {
+                    // Standardized measurements entered by the coach (the S1 20 m
+                    // sprint web screen). A separate system from recording below:
+                    // it never touches the camera, tracking or uploads.
+                    Button {
+                        showPlayerAssessment = true
+                    } label: {
+                        VStack(spacing: 2) {
+                            HStack {
+                                Image(systemName: "checklist")
+                                Text("Player Assessment")
+                                    .bold()
+                            }
+                            Text("Manual measurements · 20 m Sprint")
+                                .font(.caption)
+                                .opacity(0.8)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(.white.opacity(0.12))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.kemetGold, lineWidth: 2))
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+
                     Button(action: onStartAssessment) {
-                        Text("Start Assessment")
-                            .bold()
+                        VStack(spacing: 2) {
+                            Text("Record Assessment")
+                                .bold()
+                            Text("Camera and player tracking")
+                                .font(.caption)
+                        }
                             .frame(maxWidth: .infinity)
                             .padding()
                             .background(Color.kemetGold)
@@ -101,6 +130,14 @@ struct CoachHomeView: View {
         }
         .fullScreenCover(isPresented: $showWebDashboard) {
             WebDashboardScreen(baseURL: webDashboardBaseURL, onClose: { showWebDashboard = false })
+        }
+        .fullScreenCover(isPresented: $showPlayerAssessment) {
+            WebDashboardScreen(
+                baseURL: webDashboardBaseURL,
+                pagePath: "v1/sprint",
+                restrictToOrigin: true,
+                onClose: { showPlayerAssessment = false }
+            )
         }
     }
 

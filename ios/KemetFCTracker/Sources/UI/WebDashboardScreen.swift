@@ -19,6 +19,14 @@ struct WebDashboardScreen: View {
     /// The backend's origin (e.g. https://app.kemetfc.com), same as
     /// KemetAPIClient.baseURL — never guessed or hardcoded separately.
     let baseURL: URL
+    /// Which page to open, relative to `baseURL`. The default keeps the
+    /// original behaviour: the full dashboard.
+    var pagePath: String = "dashboard"
+    /// When true, links and redirects inside this web view may only stay
+    /// on `baseURL`'s origin (the login pages are on that origin too);
+    /// anything else is refused. The default (false) leaves the full
+    /// dashboard exactly as it was.
+    var restrictToOrigin: Bool = false
     let onClose: () -> Void
 
     @State private var isLoading = true
@@ -29,7 +37,8 @@ struct WebDashboardScreen: View {
 
             WebDashboardWebView(
                 origin: baseURL,
-                pageURL: baseURL.appendingPathComponent("dashboard"),
+                pageURL: baseURL.appendingPathComponent(pagePath),
+                restrictToOrigin: restrictToOrigin,
                 isLoading: $isLoading
             )
             .ignoresSafeArea(edges: .bottom)
@@ -59,10 +68,11 @@ struct WebDashboardScreen: View {
 private struct WebDashboardWebView: UIViewRepresentable {
     let origin: URL
     let pageURL: URL
+    let restrictToOrigin: Bool
     @Binding var isLoading: Bool
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(isLoading: $isLoading)
+        Coordinator(isLoading: $isLoading, allowedOrigin: restrictToOrigin ? origin : nil)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -99,9 +109,27 @@ private struct WebDashboardWebView: UIViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         @Binding var isLoading: Bool
+        /// Non-nil only for a restricted page (Player Assessment).
+        private let allowedOrigin: URL?
 
-        init(isLoading: Binding<Bool>) {
+        init(isLoading: Binding<Bool>, allowedOrigin: URL? = nil) {
             _isLoading = isLoading
+            self.allowedOrigin = allowedOrigin
+        }
+
+        // Restricted pages stay on the Kemet backend. Unrestricted ones
+        // (the full dashboard) behave exactly as before.
+        @MainActor
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let allowedOrigin else {
+                decisionHandler(.allow)
+                return
+            }
+            decisionHandler(WebOriginPolicy.allows(navigationAction.request.url, within: allowedOrigin) ? .allow : .cancel)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -186,3 +214,26 @@ private struct WebDashboardWebView: UIViewRepresentable {
         }
     }
 }
+
+// BEGIN WebOriginPolicy
+/// The origin rule for a restricted web view: same scheme, host and port as
+/// the backend. `about:blank` is allowed because WebKit uses it internally.
+/// Pure Foundation, so it can be checked without launching the app.
+enum WebOriginPolicy {
+    static func allows(_ url: URL?, within origin: URL) -> Bool {
+        guard let url else { return false }
+        if url.absoluteString == "about:blank" { return true }
+        guard let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased(),
+              let allowedScheme = origin.scheme?.lowercased(), let allowedHost = origin.host?.lowercased() else {
+            return false
+        }
+        return scheme == allowedScheme && host == allowedHost
+            && effectivePort(url, scheme: scheme) == effectivePort(origin, scheme: allowedScheme)
+    }
+
+    private static func effectivePort(_ url: URL, scheme: String) -> Int {
+        if let port = url.port { return port }
+        return scheme == "https" ? 443 : (scheme == "http" ? 80 : -1)
+    }
+}
+// END WebOriginPolicy
