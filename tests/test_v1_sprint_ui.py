@@ -142,7 +142,7 @@ def test_page_structure_supports_labels_keyboard_and_mobile():
     html = PAGE
     assert '<html lang="en">' in html and 'name="viewport"' in html
     assert 'class="skip"' in html and 'href="#main"' in html
-    for field_id in ("player-filter", "player-select", "invalid-reason"):
+    for field_id in ("player-filter", "invalid-reason"):
         assert f'<label for="{field_id}"' in html, field_id
     assert 'role="alert"' in html and 'aria-labelledby=' in html
     for control in ("add-attempt", "start-assessment"):
@@ -170,3 +170,30 @@ def test_browser_logic_tests_pass_under_node():
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-1000:]
     assert re.search(r"# fail 0", result.stdout) and not re.search(r"# pass 0\b", result.stdout)
+
+
+# ---- player picker without a native select (Bug 1) -------------------------------------------------------
+
+def test_the_player_picker_is_a_tappable_list_not_a_native_select():
+    html = PAGE
+    assert "player-select" not in html and "player-select" not in SCRIPT and "renderPlayerOptions" not in SCRIPT
+    assert re.search(r'<ul id="player-list"[^>]*aria-labelledby="player-list-label"', html)
+    assert 'id="player-status"' in html and 'role="status"' in html
+    assert re.search(r'<button[^>]*id="player-retry"[^>]*hidden', html)          # Retry exists, hidden until needed
+    assert '<label for="player-filter">Find a player</label>' in html
+    # Large touch targets, a selected state that is not colour alone, no hover dependence.
+    css = re.search(r"\.player-row \{[^}]*\}", html).group(0)
+    assert re.search(r"min-height:\s*(5[6-9]|[6-9]\d)px", css) and "width: 100%" in css
+    assert 'content: "\\2713' in html and ":hover" not in html
+    assert "<select" not in html.replace('<select id="invalid-reason">', "")      # the only select left is the rule list
+
+
+def test_the_picker_script_wires_search_retry_and_never_fails_silently():
+    assert 'state.playerFilter = e.target.value; renderPlayers();' in SCRIPT
+    assert '$("player-retry").addEventListener("click"' in SCRIPT and "once(\"player-retry\", loadPlayers)" in SCRIPT
+    assert "Could not load players" in SCRIPT and "No players available" in SCRIPT
+    assert "loadFailureMessage(r)" in SCRIPT and "Could not reach the server. Check the connection, then press Retry." in SCRIPT
+    assert "init().catch" in SCRIPT                      # a startup error is shown, not swallowed
+    assert SCRIPT.count("state.playersStatus = \"failed\"") >= 3
+    # Only the display name reaches the page; ids stay in code.
+    assert "data-player" not in SCRIPT and "player_id" in SCRIPT

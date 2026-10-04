@@ -301,6 +301,150 @@ test("a timeout is reported as unknown, not as failure", async () => {
 
 test("the script exposes only measurement-entry behaviour", () => {
   assert.deepEqual(Object.keys(S).sort(), ["CORRECTION_REASONS", "INVALID_REASONS", "NOT_RECORDED_REASONS", "SPRINT_METRIC", "TIME_HELP",
-    "createPendingStore", "describeAttempt", "friendlyMessage", "makeFlows", "newKey", "nextAttemptNumber", "outcome", "request", "start", "validateTimeText"]);
+    "createPendingStore", "describeAttempt", "filterPlayers", "friendlyMessage", "makeFlows", "newKey", "nextAttemptNumber", "outcome",
+    "playerListModel", "renderPlayerRows", "request", "selectedLabel", "start", "validateTimeText"]);
   assert.equal(S.newKey({ randomUUID: () => "abc-123" }), "abc-123");
+});
+
+
+// ---- player list (large tappable rows, no native <select>) ------------------------------------------
+
+function fakeDocument() {
+  const make = (tag) => ({
+    tag, children: [], attrs: {}, listeners: {}, textContent: "", hidden: false,
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    append(child) { this.children.push(child); },
+    replaceChildren() { this.children = []; },
+    addEventListener(type, fn) { this.listeners[type] = fn; },
+    tap() { this.listeners.click(); },
+  });
+  return { createElement: make, make };
+}
+
+const PLAYERS = [{ id: "PILOT_PLAYER_A", name: "Test Player A" }, { id: "PILOT_PLAYER_B", name: "Test Player B" }];
+
+function drawList(players, filter, status, selectedId, picked) {
+  const doc = fakeDocument();
+  const ui = { list: doc.make("ul"), message: doc.make("p"), retry: doc.make("button") };
+  const model = S.playerListModel(players, filter, status, selectedId);
+  S.renderPlayerRows(doc, ui, model, (id) => picked.push(id));
+  return { ui, model };
+}
+const rowButtons = (ui) => ui.list.children.map((li) => li.children[0]);
+
+test("two returned players are two rows showing only their display names", () => {
+  const { ui } = drawList(PLAYERS, "", "ready", null, []);
+  const buttons = rowButtons(ui);
+  assert.deepEqual(buttons.map((b) => b.textContent), ["Test Player A", "Test Player B"]);
+  assert.deepEqual(ui.list.children.map((li) => li.tag), ["li", "li"]);
+  assert.equal(ui.message.hidden, true);
+  assert.equal(ui.retry.hidden, true);
+  // The player id is never put into the page: not as text, not as an attribute.
+  const everything = JSON.stringify(ui.list.children.map((li) => [li.attrs, li.children.map((b) => [b.attrs, b.textContent])]));
+  assert.doesNotMatch(everything, /PILOT_PLAYER|_A"|player_id/);
+});
+
+test("tapping a row selects that player's id, and only that one", () => {
+  const picked = [];
+  const { ui } = drawList(PLAYERS, "", "ready", null, picked);
+  const [a, b] = rowButtons(ui);
+  a.tap();
+  b.tap();
+  assert.deepEqual(picked, ["PILOT_PLAYER_A", "PILOT_PLAYER_B"]);
+});
+
+test("the selected row is marked in the markup (not by colour alone) and the others are not", () => {
+  const { ui } = drawList(PLAYERS, "", "ready", "PILOT_PLAYER_B", []);
+  const [a, b] = rowButtons(ui);
+  assert.equal(a.attrs["aria-pressed"], "false");
+  assert.equal(b.attrs["aria-pressed"], "true");
+  assert.match(b.attrs.class, /\bselected\b/);
+  assert.doesNotMatch(a.attrs.class, /selected/);
+  assert.equal(S.selectedLabel(PLAYERS[1]), "Selected: Test Player B");
+  assert.equal(S.selectedLabel(null), "No player selected yet");
+});
+
+test("the picked player's id is what the next workflow step sends", async () => {
+  const picked = [];
+  const { ui } = drawList(PLAYERS, "", "ready", null, picked);
+  rowButtons(ui)[1].tap();
+  assert.deepEqual(picked, ["PILOT_PLAYER_B"]);
+  const { flows, calls } = flowsWith([{ status: 201, body: { assessment_id: "V1A000001" } }]);
+  await flows.createAssessment({ playerId: picked[0], date: "2026-10-04", title: "V1 assessment" });
+  assert.equal(calls[0].body.player_id, "PILOT_PLAYER_B");
+  assert.equal(calls[0].path, "/v1/assessments");
+});
+
+test("search narrows the rows; empty search brings everyone back", () => {
+  const names = (filter) => rowButtons(drawList(PLAYERS, filter, "ready", null, []).ui).map((b) => b.textContent);
+  assert.deepEqual(names("Player A"), ["Test Player A"]);
+  assert.deepEqual(names("player a"), ["Test Player A"]);
+  assert.deepEqual(names("b"), ["Test Player B"]);
+  assert.deepEqual(names("A"), ["Test Player A", "Test Player B"]);   // "contains": the letter A is in "Player"
+  assert.deepEqual(names(""), ["Test Player A", "Test Player B"]);
+  assert.deepEqual(names("   "), ["Test Player A", "Test Player B"]);
+  const none = drawList(PLAYERS, "zzz", "ready", null, []);
+  assert.equal(none.ui.list.children.length, 0);
+  assert.equal(none.ui.message.textContent, "No player matches this search");
+  assert.equal(none.ui.message.hidden, false);
+  assert.equal(none.ui.retry.hidden, true);
+});
+
+test("a selection survives a search that hides it", () => {
+  const picked = [];
+  const { ui } = drawList(PLAYERS, "Player A", "ready", "PILOT_PLAYER_B", picked);
+  assert.equal(rowButtons(ui).length, 1);                 // B is hidden by the search ...
+  assert.equal(rowButtons(ui)[0].attrs["aria-pressed"], "false");
+  const again = drawList(PLAYERS, "", "ready", "PILOT_PLAYER_B", picked);
+  assert.equal(rowButtons(again.ui)[1].attrs["aria-pressed"], "true");   // ... and is still selected when it returns
+});
+
+test("no players, a failed load and a slow load each say so", () => {
+  const empty = drawList([], "", "ready", null, []);
+  assert.equal(empty.ui.message.textContent, "No players available");
+  assert.equal(empty.ui.message.hidden, false);
+  assert.equal(empty.ui.retry.hidden, true);
+  const failed = drawList([], "", "failed", null, []);
+  assert.equal(failed.ui.message.textContent, "Could not load players");
+  assert.equal(failed.ui.message.hidden, false);
+  assert.equal(failed.ui.retry.hidden, false);               // a Retry button is shown
+  assert.equal(failed.ui.list.children.length, 0);
+  const loading = drawList([], "", "loading", null, []);
+  assert.equal(loading.ui.message.textContent, "Loading players…");
+  assert.equal(loading.ui.retry.hidden, true);
+});
+
+test("a failed load never shows stale rows, and retrying to success clears the message and the button", () => {
+  const doc = fakeDocument();
+  const ui = { list: doc.make("ul"), message: doc.make("p"), retry: doc.make("button") };
+  const draw = (status, players) => S.renderPlayerRows(doc, ui, S.playerListModel(players, "", status, null), () => {});
+  draw("ready", PLAYERS);
+  assert.equal(ui.list.children.length, 2);
+  draw("failed", PLAYERS);                                   // even if old players are still in memory
+  assert.equal(ui.list.children.length, 0);
+  assert.equal(ui.retry.hidden, false);
+  draw("loading", PLAYERS);                                  // Retry pressed
+  assert.equal(ui.retry.hidden, true);
+  draw("ready", PLAYERS);
+  assert.equal(ui.list.children.length, 2);
+  assert.equal(ui.message.hidden, true);
+  assert.equal(ui.retry.hidden, true);
+});
+
+test("every row is a real button with a text name, so keyboard and screen readers work", () => {
+  const { ui } = drawList(PLAYERS, "", "ready", null, []);
+  for (const button of rowButtons(ui)) {
+    assert.equal(button.tag, "button");
+    assert.equal(button.attrs.type, "button");
+    assert.ok(button.textContent.length > 0);
+    assert.equal("tabindex" in button.attrs, false);         // natural Tab order, Enter and Space activate it
+    assert.ok(typeof button.listeners.click === "function");
+  }
+});
+
+test("filtering never changes the stored players", () => {
+  const before = JSON.stringify(PLAYERS);
+  S.filterPlayers(PLAYERS, "b");
+  assert.equal(JSON.stringify(PLAYERS), before);
+  assert.notEqual(S.filterPlayers(PLAYERS, ""), PLAYERS);    // a copy, not the same array
 });

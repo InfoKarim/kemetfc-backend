@@ -66,6 +66,13 @@
     .nr { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #3C5878; }
     form.correction { padding: 14px; border: 2px solid #F5C45D; border-radius: 12px; }
     .no-js { padding: 18px; }
+    .list-label { margin: 14px 0 6px; font-size: 15px; font-weight: 700; color: #C7D4E4 !important; }
+    .player-list { max-height: 50vh; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; gap: 10px; }
+    .player-row { display: block; width: 100%; min-height: 56px; padding: 12px 16px; text-align: left; font-size: 19px; font-weight: 700;
+      border: 2px solid #7F9BBB !important; border-radius: 12px; background: #071A2B !important; color: #F4F7FA !important; }
+    .player-row.selected { background: #F5C45D !important; color: #071A2B !important; border-color: #F5C45D !important; }
+    .player-row.selected::before { content: "\2713  "; }
+    .selected-line { margin: 12px 0 0; font-size: 18px; font-weight: 800; color: #F4F7FA !important; }
     @media (max-width: 480px) { button.big { flex-basis: 100%; } .row button { flex: 1 1 100%; } }
   </style>
 </head>
@@ -85,10 +92,11 @@
         <label for="player-filter">Find a player</label>
         <input id="player-filter" type="search" autocomplete="off" placeholder="Start typing a name">
       </div>
-      <div class="field">
-        <label for="player-select">Player being assessed</label>
-        <select id="player-select"><option value="">Select a player</option></select>
-      </div>
+      <p id="player-list-label" class="list-label">Tap the player being assessed</p>
+      <ul id="player-list" class="player-list" aria-labelledby="player-list-label"></ul>
+      <p id="player-status" class="msg" role="status">Loading players…</p>
+      <div class="row"><button type="button" class="ghost" id="player-retry" data-action="player-retry" hidden>Retry</button></div>
+      <p id="selected-player" class="selected-line" role="status">No player selected yet</p>
     </section>
 
     <section class="card picker" id="assessments-card" aria-labelledby="assessments-h" hidden>

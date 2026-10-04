@@ -261,7 +261,57 @@
     return { validity, time, measurement: m };
   }
 
+  // ------------------------------------------------------------------ player list (no native <select>)
+
+  /** Case-insensitive "contains" on the display name. Empty text shows everyone. */
+  function filterPlayers(players, text) {
+    const wanted = String(text == null ? "" : text).trim().toLowerCase();
+    if (!wanted) return players.slice();
+    return players.filter((p) => p.name.toLowerCase().includes(wanted));
+  }
+
+  /** What the player list must show, from facts only. `loadStatus` is "loading", "ready" or
+   *  "failed". Rows carry only the display name (never the id) and whether they are selected. */
+  function playerListModel(players, filterText, loadStatus, selectedId) {
+    if (loadStatus === "loading") return { rows: [], message: "Loading players…", showRetry: false };
+    if (loadStatus === "failed") return { rows: [], message: "Could not load players", showRetry: true };
+    if (!players.length) return { rows: [], message: "No players available", showRetry: false };
+    const shown = filterPlayers(players, filterText);
+    if (!shown.length) return { rows: [], message: "No player matches this search", showRetry: false };
+    return {
+      rows: shown.map((p) => ({ id: p.id, name: p.name, selected: p.id === selectedId })),
+      message: null,
+      showRetry: false,
+    };
+  }
+
+  function selectedLabel(player) {
+    return player ? `Selected: ${player.name}` : "No player selected yet";
+  }
+
+  /** Builds the rows with plain DOM calls (text only). Each row is a real <button>, so touch,
+   *  keyboard (Tab, Enter, Space) and screen readers work without extra code. Only the
+   *  display name is put in the page; the id stays in the closure. */
+  function renderPlayerRows(doc, ui, model, onPick) {
+    ui.list.replaceChildren();
+    for (const row of model.rows) {
+      const item = doc.createElement("li");
+      const button = doc.createElement("button");
+      button.setAttribute("type", "button");
+      button.setAttribute("class", row.selected ? "player-row selected" : "player-row");
+      button.setAttribute("aria-pressed", row.selected ? "true" : "false");
+      button.textContent = row.name;
+      button.addEventListener("click", () => onPick(row.id));
+      item.append(button);
+      ui.list.append(item);
+    }
+    ui.message.textContent = model.message || "";
+    ui.message.hidden = !model.message;
+    ui.retry.hidden = !model.showRetry;
+  }
+
   const exported = {
+    filterPlayers, playerListModel, selectedLabel, renderPlayerRows,
     SPRINT_METRIC, NOT_RECORDED_REASONS, INVALID_REASONS, CORRECTION_REASONS, TIME_HELP,
     validateTimeText, friendlyMessage, newKey, createPendingStore, request, outcome, makeFlows,
     nextAttemptNumber, describeAttempt,
@@ -273,6 +323,7 @@
     const state = {
       me: null, players: [], player: null, assessmentId: null, tree: null, runId: null,
       confirmers: null, confirmersFailed: false, busy: new Set(), open: null, flash: null,
+      playersStatus: "loading", playerFilter: "",
     };
     const store = createPendingStore(window.sessionStorage);
     const flows = makeFlows({ fetchImpl: (u, i) => window.fetch(u, i), store });
@@ -323,26 +374,44 @@
       return r;
     }
 
-    async function loadPlayers() {
-      const r = await load("/v1/player-picker");
-      if (r.status !== 200 || !r.body || !Array.isArray(r.body.players)) {
-        say(friendlyMessage(r.status, detailOf(r)), "error");
-        return;
-      }
-      // The server sends only an id and a display name.
-      state.players = r.body.players.map((p) => ({ id: p.player_id, name: p.display_name }));
-      renderPlayerOptions("");
+    // For reading data the generic "could not confirm save" wording would be wrong.
+    function loadFailureMessage(r) {
+      if (r.network || r.status === 0 || r.status >= 500) return "Could not reach the server. Check the connection, then press Retry.";
+      return friendlyMessage(r.status, detailOf(r));
     }
 
-    function renderPlayerOptions(filter) {
-      const select = $("player-select");
-      select.replaceChildren(el("option", { value: "", text: "Select a player" }));
-      const f = filter.trim().toLowerCase();
-      for (const p of state.players) {
-        if (f && !p.name.toLowerCase().includes(f)) continue;
-        select.append(el("option", { value: p.id, text: p.name }));
+    async function loadPlayers() {
+      state.playersStatus = "loading";
+      renderPlayers();
+      try {
+        const r = await load("/v1/player-picker");
+        if (r.status !== 200 || !r.body || !Array.isArray(r.body.players)) {
+          state.playersStatus = "failed";
+          renderPlayers();
+          say(loadFailureMessage(r), "error");
+          return;
+        }
+        // The server sends only an id and a display name.
+        state.players = r.body.players.map((p) => ({ id: p.player_id, name: p.display_name }));
+        state.playersStatus = "ready";
+        say("", "");
+      } catch (error) {
+        state.playersStatus = "failed";
       }
-      if (state.player) select.value = state.player.id;
+      renderPlayers();
+    }
+
+    // Large tappable rows instead of a native <select> (the iPhone wheel picker showed no options).
+    function renderPlayers() {
+      const model = playerListModel(state.players, state.playerFilter, state.playersStatus, state.player ? state.player.id : null);
+      renderPlayerRows(document, { list: $("player-list"), message: $("player-status"), retry: $("player-retry") }, model, (id) => selectPlayer(id));
+      $("selected-player").textContent = selectedLabel(state.player);
+    }
+
+    function focusPlayerList() {
+      const target = $("player-list").querySelector("button.selected") || $("player-list").querySelector("button");
+      if (target) target.focus();
+      else $("player-filter").focus();
     }
 
     async function loadConfirmers() {
@@ -367,6 +436,7 @@
       const found = state.players.find((p) => p.id === playerId) || null;
       state.player = found; state.assessmentId = null; state.tree = null; state.runId = null;
       history.replaceState(null, "", location.pathname);
+      renderPlayers();
       renderAssessment();
       $("assessments-card").hidden = !found;
       if (!found) return;
@@ -624,12 +694,13 @@
         history.replaceState(null, "", location.pathname);
         renderAssessment();
         if (state.player) refreshAssessmentList();
-        $("player-select").focus();
+        renderPlayers();
+        focusPlayerList();
       });
-      $("player-filter").addEventListener("input", (e) => renderPlayerOptions(e.target.value));
-      $("player-select").addEventListener("change", (e) => selectPlayer(e.target.value));
+      $("player-filter").addEventListener("input", (e) => { state.playerFilter = e.target.value; renderPlayers(); });
+      $("player-retry").addEventListener("click", () => once("player-retry", loadPlayers));
       $("start-assessment").addEventListener("click", async () => {
-        if (!state.player) { say("Select a player first.", "error", "assessment-msg"); $("player-select").focus(); return; }
+        if (!state.player) { say("Select a player first.", "error", "assessment-msg"); focusPlayerList(); return; }
         await once("start-assessment", async () => {
           say("Starting…", "saving", "assessment-msg");
           const result = await flows.createAssessment({ playerId: state.player.id, date: today(), title: "V1 assessment" });
@@ -664,7 +735,12 @@
     async function init() {
       wireStaticControls();
       const me = await load("/auth/me");
-      if (me.status !== 200) { say(friendlyMessage(me.status, detailOf(me)), "error"); return; }
+      if (me.status !== 200) {
+        state.playersStatus = "failed";
+        renderPlayers();
+        say(loadFailureMessage(me), "error");
+        return;
+      }
       state.me = me.body.user || me.body;
       $("who").textContent = `${state.me.username} · ${state.me.role}`;
       await loadPlayers();
@@ -673,13 +749,17 @@
         const r = await load(`/v1/assessments/${encodeURIComponent(wanted)}`);
         if (r.status === 200) {
           const p = state.players.find((x) => x.id === r.body.player_id);
-          if (p) { state.player = p; $("player-select").value = p.id; $("player-name").textContent = p.name; $("assessments-card").hidden = false; await refreshAssessmentList(); }
+          if (p) { state.player = p; renderPlayers(); $("player-name").textContent = p.name; $("assessments-card").hidden = false; await refreshAssessmentList(); }
           await openAssessment(wanted);
         } else say(friendlyMessage(r.status, detailOf(r)), "error");
       }
       document.body.dataset.ready = "true";
     }
-    init();
+    init().catch(() => {
+      state.playersStatus = "failed";
+      renderPlayers();
+      say("This screen could not start. Reload the page and try again.", "error");
+    });
   };
 
   return exported;
