@@ -2,12 +2,14 @@
 
 Routes (all under /v1, no DELETE and no generic PUT/PATCH anywhere):
 
-  GET  /v1/sprint, /v1/sprint.js                         the coach web page for the S1 sprint workflow
+  GET  /v1/sprint, /v1/sprint.js, /v1/outbox.js          the Player Assessment web page and its two scripts
   GET  /v1/player-picker                                 player_id + display_name only (read)
   GET  /v1/eligible-confirmers                           active coach/admin other than the caller (write roles)
   POST /v1/assessments                                   create assessment (201, replay 200)
   GET  /v1/players/{player_id}/assessments               assessment summaries for one player (read)
   GET  /v1/assessments/{assessment_id}                   assessment tree with facts only
+  GET  /v1/assessments/{assessment_id}/stations          the eight-station overview (derived state, counts only)
+  POST /v1/assessments/{assessment_id}/attempts          save one whole attempt in one step (201 / replay 200)
   POST /v1/assessments/{assessment_id}/station-runs      create or get a station run (201 / 200)
   POST /v1/station-runs/{station_run_id}/trials          create a trial (201 / replay 200)
   POST /v1/trials/{trial_id}/manual-measurements         enter a time or NOT_RECORDED (201 / replay 200)
@@ -42,12 +44,14 @@ from app.v1.models import (
     V1StationRunDB,
     V1TrialDB,
 )
+from app.v1.overview import build_station_overview
 from app.v1.schemas import (
     CorrectMeasurementBody,
     CreateAssessmentBody,
     CreateStationRunBody,
     CreateTrialBody,
     RecordMeasurementBody,
+    SaveAttemptBody,
 )
 from app.v1.service import V1AssessmentService, V1ConflictError, V1ValidationError
 from app.v1.timing import InvalidTimeValue, format_seconds, parse_seconds_to_centiseconds
@@ -58,9 +62,10 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 WRITE_ROLES = {"admin", "coach"}
 READ_ROLES = {"admin", "coach", "reviewer"}
 CONSENT_PURPOSE = "performance_tracking"
-# Only the unambiguous sprint workflow is open in this API version. S2/S5/S6 need
-# left/right semantics and S3/S4 need observation rules that are not frozen yet.
-ENABLED_STATIONS = {"S1"}
+# Official manual timing is open for S1 (sprint), S2 (change of direction, per turning foot) and
+# S4 (slalom dribbling), the three stations the frozen standard defines a manual time for.
+# Every other station is COMING_SOON: it has no definition and accepts nothing.
+ENABLED_STATIONS = set(d.ENABLED_STATIONS)
 # A losing racer reruns against the winner's committed row. Several rounds are allowed
 # because human-readable IDs come from a shared counter that can also collide briefly.
 RACE_ATTEMPTS = 6
@@ -154,7 +159,7 @@ def measurement_view(db: Session, m: V1ManualMeasurementDB) -> dict:
 def _trial_view(db: Session, t: V1TrialDB, with_measurements=True) -> dict:
     view = {
         "trial_id": t.trial_id, "station_run_id": t.station_run_id,
-        "attempt_number": t.attempt_number, "validity": t.validity,
+        "series_key": t.series_key, "attempt_number": t.attempt_number, "validity": t.validity,
         "invalid_reason": t.invalid_reason, "created_by": t.created_by_user_id,
         "created_at": t.created_at,
     }
@@ -268,7 +273,7 @@ def create_or_get_station_run(assessment_id: str, body: CreateStationRunBody, re
     assessment = _player_of_assessment(db, assessment_id)
     if body.station_id not in ENABLED_STATIONS:
         raise HTTPException(status_code=422,
-                            detail="This station is not enabled in this API version (S1 only)")
+                            detail="This station is not available yet")
     _require_consent(db, assessment.player_id)
     existing = db.query(V1StationRunDB).filter_by(
         assessment_id=assessment_id, station_id=body.station_id).one_or_none()
@@ -295,6 +300,43 @@ def create_or_get_station_run(assessment_id: str, body: CreateStationRunBody, re
     return _respond(_run_view(db, run, with_trials=False), created=created)
 
 
+# ------------------------------------------------------------- station overview, one-step attempt
+
+@router.get("/assessments/{assessment_id}/stations")
+def read_station_overview(assessment_id: str, request: Request, db: Session = Depends(get_db)):
+    """All eight stations with a derived state and attempt counts. Stations that are not open
+    are COMING_SOON and carry nothing. Counts describe progress; they are never a score."""
+    _actor(request, READ_ROLES)
+    assessment = _player_of_assessment(db, assessment_id)
+    return jsonable_encoder(build_station_overview(db, assessment))
+
+
+@router.post("/assessments/{assessment_id}/attempts")
+def save_attempt(assessment_id: str, body: SaveAttemptBody, request: Request,
+                 db: Session = Depends(get_db)):
+    """Save one attempt: the station run (on first use), the trial and, for a valid attempt, the
+    official time or its NOT_RECORDED reason, in one transaction. ``client_entry_id`` makes a
+    repeat safe (200 with the saved attempt). A different attempt under the same number is a 409:
+    nothing is overwritten. The browser's offline queue replays exactly this request."""
+    actor = _actor(request, WRITE_ROLES)
+    assessment = _player_of_assessment(db, assessment_id)
+    if body.station_id not in ENABLED_STATIONS:
+        raise HTTPException(status_code=422, detail="This station is not available yet")
+    _require_consent(db, assessment.player_id)
+    service = V1AssessmentService(db)
+
+    def act():
+        saved = service.save_attempt(
+            assessment_id, body.station_id, body.series_key, body.attempt_number, body.validity,
+            body.invalid_reason, body.entry_status, body.displayed_value, body.not_recorded_reason,
+            actor, body.client_entry_id)
+        return saved[:3], saved[3]
+
+    (run, trial, _measurement), created = _once_or_reconcile(db, act)
+    return _respond({"created": created, "station_run": _run_view(db, run, with_trials=False),
+                     "trial": _trial_view(db, trial)}, created=created)
+
+
 # ----------------------------------------------------------------------------- trials
 
 @router.post("/station-runs/{station_run_id}/trials")
@@ -310,7 +352,7 @@ def create_trial(station_run_id: str, body: CreateTrialBody, request: Request,
 
     def existing_trial():
         return db.query(V1TrialDB).filter_by(
-            station_run_id=station_run_id, series_key="", attempt_number=body.attempt_number
+            station_run_id=station_run_id, series_key=body.series_key, attempt_number=body.attempt_number
         ).one_or_none()
 
     def replay_or_conflict(found):
@@ -327,7 +369,7 @@ def create_trial(station_run_id: str, body: CreateTrialBody, request: Request,
         if found is not None:
             return found, False
         try:
-            return service.add_trial(station_run_id, body.attempt_number, actor, series_key="",
+            return service.add_trial(station_run_id, body.attempt_number, actor, series_key=body.series_key,
                                      validity=body.validity, invalid_reason=body.invalid_reason), True
         except V1ConflictError:  # a twin request committed first
             db.rollback()
@@ -457,3 +499,8 @@ def sprint_page():
 @router.get("/sprint.js", include_in_schema=False)
 def sprint_script():
     return FileResponse(STATIC_DIR / "v1_sprint.js", media_type="application/javascript")
+
+
+@router.get("/outbox.js", include_in_schema=False)
+def outbox_script():
+    return FileResponse(STATIC_DIR / "v1_outbox.js", media_type="application/javascript")

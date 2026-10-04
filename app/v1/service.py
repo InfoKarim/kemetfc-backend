@@ -70,7 +70,7 @@ class V1AssessmentService:
         self.db.commit()
         return assessment
 
-    def start_station_run(self, assessment_id, station_id, created_by_user_id) -> V1StationRunDB:
+    def start_station_run(self, assessment_id, station_id, created_by_user_id, commit=True) -> V1StationRunDB:
         assessment = self._assessment(assessment_id)
         if assessment.status != "IN_PROGRESS":
             raise V1ValidationError("Assessment is not in progress")
@@ -84,11 +84,11 @@ class V1AssessmentService:
             station_id=station_id, created_by_user_id=created_by_user_id, created_at=utcnow(),
         )
         self.db.add(run)
-        self.db.commit()
+        self._finish(commit)
         return run
 
     def add_trial(self, station_run_id, attempt_number, created_by_user_id, series_key="",
-                  validity="VALID", invalid_reason=None) -> V1TrialDB:
+                  validity="VALID", invalid_reason=None, commit=True) -> V1TrialDB:
         run = self.db.get(V1StationRunDB, station_run_id)
         if run is None:
             raise V1ValidationError("Station run not found")
@@ -117,29 +117,29 @@ class V1AssessmentService:
             created_at=utcnow(),
         )
         self.db.add(trial)
-        self.db.commit()
+        self._finish(commit)
         return trial
 
     # -- manual measurements ---------------------------------------------------------
 
     def record_manual_time(self, trial_id, metric_id, value, unit, entered_by_user_id,
-                           source=d.MEASUREMENT_SOURCE_MANUAL, client_entry_id=None):
+                           source=d.MEASUREMENT_SOURCE_MANUAL, client_entry_id=None, commit=True):
         """Store the displayed stopwatch value exactly. Raises, and stores nothing, for a
         value that cannot be stored as typed; it never rounds, scales or "fixes" it."""
         centiseconds = parse_seconds_to_centiseconds(value)
         return self._record(trial_id, metric_id, "RECORDED", centiseconds, None, unit,
-                            source, entered_by_user_id, client_entry_id)
+                            source, entered_by_user_id, client_entry_id, commit)
 
     def record_not_recorded(self, trial_id, metric_id, reason, entered_by_user_id,
-                            client_entry_id=None):
+                            client_entry_id=None, commit=True):
         """The timing failed: store no number and no performance verdict."""
         if reason not in d.NOT_RECORDED_REASONS:
             raise V1ValidationError("Unknown NOT_RECORDED reason")
         return self._record(trial_id, metric_id, "NOT_RECORDED", None, reason, d.UNIT_SECONDS,
-                            d.MEASUREMENT_SOURCE_MANUAL, entered_by_user_id, client_entry_id)
+                            d.MEASUREMENT_SOURCE_MANUAL, entered_by_user_id, client_entry_id, commit)
 
     def _record(self, trial_id, metric_id, status, centiseconds, reason, unit, source,
-                entered_by_user_id, client_entry_id):
+                entered_by_user_id, client_entry_id, commit=True):
         self.replayed = False
         if client_entry_id is not None:
             existing = self.db.query(V1ManualMeasurementDB).filter_by(client_entry_id=client_entry_id).one_or_none()
@@ -188,8 +188,101 @@ class V1AssessmentService:
         self.db.add(measurement)
         self._audit(entered_by_user_id, "v1_manual_measurement_recorded", "v1_manual_measurement",
                     measurement.manual_measurement_id, {"entry_status": status})
-        self.db.commit()
+        self._finish(commit)
         return measurement
+
+    # -- one attempt in one step (Unified Player Assessment, Phase 1) ---------------------------
+
+    def save_attempt(self, assessment_id, station_id, series_key, attempt_number, validity,
+                     invalid_reason, entry_status, displayed_value, not_recorded_reason,
+                     user_id, client_entry_id):
+        """Save one attempt exactly as the coach reached it: the station run (created on first
+        use), the trial and, for a VALID attempt, its official time or its NOT_RECORDED reason,
+        all in ONE transaction. Returns ``(run, trial, measurement_or_None, created)``.
+
+        It is safe to send twice. The same ``client_entry_id`` with the same content returns
+        what was saved (``created`` False). An attempt number that already holds different
+        content raises ``V1ConflictError``: this method never overwrites or merges. Nothing is
+        stored when anything is rejected."""
+        if not client_entry_id:
+            raise V1ValidationError("An attempt needs a client_entry_id so it can be retried safely")
+        if station_id not in d.ENABLED_STATIONS:
+            raise V1ValidationError("This station is not available yet")
+        if series_key not in d.STATION_SERIES[station_id]:
+            raise V1ValidationError("Series key is not valid for this station")
+        if isinstance(attempt_number, bool) or not isinstance(attempt_number, int) or attempt_number < 1:
+            raise V1ValidationError("Attempt number must be a whole number of 1 or more")
+        if validity not in d.TRIAL_VALIDITIES:
+            raise V1ValidationError("Validity must be VALID or INVALID")
+        if validity == "INVALID":
+            if invalid_reason not in d.INVALID_REASONS[station_id]:
+                raise V1ValidationError("An invalid attempt needs a reason from this station's list")
+            if entry_status is not None or displayed_value is not None or not_recorded_reason is not None:
+                raise V1ValidationError("A not-valid attempt carries no time")
+        else:
+            if invalid_reason is not None:
+                raise V1ValidationError("A valid attempt has no invalid reason")
+            if entry_status == "RECORDED":
+                if displayed_value is None or not_recorded_reason is not None:
+                    raise V1ValidationError("A recorded time needs a value and no not-recorded reason")
+            elif entry_status == "NOT_RECORDED":
+                if displayed_value is not None or not_recorded_reason not in d.NOT_RECORDED_REASONS:
+                    raise V1ValidationError("NOT_RECORDED needs one of the listed reasons and no value")
+            else:
+                raise V1ValidationError("A valid attempt needs a time or a not-recorded reason")
+        centiseconds = (parse_seconds_to_centiseconds(displayed_value)
+                        if entry_status == "RECORDED" else None)
+        assessment = self._assessment(assessment_id)
+        if assessment.status != "IN_PROGRESS":
+            raise V1ValidationError("Assessment is not in progress")
+        self._require_user(user_id)
+        metric_id = d.STATION_METRIC[station_id]
+        wanted = (entry_status, centiseconds, not_recorded_reason)
+
+        # The same operation again: found by its key, which is stored on the measurement.
+        twin = self.db.query(V1ManualMeasurementDB).filter_by(client_entry_id=client_entry_id).one_or_none()
+        if twin is not None:
+            trial = self.db.get(V1TrialDB, twin.trial_id)
+            run = self.db.get(V1StationRunDB, trial.station_run_id)
+            same = ((run.assessment_id, run.station_id, trial.series_key, trial.attempt_number,
+                     trial.validity, trial.invalid_reason)
+                    == (assessment_id, station_id, series_key, attempt_number, validity, invalid_reason)
+                    and (twin.entry_status, twin.value_centiseconds, twin.not_recorded_reason) == wanted)
+            if not same:
+                raise V1ConflictError("client_entry_id was already used for a different attempt")
+            return run, trial, twin, False
+
+        created = False
+        run = self.db.query(V1StationRunDB).filter_by(
+            assessment_id=assessment_id, station_id=station_id).one_or_none()
+        if run is None:
+            run = self.start_station_run(assessment_id, station_id, user_id, commit=False)
+            created = True
+        trial = self.db.query(V1TrialDB).filter_by(
+            station_run_id=run.station_run_id, series_key=series_key,
+            attempt_number=attempt_number).one_or_none()
+        if trial is not None:
+            if (trial.validity, trial.invalid_reason) != (validity, invalid_reason):
+                raise V1ConflictError("This attempt number already exists with different content")
+        else:
+            trial = self.add_trial(run.station_run_id, attempt_number, user_id, series_key=series_key,
+                                   validity=validity, invalid_reason=invalid_reason, commit=False)
+            created = True
+        if validity == "INVALID":
+            self._finish(True)
+            return run, trial, None, created
+        saved = self.db.query(V1ManualMeasurementDB).filter_by(trial_id=trial.trial_id, metric_id=metric_id).first()
+        if saved is not None:
+            # The trial already holds an entry that belongs to some other operation.
+            raise V1ConflictError("This attempt already has a different saved entry")
+        if entry_status == "RECORDED":
+            measurement = self.record_manual_time(trial.trial_id, metric_id, displayed_value, d.UNIT_SECONDS,
+                                                  user_id, client_entry_id=client_entry_id, commit=False)
+        else:
+            measurement = self.record_not_recorded(trial.trial_id, metric_id, not_recorded_reason, user_id,
+                                                   client_entry_id=client_entry_id, commit=False)
+        self._finish(True)
+        return run, trial, measurement, True
 
     # -- corrections (append-only) ----------------------------------------------------
 
@@ -242,6 +335,14 @@ class V1AssessmentService:
         return history[-1].corrected_centiseconds if history else measurement.value_centiseconds
 
     # -- helpers ------------------------------------------------------------------------
+
+    def _finish(self, commit):
+        """Commit now, or only make the pending rows visible so a caller can finish a larger
+        step (a whole attempt) in one transaction."""
+        if commit:
+            self.db.commit()
+        else:
+            self.db.flush()
 
     def _assessment(self, assessment_id) -> V1AssessmentDB:
         assessment = self.db.get(V1AssessmentDB, assessment_id)

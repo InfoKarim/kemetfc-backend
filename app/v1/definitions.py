@@ -122,3 +122,53 @@ def ensure_metric_definitions(db) -> None:
             if stored != definition.__dict__:
                 raise ValueError(f"Stored metric definition {definition.metric_id} differs from code")
     db.commit()
+
+
+# --- Unified Player Assessment, Phase 1: the eight-station plan --------------------------
+# Only S1, S2 and S4 take official data in Phase 1. Every number below is the frozen
+# standard's (section 4.1): S1 and S4 need 3 valid trials within 5 attempts; S2 needs 2 valid
+# trials within 4 attempts for EACH turning foot. A trial counts toward "required" only when
+# it is VALID and its time was RECORDED (a timer problem is repeated, never counted). The
+# counts only describe progress; nothing here caps or blocks an entry.
+# S3, S5, S6, S7 and S8 are listed so the coach sees the whole assessment, but they carry no
+# measurement, no definition and no station run: they are COMING_SOON.
+@dataclass(frozen=True)
+class SeriesRule:
+    key: str
+    label: str
+    required_valid: int
+    max_attempts: int
+
+
+@dataclass(frozen=True)
+class StationPlan:
+    station_id: str
+    order: int
+    name: str
+    description: str
+    metric_id: str | None
+    series: tuple[SeriesRule, ...]
+
+    @property
+    def enabled(self) -> bool:
+        return self.metric_id is not None
+
+
+STATION_PLAN = (
+    StationPlan("S1", 1, "Sprint", "20 m sprint. The official time is the stopwatch reading.",
+                "PHYS-SPR-020M-MAN-001", (SeriesRule("", "", 3, 5),)),
+    StationPlan("S2", 2, "Agility",
+                "180 degree change of direction (T to L to T), timed separately for each turning foot.",
+                "PHYS-COD-180-MAN-001",
+                (SeriesRule("L", "Turning foot: left", 2, 4), SeriesRule("R", "Turning foot: right", 2, 4))),
+    StationPlan("S3", 3, "Ball Mastery", "", None, ()),
+    StationPlan("S4", 4, "Dribbling", "Slalom dribbling. The official time is the stopwatch reading.",
+                "TECH-DRB-SLALOM-TIME-MAN-001", (SeriesRule("", "", 3, 5),)),
+    StationPlan("S5", 5, "Passing / Receiving", "", None, ()),
+    StationPlan("S6", 6, "Shooting", "", None, ()),
+    StationPlan("S7", 7, "1v1", "", None, ()),
+    StationPlan("S8", 8, "Small-Sided Game", "", None, ()),
+)
+STATION_PLAN_BY_ID = {plan.station_id: plan for plan in STATION_PLAN}
+ENABLED_STATIONS = tuple(plan.station_id for plan in STATION_PLAN if plan.enabled)
+STATION_METRIC = {plan.station_id: plan.metric_id for plan in STATION_PLAN if plan.enabled}
