@@ -29,6 +29,8 @@ struct VideoFirstReviewView: View {
     let onRetryUpload: () -> Void
     let onDone: () -> Void
     let onViewPendingUploads: () -> Void
+    /// SELECT PLAYER IN VIDEO, offered once the assessment is saved (nil hides it).
+    var onSelectPlayerInVideo: (() -> Void)? = nil
 
     @State private var showManualMeasurements = false
 
@@ -126,6 +128,7 @@ struct VideoFirstReviewView: View {
                 row("Player", record.playerName)
                 row("Video", VideoFirstAssessmentModel.durationText(facts.durationSeconds))
                 row("Video upload", VideoFirstAssessmentModel.uploadLabel(facts))
+                row("Player in video", record.targetSelections?.isEmpty == false ? "SELECTED" : "NOT SELECTED YET")
                 row("AI analysis", VideoFirstAssessmentModel.analysisLabel)
                 if let lastError = record.lastError, record.uploadState != .uploaded {
                     Text(lastError).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -141,6 +144,11 @@ struct VideoFirstReviewView: View {
             Spacer()
 
             VStack(spacing: 12) {
+                if let onSelectPlayerInVideo {
+                    Button("SELECT PLAYER IN VIDEO", action: onSelectPlayerInVideo)
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity)
+                }
                 if record.isRetryable {
                     Button("Retry Upload", action: onRetryUpload)
                         .buttonStyle(.borderedProminent)

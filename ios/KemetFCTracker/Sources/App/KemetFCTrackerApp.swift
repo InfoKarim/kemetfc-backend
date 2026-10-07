@@ -54,6 +54,8 @@ struct RootView: View {
     /// Set when the coach came in through PLAYER ASSESSMENT: after the player is chosen they pick RECORD VIDEO
     /// (the existing camera flow below) or UPLOAD VIDEO (an imported video, same pending record and upload).
     @ObservedObject private var videoFirst = VideoFirstAssessmentMode.shared
+    /// The saved video whose player the coach is choosing (SELECT PLAYER IN VIDEO).
+    @State private var selectingTargetRecordId: String?
 
     var body: some View {
         Group {
@@ -75,6 +77,13 @@ struct RootView: View {
                     onUploadAvatar: { data in await session.uploadAvatar(imageData: data) },
                     onRemoveAvatar: { await session.removeAvatar() }
                 )
+            } else if let targetId = selectingTargetRecordId, session.pendingStore.record(id: targetId) != nil {
+                // The coach shows the AI which person in a saved video is the player. Nothing starts from here.
+                SelectPlayerInVideoView(
+                    store: session.pendingStore,
+                    recordId: targetId,
+                    onClose: { selectingTargetRecordId = nil }
+                )
             } else if let recordingId = session.lastFinishedRecordingId, session.pendingStore.record(id: recordingId) != nil {
                 AssessmentSummaryView(
                     store: session.pendingStore,
@@ -89,7 +98,8 @@ struct RootView: View {
                     onViewPendingUploads: { showPendingUploads = true },
                     onConfirmPlayerTracked: { answer in
                         Task { await session.confirmPlayerTracked(answer) }
-                    }
+                    },
+                    onSelectPlayerInVideo: { selectingTargetRecordId = recordingId }
                 )
             } else if videoFirst.isActive, let importedId = videoFirst.importedRecordId,
                       session.pendingStore.record(id: importedId) != nil {
@@ -117,7 +127,8 @@ struct RootView: View {
                             session.clearFinishedRecording()
                             coachWantsToRecord = false
                         },
-                        onViewPendingUploads: { showPendingUploads = true }
+                        onViewPendingUploads: { showPendingUploads = true },
+                        onSelectPlayerInVideo: { selectingTargetRecordId = importedId }
                     )
                 }
             } else if !coachWantsToRecord {

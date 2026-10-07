@@ -104,6 +104,10 @@ public struct PendingAssessmentRecord: Codable, Identifiable, Equatable {
     /// durable storage before the coach confirms, but it is NOT uploaded, retried or counted as pending until
     /// this is set. nil for camera recordings (they upload as soon as they are finalized, as before).
     public var coachSavedAt: Date?
+    /// The coach's confirmed choice(s) of which person in the video is the player (SELECT PLAYER IN VIDEO). A
+    /// temporary tracking identity for this video, stored locally only; nil until the coach has chosen. Optional,
+    /// so older index files decode unchanged and no database or server schema is involved.
+    public var targetSelections: [VideoTargetSelection]?
 
     public init(
         id: String,

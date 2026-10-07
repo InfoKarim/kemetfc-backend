@@ -25,6 +25,7 @@ struct ImportedVideoReviewView: View {
     let onRetryUpload: () -> Void
     let onDone: () -> Void
     let onViewPendingUploads: () -> Void
+    var onSelectPlayerInVideo: (() -> Void)? = nil
 
     private var record: PendingAssessmentRecord? { store.record(id: recordId) }
 
@@ -94,6 +95,7 @@ struct ImportedVideoReviewView: View {
             VStack(spacing: 14) {
                 details(record, facts)
                 row("Video upload", VideoFirstAssessmentModel.uploadLabel(upload))
+                row("Player in video", record.targetSelections?.isEmpty == false ? "SELECTED" : "NOT SELECTED YET")
                 row("AI analysis", ImportedVideoReviewModel.analysisLabel)
                 if let lastError = record.lastError, record.uploadState != .uploaded {
                     Text(lastError).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -109,6 +111,11 @@ struct ImportedVideoReviewView: View {
             Spacer()
 
             VStack(spacing: 12) {
+                if let onSelectPlayerInVideo {
+                    Button("SELECT PLAYER IN VIDEO", action: onSelectPlayerInVideo)
+                        .buttonStyle(.borderedProminent)
+                        .frame(maxWidth: .infinity)
+                }
                 if record.isRetryable {
                     Button("Retry Upload", action: onRetryUpload)
                         .buttonStyle(.borderedProminent)

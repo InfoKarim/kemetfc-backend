@@ -25,6 +25,8 @@ struct AssessmentSummaryView: View {
     let onDone: () -> Void
     let onViewPendingUploads: () -> Void
     let onConfirmPlayerTracked: (String) -> Void
+    /// SELECT PLAYER IN VIDEO for the video-first flow (nil in the classic flow, which does not show it).
+    var onSelectPlayerInVideo: (() -> Void)? = nil
 
     // BUG FIX (found during recording-fix verification): this dialog used to live on
     // AssessmentCameraView, triggered synchronously by the Stop button — but
@@ -78,7 +80,8 @@ struct AssessmentSummaryView: View {
         if videoFirst.isActive {
             VideoFirstReviewView(
                 store: store, mode: videoFirst, recordId: recordId,
-                onRetryUpload: onRetryUpload, onDone: onDone, onViewPendingUploads: onViewPendingUploads
+                onRetryUpload: onRetryUpload, onDone: onDone, onViewPendingUploads: onViewPendingUploads,
+                onSelectPlayerInVideo: onSelectPlayerInVideo
             )
         } else {
             classicContent(for: record)

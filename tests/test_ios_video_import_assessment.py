@@ -152,8 +152,9 @@ def test_the_real_importer_copies_hashes_measures_saves_cancels_and_survives_a_r
         (fx / "not_a_video.mov").write_bytes(os.urandom(5000))
         (fx / "empty.mov").write_bytes(b"")
         # the store needs RecordingMeasurement from the (unchanged) recording-integrity file
+        target = re.search(r"// BEGIN VideoTargetModel\n(.*?)// END VideoTargetModel", (IOS / "VideoTarget/VideoTargetModel.swift").read_text(), re.S).group(1)
         sources = [(IOS / "Networking/PendingAssessmentStore.swift").read_text(), (IOS / "Capture/RecordingIntegrity.swift").read_text(),
-                   MODEL, SERVICE]
+                   "import CoreGraphics\nimport Foundation\n" + target, MODEL, SERVICE]
         harness = (ROOT / "tests/ios/video_import_files_harness.swift").read_text()
         run = compile_and_run(sources, harness, env={"FIXTURES": str(fx)}, name="import_files")
     assert run.returncode == 0 and "ALL CHECKS PASSED" in run.stdout, run.stdout + run.stderr
