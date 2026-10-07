@@ -34,6 +34,7 @@ BLOCKED_SOURCES = {
 
 _ID = re.compile(r"^AP-[0-9a-f]{16}$")
 _REF = re.compile(r"^(CR|AC)-[0-9a-f]{16}$")
+_VIDEO = re.compile(r"^AV-[0-9a-f]{16}$")
 
 
 class ConsentError(ValueError):
@@ -60,6 +61,11 @@ def consent_ref(raw_consent_id: str, salt: bytes) -> str:
 
 def coach_ref(raw_user_id: str, salt: bytes) -> str:
     return anonymize(raw_user_id, salt, "AC")
+
+
+def video_ref(raw_video_id: str, salt: bytes) -> str:
+    """Pseudonym of a registered video id (the dataset's `video_id` for real data)."""
+    return anonymize(raw_video_id, salt, "AV")
 
 
 def _parse(value) -> datetime | None:
@@ -104,6 +110,8 @@ def eligibility_problems(meta: dict, now: datetime | None = None, withdrawn_refs
         if consent.get("kind") != SYNTHETIC_CONSENT_KIND:
             problems.append("SYNTHETIC_EXAMPLE_MUST_DECLARE_SYNTHETIC_CONSENT_KIND")
     elif source in REAL_SOURCES:
+        if not _VIDEO.match(str(meta.get("video_id", ""))):
+            problems.append("VIDEO_ID_NOT_A_REGISTRY_PSEUDONYM")
         if consent.get("kind") != GUARDIAN_CONSENT_KIND:
             problems.append("NO_GUARDIAN_ML_TRAINING_CONSENT")
         else:

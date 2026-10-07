@@ -8,12 +8,13 @@ Raw videos never enter a dataset or Git: an example holds numbers (normalized po
 import hashlib
 import json
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 
 from app.ml1 import consent as consent_rules
+from app.ml1 import registry_adapter
 from app.ml1.config import ANGLE_SCALE, ANGLES, DATASET_FORMAT, KEYPOINTS, MOTION, SCHEMA_VERSION, SPLITS, SYNTHETIC_SOURCE, WINDOW
 
 ARRAYS = ("keypoints", "keypoint_mask", "angles", "angle_mask", "motion", "motion_mask", "t")
@@ -197,14 +198,18 @@ def validate_arrays(arrays: dict, *, window: dict | None = None) -> None:
         raise ExampleValidationError("an angle is outside any plausible range")
 
 
-def validate_meta(meta: dict, *, now: datetime | None = None, withdrawn_refs: set[str] | None = None) -> None:
+def validate_meta(meta: dict, *, now: datetime | None = None, withdrawn_refs: set[str] | None = None, registry=None) -> None:
+    """Shape and consent checks. For REAL data the consent claim inside `meta` is not evidence: the trusted registry
+    must confirm it now (and a missing or unreachable registry is a refusal)."""
     for key in ("example_id", "anonymous_player_id", "assessment_id", "video_id", "drill_type", "target", "window",
                 "ball_interaction", "labels", "model_confidence", "consent", "provenance"):
         if key not in meta:
             raise ExampleValidationError(f"missing field {key}")
-    problems = consent_rules.eligibility_problems(meta, now, withdrawn_refs)
+    when = (now or datetime.now(timezone.utc)).replace(tzinfo=None)
+    problems = consent_rules.eligibility_problems(meta, when, withdrawn_refs)
+    problems += registry_adapter.registry_problems(meta, registry, when)
     if problems:
-        raise consent_rules.ConsentError(f"example {meta['example_id']} is not eligible for learning: {', '.join(problems)}")
+        raise consent_rules.ConsentError(f"example {meta['example_id']} is not eligible for learning: {', '.join(sorted(set(problems)))}")
 
 
 # ---- identity-safety audit (independent of how the example was made) -----------------------------------------------------------
@@ -243,23 +248,29 @@ def fingerprint(examples: list[tuple[dict, dict]]) -> str:
 
 
 def build_dataset(examples: list[tuple[dict, dict]], *, version: str, now: datetime | None = None,
-                  withdrawn_refs: set[str] | None = None) -> dict:
+                  withdrawn_refs: set[str] | None = None, registry=None) -> dict:
     """Validate every example and refuse the whole dataset if any is ineligible or invalid. A dataset is either all
-    real (consented) or all synthetic, never mixed."""
+    real (consented, confirmed by the trusted registry) or all synthetic (each PROVEN to be the generator's output),
+    never mixed."""
+    from app.ml1 import synthetic
     if not examples:
         raise DatasetError("a dataset needs at least one example")
     ids = [m["example_id"] for m, _ in examples]
     if len(set(ids)) != len(ids):
         raise DatasetError("duplicate example ids")
     sources = {m["provenance"]["source"] for m, _ in examples}
-    synthetic = SYNTHETIC_SOURCE in sources
-    if synthetic and len(sources) > 1:
+    synthetic_only = SYNTHETIC_SOURCE in sources
+    if synthetic_only and len(sources) > 1:
         raise DatasetError("a dataset must be entirely synthetic or entirely real; synthetic fixtures may not be mixed with real examples")
     for meta, arrays in examples:
-        validate_meta(meta, now=now, withdrawn_refs=withdrawn_refs)
+        validate_meta(meta, now=now, withdrawn_refs=withdrawn_refs, registry=registry)
+        if synthetic_only:
+            proof = synthetic.verify_synthetic(meta, arrays)
+            if proof:
+                raise consent_rules.ConsentError(f"example {meta['example_id']} claims to be synthetic but is not: {', '.join(proof)}")
         validate_arrays(arrays)
     return {"format": DATASET_FORMAT, "schema_version": SCHEMA_VERSION, "version": version, "fingerprint": fingerprint(examples),
-            "synthetic_only": synthetic, "examples": examples, "keypoints": KEYPOINTS, "angles": ANGLES, "motion": MOTION}
+            "synthetic_only": synthetic_only, "examples": examples, "keypoints": KEYPOINTS, "angles": ANGLES, "motion": MOTION}
 
 
 def save_dataset(directory: Path, dataset: dict) -> Path:
@@ -272,7 +283,7 @@ def save_dataset(directory: Path, dataset: dict) -> Path:
     return directory
 
 
-def load_dataset(directory: Path, *, now: datetime | None = None, withdrawn_refs: set[str] | None = None) -> dict:
+def load_dataset(directory: Path, *, now: datetime | None = None, withdrawn_refs: set[str] | None = None, registry=None) -> dict:
     """Load and RE-VERIFY: the fingerprint must match and every example must still be eligible (a consent may have
     been withdrawn or may have expired since it was saved)."""
     directory = Path(directory)
@@ -281,7 +292,7 @@ def load_dataset(directory: Path, *, now: datetime | None = None, withdrawn_refs
     examples = [(m, {name: store[f"{m['example_id']}::{name}"] for name in ARRAYS}) for m in manifest["examples"]]
     if fingerprint(examples) != manifest["fingerprint"]:
         raise DatasetError("the dataset fingerprint does not match its contents: it was changed after it was built")
-    return build_dataset(examples, version=manifest["version"], now=now, withdrawn_refs=withdrawn_refs)
+    return build_dataset(examples, version=manifest["version"], now=now, withdrawn_refs=withdrawn_refs, registry=registry)
 
 
 # ---- splits without leakage ------------------------------------------------------------------------------------------------------

@@ -14,6 +14,7 @@ import torch
 
 from app.ml1.config import APPROVAL_GATES, MODEL_ARCHITECTURE
 from app.ml1.consent import _REF
+from app.ml1.registry_adapter import REGISTRY_NOT_CONFIGURED
 from app.ml1.model import PoseTemporalCNN
 
 
@@ -56,6 +57,10 @@ def save_candidate(root: Path, name: str, model: PoseTemporalCNN, *, report: dic
     (directory / "report.json").write_text(json.dumps(report, indent=1, sort_keys=True, default=str))
     card = {"name": name, "version": version, "status": "CANDIDATE", "data_origin": "SYNTHETIC" if report["dataset"]["synthetic_only"] else "REAL_CONSENTED",
             "released": False, "weights_sha256": sha, "approvable": not report["dataset"]["synthetic_only"],
+            "report_sha256": hashlib.sha256((directory / "report.json").read_bytes()).hexdigest(),
+            "claims": ["reconstructs deliberately hidden joints better than a per-joint mean-pose baseline on held-out player/video groups"],
+            "not_validated_for": ["dribbling skill or technique", "drill quality or suitability", "player assessment or ranking",
+                                  "injury, medical or psychological conclusions", "any use on children without a fresh human review"],
             "note": "a candidate: not approved, not released, not deployed"}
     (directory / "card.json").write_text(json.dumps(card, indent=1, sort_keys=True))
     return directory
@@ -95,12 +100,33 @@ def registry_entry(directory: Path) -> dict:
             "notes": f"{card['data_origin']} - {card['note']}"}
 
 
-def approval_problems(directory: Path) -> list[str]:
-    report = json.loads((Path(directory) / "report.json").read_text())
-    card = json.loads((Path(directory) / "card.json").read_text())
+def approval_problems(directory: Path, *, registry=None, now: datetime | None = None) -> list[str]:
+    """Why this candidate may not be approved (or released) now. Recomputes what it can instead of trusting files: the
+    weights and the report must still match the hashes recorded when they were written, and for real data the trusted
+    registry must confirm, today, that every consent behind the training data is still valid."""
+    directory = Path(directory)
+    report = json.loads((directory / "report.json").read_text())
+    card = json.loads((directory / "card.json").read_text())
     problems = []
+    if hashlib.sha256((directory / "report.json").read_bytes()).hexdigest() != card.get("report_sha256"):
+        problems.append("REPORT_CHANGED_AFTER_TRAINING")
+    if report.get("weights_sha256") != card.get("weights_sha256"):
+        problems.append("REPORT_AND_CARD_DISAGREE_ON_WEIGHTS")
+    else:
+        try:
+            load_model(directory)
+        except RegistryError as exc:
+            if "invalidated" not in str(exc):
+                problems.append("WEIGHTS_DO_NOT_MATCH_THE_RECORDED_HASH")
     if report["dataset"]["synthetic_only"] or card["data_origin"] != "REAL_CONSENTED":
         problems.append("TRAINED_ON_SYNTHETIC_DATA_NEVER_APPROVABLE")
+    else:
+        refs = set(report.get("consent_audit", {}).get("consent_refs", []))
+        if registry is None:
+            problems.append(REGISTRY_NOT_CONFIGURED)
+        else:
+            current = registry.verify_consent_refs(refs, (now or datetime.now(timezone.utc)).replace(tzinfo=None))
+            problems += [f"CONSENT_NO_LONGER_VALID:{p}" for p in current]
     if not report.get("consent_audit", {}).get("passed"):
         problems.append("CONSENT_AUDIT_NOT_PASSED")
     if not report.get("leakage_check", {}).get("passed"):
@@ -114,19 +140,19 @@ def approval_problems(directory: Path) -> list[str]:
         problems.append("DOES_NOT_BEAT_THE_BASELINE")
     if ev.get("classification") and ev["classification"].get("test_macro_f1", 0) < APPROVAL_GATES["min_macro_f1_if_classifier"]:
         problems.append("CLASSIFIER_BELOW_MINIMUM")
-    if (Path(directory) / "invalidated.json").exists():
+    if (directory / "invalidated.json").exists():
         problems.append("MODEL_INVALIDATED")
     return problems
 
 
-def approve_candidate(directory: Path, *, approver_ref: str, reason: str, now: datetime | None = None) -> dict:
+def approve_candidate(directory: Path, *, approver_ref: str, reason: str, now: datetime | None = None, registry=None) -> dict:
     """A named human approves a candidate. Refuses for synthetic training data, a failed gate or an anonymous approver."""
     directory = Path(directory)
     if not _REF.match(str(approver_ref)) or not approver_ref.startswith("AC-"):
         raise RegistryError("approval needs a named human approver reference (AC-...)")
     if not reason or len(reason.strip()) < 10:
         raise RegistryError("approval needs a written reason")
-    problems = approval_problems(directory)
+    problems = approval_problems(directory, registry=registry, now=now)
     if problems:
         raise RegistryError("candidate cannot be approved: " + ", ".join(problems))
     card = json.loads((directory / "card.json").read_text())
@@ -138,12 +164,12 @@ def approve_candidate(directory: Path, *, approver_ref: str, reason: str, now: d
     return approval
 
 
-def release_marker(directory: Path, *, releaser_ref: str, now: datetime | None = None) -> dict:
+def release_marker(directory: Path, *, releaser_ref: str, now: datetime | None = None, registry=None) -> dict:
     """Records the human decision to release. It deploys nothing; deployment is outside this module."""
     directory = Path(directory)
     if not (directory / "approval.json").exists():
         raise RegistryError("a model must be approved by a human before it can be released")
-    if approval_problems(directory):
+    if approval_problems(directory, registry=registry, now=now):
         raise RegistryError("the candidate no longer passes its approval gates")
     if not _REF.match(str(releaser_ref)) or not releaser_ref.startswith("AC-"):
         raise RegistryError("release needs a named human reference (AC-...)")

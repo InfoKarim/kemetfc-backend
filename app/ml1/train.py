@@ -7,6 +7,7 @@ report says why. Every run is deterministic on CPU for a given dataset, split an
 """
 import hashlib
 import json
+import os
 import random
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +23,18 @@ from app.ml1.model import PoseTemporalCNN, to_tensors
 
 class TrainingRefused(ValueError):
     pass
+
+
+class TrainingDisabled(TrainingRefused):
+    pass
+
+
+TRAINING_ENV = "KEMET_ML_TRAINING_ENABLED"
+
+
+def training_enabled() -> bool:
+    """Training is OFF unless a human switches it on for that process. Every gate runs first; this is the last door."""
+    return os.environ.get(TRAINING_ENV) == "1"
 
 
 def set_determinism(seed: int) -> None:
@@ -127,7 +140,8 @@ def classification_metrics(model: PoseTemporalCNN, examples: list[tuple[dict, di
 
 
 def train_candidate(dataset: dict, splits: dict[str, list[int]], *, root: Path, name: str, requested_by_ref: str,
-                    config: dict | None = None, now: datetime | None = None, withdrawn_refs: set[str] | None = None) -> Path:
+                    config: dict | None = None, now: datetime | None = None, withdrawn_refs: set[str] | None = None,
+                    registry=None) -> Path:
     """Train ONE candidate on the train split. `requested_by_ref` is the named human who asked for this run; training is
     never started by an upload or by a review (see workflow.py)."""
     cfg = {**TRAINING, **(config or {})}
@@ -135,10 +149,12 @@ def train_candidate(dataset: dict, splits: dict[str, list[int]], *, root: Path, 
         raise TrainingRefused("training must be requested by a named human (AC-... reference)")
     ds.check_no_leakage(dataset, splits)
     # the consent gate again, at training time
-    ds.build_dataset(dataset["examples"], version=dataset["version"], now=now, withdrawn_refs=withdrawn_refs)
+    ds.build_dataset(dataset["examples"], version=dataset["version"], now=now, withdrawn_refs=withdrawn_refs, registry=registry)
     for need in ("train", "val", "test"):
         if not splits.get(need):
             raise TrainingRefused(f"the {need} split is empty")
+    if not training_enabled():
+        raise TrainingDisabled(f"training is switched off; a human must set {TRAINING_ENV}=1 for this process to run it")
     set_determinism(cfg["seed"])
     ex = dataset["examples"]
     train_ex, val_ex, test_ex = ([ex[i] for i in splits[s]] for s in ("train", "val", "test"))

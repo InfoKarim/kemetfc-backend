@@ -7,3 +7,9 @@ __pycache__
 uploads/
 analysis/results/
 htmlcov/
+
+datasets/
+models_ml1/
+learning_engine_state/
+*.npz
+*.sqlite3

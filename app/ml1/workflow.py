@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.ml1 import consent as consent_rules
-from app.ml1 import registry, train
+from app.ml1 import registry as registry_module
+from app.ml1 import registry_adapter, train
 
 EXAMPLE_STATES = ("ANALYSED", "COACH_REVIEWED", "APPROVED_EXAMPLE", "IN_DATASET_VERSION", "REJECTED")
 
@@ -94,13 +95,14 @@ class LearningWorkflow:
         self._states[video_id] = event
 
     def approve_example(self, video_id: str, approver_ref: str, meta: dict, *, now: datetime | None = None,
-                        withdrawn_refs: set[str] | None = None) -> None:
+                        withdrawn_refs: set[str] | None = None, registry=None) -> None:
         _human(approver_ref)
         if self._states.get(video_id) != "COACH_REVIEWED":
             raise WorkflowError("an example needs a coach review before it can be approved for training")
-        problems = consent_rules.eligibility_problems(meta, now, withdrawn_refs)
+        when = (now or datetime.now(timezone.utc)).replace(tzinfo=None)
+        problems = consent_rules.eligibility_problems(meta, when, withdrawn_refs) + registry_adapter.registry_problems(meta, registry, when)
         if problems:
-            raise WorkflowError("the example is not eligible for learning: " + ", ".join(problems))
+            raise WorkflowError("the example is not eligible for learning: " + ", ".join(sorted(set(problems))))
         self._append("APPROVED_EXAMPLE", approver_ref, {"video_id": video_id, "example_id": meta["example_id"]}, now)
         self._states[video_id] = "APPROVED_EXAMPLE"
 
@@ -128,26 +130,26 @@ class LearningWorkflow:
         return sorted(r for r, v in self._requests.items() if not v["used"])
 
     def train_from_request(self, request_id: str, dataset: dict, splits: dict, *, root: Path, name: str, config: dict | None = None,
-                           now: datetime | None = None, withdrawn_refs: set[str] | None = None) -> Path:
+                           now: datetime | None = None, withdrawn_refs: set[str] | None = None, registry=None) -> Path:
         req = self._requests.get(request_id)
         if req is None or req["used"]:
             raise WorkflowError("training needs a single-use request made by a named human")
         if req["dataset_version"] != dataset["version"]:
             raise WorkflowError("the request was for a different dataset version")
         directory = train.train_candidate(dataset, splits, root=root, name=name, requested_by_ref=req["requested_by_ref"], config=config,
-                                          now=now, withdrawn_refs=withdrawn_refs)
+                                          now=now, withdrawn_refs=withdrawn_refs, registry=registry)
         self._append("CANDIDATE_TRAINED", req["requested_by_ref"], {"request_id": request_id, "model": f"{name}/{directory.name}"}, now)
         req["used"] = True
         return directory
 
-    def approve_model(self, model_dir: Path, approver_ref: str, reason: str, now: datetime | None = None) -> dict:
+    def approve_model(self, model_dir: Path, approver_ref: str, reason: str, now: datetime | None = None, registry=None) -> dict:
         _human(approver_ref)
-        approval = registry.approve_candidate(model_dir, approver_ref=approver_ref, reason=reason, now=now)
+        approval = registry_module.approve_candidate(model_dir, approver_ref=approver_ref, reason=reason, now=now, registry=registry)
         self._append("MODEL_APPROVED", approver_ref, {"model": f"{Path(model_dir).parent.name}/{Path(model_dir).name}"}, now)
         return approval
 
-    def release_model(self, model_dir: Path, releaser_ref: str, now: datetime | None = None) -> dict:
+    def release_model(self, model_dir: Path, releaser_ref: str, now: datetime | None = None, registry=None) -> dict:
         _human(releaser_ref)
-        marker = registry.release_marker(model_dir, releaser_ref=releaser_ref, now=now)
+        marker = registry_module.release_marker(model_dir, releaser_ref=releaser_ref, now=now, registry=registry)
         self._append("MODEL_RELEASE_RECORDED", releaser_ref, {"model": f"{Path(model_dir).parent.name}/{Path(model_dir).name}", "deployed": False}, now)
         return marker

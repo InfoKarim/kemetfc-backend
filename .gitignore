@@ -28,3 +28,8 @@ output/
 datasets/
 models_ml1/
 *.npz
+
+# learning engine private research state: never committed
+learning_engine_state/
+*.sqlite3
+learning_engine/state/

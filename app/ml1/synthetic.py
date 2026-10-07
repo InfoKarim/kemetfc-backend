@@ -4,6 +4,7 @@ These are generated stick-figure sequences with made-up players, videos and dril
 real movement and not evidence of anything about football. A model trained on them can validate that the plumbing
 works and can NEVER be approved (registry.approval_problems). Nothing here is, or imitates, a real child.
 """
+import hashlib
 import math
 
 import numpy as np
@@ -80,8 +81,33 @@ def make_arrays(rng: np.random.RandomState, drill_name: str, *, T: int = 48, hz:
             "t": t0 + np.arange(T, dtype=np.float64) / hz}
 
 
+def example_rng(seed: int, p: int, v: int, w: int) -> np.random.RandomState:
+    """Each fixture example has its own deterministic generator, so a claim "this is synthetic" can be PROVEN by
+    regenerating the example from (seed, p, v, w) and comparing every number (verify_synthetic)."""
+    return np.random.RandomState(int(hashlib.sha256(f"{seed}:{p}:{v}:{w}".encode()).hexdigest()[:8], 16))
+
+
+def verify_synthetic(meta: dict, arrays: dict) -> list[str]:
+    """Problems with a claim that an example is a synthetic fixture. Real data cannot pass: it would have to equal the
+    generator's output bit for bit."""
+    prov = meta.get("provenance", {})
+    try:
+        seed, (p, v, w) = int(prov["seed"]), [int(x) for x in prov["index"]]
+        drill = prov["drill"]
+        expected = make_arrays(example_rng(seed, p, v, w), drill, t0=w * 3.2)
+    except Exception:
+        return ["SYNTHETIC_CLAIM_NOT_PROVEN:NO_GENERATOR_RECIPE"]
+    if meta.get("example_id") != f"SYN-{p:03d}-{v}-{w:02d}" or prov.get("generator") != "app.ml1.synthetic":
+        return ["SYNTHETIC_CLAIM_NOT_PROVEN:IDS_DO_NOT_MATCH_THE_RECIPE"]
+    if meta.get("anonymous_player_id") != anonymous_player_id(f"SYNTHETIC-PLAYER-{p:03d}", SYNTHETIC_SALT):
+        return ["SYNTHETIC_CLAIM_NOT_PROVEN:PLAYER_DOES_NOT_MATCH_THE_RECIPE"]
+    for name, value in expected.items():
+        if name not in arrays or arrays[name].shape != value.shape or not np.array_equal(arrays[name], value):
+            return ["SYNTHETIC_CLAIM_NOT_PROVEN:ARRAYS_ARE_NOT_THE_GENERATORS_OUTPUT"]
+    return []
+
+
 def make_synthetic_examples(n_players: int = 8, videos_per_player: int = 2, windows_per_video: int = 6, seed: int = 7) -> list[tuple[dict, dict]]:
-    rng = np.random.RandomState(seed)
     drills = sorted(DRILLS)
     out = []
     for p in range(n_players):
@@ -100,7 +126,8 @@ def make_synthetic_examples(n_players: int = 8, videos_per_player: int = 2, wind
                     "model_confidence": {"mean_tracking_confidence": 0.85, "mean_keypoint_confidence": 0.8, "observed_fraction": 0.9},
                     "consent": {"kind": SYNTHETIC_CONSENT_KIND},
                     "provenance": {"source": SYNTHETIC_SOURCE, "synthetic": True, "generator": "app.ml1.synthetic", "seed": seed,
+                                   "index": [p, v, w], "drill": drill,
                                    "note": "generated stick figures; not a person, not football evidence"},
                 }
-                out.append((meta, make_arrays(rng, drill, t0=w * 3.2)))
+                out.append((meta, make_arrays(example_rng(seed, p, v, w), drill, t0=w * 3.2)))
     return out

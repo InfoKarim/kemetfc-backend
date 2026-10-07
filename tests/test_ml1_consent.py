@@ -10,7 +10,8 @@ from app.ml1 import consent as c
 from app.ml1 import dataset as ds
 from app.ml1 import registry, train, workflow
 from app.ml1.synthetic import make_synthetic_examples
-from tests.ml1_helpers import HUMAN, HUMAN2, NOW, SALT, real_examples, real_meta
+from tests.ml1_helpers import HUMAN, HUMAN2, NOW, SALT, real_examples, real_meta, real_pairs
+from tests.ml1_registry_fixture import make_registry
 
 
 def problems(meta, **kw):
@@ -123,36 +124,42 @@ def test_player_ids_are_pseudonymous_stable_salted_and_never_the_raw_id():
 def test_an_ineligible_example_stops_the_whole_dataset_from_being_built():
     ex = real_examples(6, 1, 1)
     ex[3][0]["consent"]["covers_all_visible_children"] = False
+    reg, _ = make_registry(real_pairs(6, 1))
     with pytest.raises(c.ConsentError, match="CONSENT_NOT_VERIFIED_FOR_EVERY_VISIBLE_CHILD"):
-        ds.build_dataset(ex, version="x", now=NOW)
+        ds.build_dataset(ex, version="x", now=NOW, registry=reg)
 
 
 def test_a_withdrawal_after_the_dataset_was_saved_blocks_loading_it(tmp_path):
     ex = real_examples(6, 1, 1)
-    d = ds.build_dataset(ex, version="x", now=NOW)
+    reg, _ = make_registry(real_pairs(6, 1))
+    d = ds.build_dataset(ex, version="x", now=NOW, registry=reg)
     ds.save_dataset(tmp_path / "d", d)
-    assert ds.load_dataset(tmp_path / "d", now=NOW)["version"] == "x"
+    assert ds.load_dataset(tmp_path / "d", now=NOW, registry=reg)["version"] == "x"
     ref = ex[0][0]["consent"]["consent_ref"]
     with pytest.raises(c.ConsentError, match="CONSENT_WITHDRAWN"):
-        ds.load_dataset(tmp_path / "d", now=NOW, withdrawn_refs={ref})
+        ds.load_dataset(tmp_path / "d", now=NOW, withdrawn_refs={ref}, registry=reg)
     with pytest.raises(c.ConsentError, match="CONSENT_EXPIRED"):
-        ds.load_dataset(tmp_path / "d", now=NOW + timedelta(days=400))
+        ds.load_dataset(tmp_path / "d", now=NOW + timedelta(days=400), registry=reg)
 
 
 def test_consent_is_checked_again_at_training_time_not_only_when_the_dataset_was_built(tmp_path):
     ex = real_examples(10, 2, 2)
-    d = ds.build_dataset(ex, version="x", now=NOW)
+    reg, _ = make_registry(real_pairs(10, 2))
+    d = ds.build_dataset(ex, version="x", now=NOW, registry=reg)
     sp = ds.split_dataset(d, seed=1)
     ref = ex[0][0]["consent"]["consent_ref"]
     with pytest.raises(c.ConsentError, match="CONSENT_WITHDRAWN"):
-        train.train_candidate(d, sp, root=tmp_path, name="m", requested_by_ref=HUMAN, now=NOW, withdrawn_refs={ref}, config={"epochs": 1})
+        train.train_candidate(d, sp, root=tmp_path, name="m", requested_by_ref=HUMAN, now=NOW, withdrawn_refs={ref}, config={"epochs": 1}, registry=reg)
     assert not list(tmp_path.glob("*"))                                       # nothing was trained or written
 
 
-def test_a_model_trained_on_data_whose_consent_is_later_withdrawn_is_invalidated_and_cannot_be_loaded(tmp_path):
+@pytest.mark.trains_models
+def test_a_model_trained_on_data_whose_consent_is_later_withdrawn_is_invalidated_and_cannot_be_loaded(tmp_path, monkeypatch):
+    monkeypatch.setenv("KEMET_ML_TRAINING_ENABLED", "1")
     ex = real_examples(10, 2, 2)
-    d = ds.build_dataset(ex, version="x", now=NOW)
-    model_dir = train.train_candidate(d, ds.split_dataset(d, seed=1), root=tmp_path, name="m", requested_by_ref=HUMAN, now=NOW, config={"epochs": 1})
+    reg, _ = make_registry(real_pairs(10, 2))
+    d = ds.build_dataset(ex, version="x", now=NOW, registry=reg)
+    model_dir = train.train_candidate(d, ds.split_dataset(d, seed=1), root=tmp_path, name="m", requested_by_ref=HUMAN, now=NOW, config={"epochs": 1}, registry=reg)
     registry.load_model(model_dir)
     hit = registry.invalidate_for_withdrawn_consent(tmp_path, {ex[0][0]["consent"]["consent_ref"]})
     assert hit == [f"m/{model_dir.name}"]
@@ -171,5 +178,5 @@ def test_the_workflow_refuses_to_approve_an_example_without_consent():
         wf.coach_review("v1", HUMAN, approved=True)
         bad = real_meta(); bad["consent"]["withdrawn_at"] = NOW.isoformat()
         with pytest.raises(workflow.WorkflowError, match="CONSENT_WITHDRAWN"):
-            wf.approve_example("v1", HUMAN2, bad, now=NOW)
+            wf.approve_example("v1", HUMAN2, bad, now=NOW, registry=make_registry([("player-1", "vid-1")])[0])
         assert wf.state_of("v1") == "COACH_REVIEWED"
