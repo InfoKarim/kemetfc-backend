@@ -36,10 +36,12 @@ def code(text: str) -> str:
 def test_the_review_and_save_rules_hold():
     model = re.search(r"// BEGIN VideoFirstAssessmentModel\n(.*?)// END VideoFirstAssessmentModel", MODEL, re.S).group(1)
     mode = re.sub(r"(?m)^import .*\n", "", MODE)
+    # the mode also remembers which video source the coach chose, a type that lives in the import model
+    import_model = re.search(r"// BEGIN VideoImportModel\n(.*?)// END VideoImportModel", (IOS / "VideoImport/VideoImportModel.swift").read_text(), re.S).group(1)
     harness = re.sub(r"(?m)^import (Combine|Foundation)\n", "", (ROOT / "tests/ios/video_first_assessment_harness.swift").read_text())
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "main.swift"
-        source.write_text("import Combine\nimport Foundation\n" + model + "\n" + mode + "\n" + harness)
+        source.write_text("import Combine\nimport Foundation\n" + model + "\n" + import_model + "\n" + mode + "\n" + harness)
         build = subprocess.run(["swiftc", "-O", "-swift-version", "5", str(source), "-o", str(Path(tmp) / "check")],
                                capture_output=True, text=True, timeout=300)
         assert build.returncode == 0, build.stderr[-2000:]
@@ -93,8 +95,10 @@ def test_the_screens_show_the_player_the_recording_was_saved_with_and_create_no_
 def test_recording_is_started_and_stopped_only_by_the_existing_root_view_calls():
     assert APP.count("await session.startAssessment(mode: .smartSoccer, speedProfile: .sport)") == 2
     assert "await session.stopAssessment()" in APP
-    for name in ("VideoFirstAssessment", "VideoFirstReviewView", "VideoFirstAssessmentMode"):
-        assert name not in APP, name                                           # RootView is untouched
+    # RootView only observes the mode (to show the video-source choice) and shows the imported-video screens; it
+    # never calls the recording-review code or the model rules directly.
+    for name in ("VideoFirstAssessmentModel", "VideoFirstReviewView"):
+        assert name not in APP, name
     assert 'onStartAssessment: { coachWantsToRecord = true }' in APP
 
 

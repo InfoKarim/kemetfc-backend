@@ -117,6 +117,9 @@ struct PendingUploadsView: View {
     private func statusLine(_ record: PendingAssessmentRecord) -> String {
         let fileExists = store.fileExistsSync(for: record)
 
+        if record.awaitingCoachSave {
+            return fileExists ? "Imported video · not saved yet, not uploaded" : "Imported video file missing"
+        }
         switch record.uploadState {
         case .recording:
             return "Recording"
@@ -147,7 +150,7 @@ struct PendingUploadsView: View {
     }
 
     private func statusBadge(_ record: PendingAssessmentRecord) -> some View {
-        Text(badgeText(for: record.uploadState))
+        Text(record.awaitingCoachSave ? "NOT SAVED" : badgeText(for: record.uploadState))
             .font(.caption2).bold()
             .padding(.horizontal, 8).padding(.vertical, 3)
             .background(badgeColor(for: record.uploadState).opacity(0.15))

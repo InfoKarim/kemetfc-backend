@@ -576,15 +576,18 @@ public final class AssessmentSessionViewModel: ObservableObject {
             let player_id: String
             let tracking_mode: String
             let gimbal_model: String?
-            let player_detector_version: String
-            let ball_detector_version: String
+            let player_detector_version: String?
+            let ball_detector_version: String?
             let ball_model_status: String
-            let pose_model_version: String
-            let tracker_algorithm_version: String
-            let framing_algorithm_version: String
+            let pose_model_version: String?
+            let tracker_algorithm_version: String?
+            let framing_algorithm_version: String?
             let ios_app_version: String?
             let client_recording_id: String
         }
+        // An imported video was never tracked live, so it reports no live-tracking model versions (the
+        // server records them as "not reported") rather than claiming ones that did not run.
+        let wasTrackedLive = !record.isImportedVideo
         struct SessionResponse: Decodable { let session_id: String }
 
         let start = Date()
@@ -595,13 +598,13 @@ public final class AssessmentSessionViewModel: ObservableObject {
                 body: CreateSessionBody(
                     player_id: record.playerId,
                     tracking_mode: mode.rawValue,
-                    gimbal_model: dockKitManager.connectedAccessory != nil ? "Insta360 Flow 2 Pro" : nil,
-                    player_detector_version: PlayerDetector.detectorVersion,
-                    ball_detector_version: ballDetector.modelIdentifier.version,
-                    ball_model_status: ballDetector.ballModelStatus,
-                    pose_model_version: PlayerDetector.poseModelVersion,
-                    tracker_algorithm_version: PlayerTracker.algorithmVersion,
-                    framing_algorithm_version: FramingCalculator.algorithmVersion,
+                    gimbal_model: wasTrackedLive && dockKitManager.connectedAccessory != nil ? "Insta360 Flow 2 Pro" : nil,
+                    player_detector_version: wasTrackedLive ? PlayerDetector.detectorVersion : nil,
+                    ball_detector_version: wasTrackedLive ? ballDetector.modelIdentifier.version : nil,
+                    ball_model_status: wasTrackedLive ? ballDetector.ballModelStatus : "missing",
+                    pose_model_version: wasTrackedLive ? PlayerDetector.poseModelVersion : nil,
+                    tracker_algorithm_version: wasTrackedLive ? PlayerTracker.algorithmVersion : nil,
+                    framing_algorithm_version: wasTrackedLive ? FramingCalculator.algorithmVersion : nil,
                     ios_app_version: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
                     client_recording_id: record.id
                 ),
@@ -893,6 +896,8 @@ public final class AssessmentSessionViewModel: ObservableObject {
         // A recording that failed its integrity check must never reach the server, whichever path
         // (auto-retry, manual Retry Upload) gets here.
         guard record.integrityFailure == nil else { return }
+        // An imported video the coach has not saved yet is never uploaded, by any path.
+        guard !record.awaitingCoachSave else { return }
         guard pendingStore.fileExistsSync(for: record) else {
             record.uploadState = .failedPermanent
             record.lastError = "Local video file is missing — cannot upload."
@@ -1075,6 +1080,16 @@ public final class AssessmentSessionViewModel: ObservableObject {
     /// record if necessary, session_id, and any available
     /// clientRecordingId relationship. Treat it as success only if the
     /// existing resource matches").
+    /// The two free-text upload fields tell the server where the video came from, without a schema change:
+    /// a camera recording keeps the values it always sent; an imported video says so.
+    private static func uploadLocationId(for record: PendingAssessmentRecord) -> String {
+        record.isImportedVideo ? "kemetfc_ios_imported_video" : "kemetfc_ios_field_capture"
+    }
+
+    private static func uploadCaptureDevice(for record: PendingAssessmentRecord) -> String {
+        record.isImportedVideo ? "iPhone (KemetFCTracker) imported video" : "iPhone (KemetFCTracker)"
+    }
+
     private func uploadVideoIdempotent(record: PendingAssessmentRecord, sessionId: String) async throws -> String {
         let stableVideoId = "VID-\(record.id)"
         let stableRecordId = "REC-\(record.id)"
@@ -1099,8 +1114,8 @@ public final class AssessmentSessionViewModel: ObservableObject {
                 videoType: "assessment_smart_tracking",
                 durationSeconds: record.durationSeconds ?? 0,
                 sessionId: sessionId,
-                locationId: "kemetfc_ios_field_capture",
-                captureDevice: "iPhone (KemetFCTracker)",
+                locationId: Self.uploadLocationId(for: record),
+                captureDevice: Self.uploadCaptureDevice(for: record),
                 resolution: record.resolution ?? "",
                 frameRateFps: record.frameRateFps ?? 0,
                 schemaVersion: "1.0",
@@ -1162,8 +1177,8 @@ public final class AssessmentSessionViewModel: ObservableObject {
             fileSizeBytes: fileSizeBytes,
             videoType: "assessment_smart_tracking",
             durationSeconds: record.durationSeconds ?? 0,
-            locationId: "kemetfc_ios_field_capture",
-            captureDevice: "iPhone (KemetFCTracker)",
+            locationId: Self.uploadLocationId(for: record),
+            captureDevice: Self.uploadCaptureDevice(for: record),
             resolution: record.resolution ?? "",
             frameRateFps: record.frameRateFps ?? 0,
             schemaVersion: "1.0",
