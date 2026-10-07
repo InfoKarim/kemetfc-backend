@@ -14,16 +14,36 @@ DETECTION = {
     "device": "cpu",
 }
 
-# Target-player identity. No re-identification model exists: identity is a tracker id plus these guards.
+# Target-player identity (A1.5). The coach taps the player; this is how that selection is followed. There is no
+# face recognition and no biometric identity: only where a person is, how they move and what they look like in
+# colour. Anything that cannot be proven stays UNCERTAIN, LOST or RESELECTION_REQUIRED; it is never guessed.
 IDENTITY = {
-    "min_target_presence_seconds": 1.0,      # a track shorter than this can never be chosen as the target
-    "overlap_iou": 0.30,                     # another person this much on the target -> OVERLAP_AMBIGUOUS
-    "max_center_jump_frame_heights": 0.15,   # target centre moving further than this in one frame is implausible
-    "reacquire_gap_frames": 3,               # a gap this long (or longer) means the target was lost
-    "reacquire_probation_frames": 15,        # frames after a gap/cut that are REACQUIRED_UNVERIFIED
-    "scene_cut_hist_correlation": 0.60,      # consecutive-frame colour correlation below this = a cut
-    "appearance_break_hist_correlation": 0.50,  # target-box colour correlation between frames below this = a different picture
-    "continuity_factor": {"CONFIRMED": 1.0, "REACQUIRED_UNVERIFIED": 0.5, "OVERLAP_AMBIGUOUS": 0.5, "LOST": 0.0},
+    "diagnostic_min_presence_seconds": 1.0,  # the DIAGNOSTIC most-prominent fallback only considers tracks at least this long
+    "overlap_iou": 0.25,                    # another person this much on the target -> UNCERTAIN
+    "gate_base_frame_heights": 0.10,        # how far (in frame heights) the target may move between two frames ...
+    "gate_per_missing_frame": 0.02,         # ... plus this much for every frame it was not seen
+    "gate_max_frame_heights": 0.60,
+    "size_ratio_range": (0.5, 2.0),         # candidate box height / last target box height
+    "appearance_accept_min": 0.55,          # colour correlation needed to keep following the target
+    "appearance_recover_min": 0.85,         # ... and to take it back after UNCERTAIN / LOST
+    "score_margin": 0.12,                   # best candidate must beat the runner-up by this much, else ambiguous
+    "template_update_min": 0.70,            # the colour reference is refreshed only from confident, unambiguous frames
+    "template_update_rate": 0.05,
+    "brief_miss_seconds": 0.5,              # not seen for less than this is UNCERTAIN (and may be taken back); longer is LOST, which never recovers by itself
+    "uncertain_max_seconds": 1.0,           # UNCERTAIN longer than this -> RESELECTION_REQUIRED
+    "recover_max_seconds": 1.5,             # a target gone longer than this is never taken back automatically
+    "recover_gate_max_frame_heights": 0.25, # ... and only if they reappear this close to where they were last seen
+    "edge_margin": 0.02,                    # a target last seen touching the frame edge left the frame: no auto re-entry
+    "scene_cut_hist_correlation": 0.75,     # consecutive-frame colour correlation below this = a picture cut (calibrated on one reel: cuts 0.41-0.71, normal frames >= 0.85)
+    "appearance_break_hist_correlation": 0.50,
+    "continuity_factor": {"LOCKED": 1.0, "UNCERTAIN": 0.5, "LOST": 0.0, "RESELECTION_REQUIRED": 0.0},
+    # frame suggestion for SELECT PLAYER IN VIDEO
+    "suggest_min_people": 1,
+    "suggest_min_confidence": 0.5,
+    "suggest_min_box_height": 0.12,         # of frame height: a person this small is not a useful target
+    "suggest_min_sharpness_ratio": 0.5,     # of the clip's median sharpness
+    "suggest_min_brightness": 25.0,
+    "suggest_clear_of_cut_seconds": 0.4,
 }
 
 # Pose.

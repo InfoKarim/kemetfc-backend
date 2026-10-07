@@ -32,10 +32,10 @@ Ultralytics' own decoder: no control of rotation or timestamps, no pose associat
   if the counts differ. Frame ids are 0..N-1 with no gaps.
 * **Pose only on the target.** MediaPipe runs on the target's box (grown 15%), so a pose can never belong to
   someone else in the frame; coordinates are mapped back to the full upright frame.
-* **Identity.** One fixed tracker id. If it is lost, frames are `LOST` - a new id is never adopted. The first
-  sight, a reacquisition, a picture cut / appearance break, an implausible jump, and another person overlapping the
-  target all put frames in an uncertain state. Segments of consecutive `CONFIRMED` frames are the only place
-  anything is measured over time.
+* **Identity (changed in A1.5, see AI_TARGET_SELECTION_A15.md).** The target is the person the coach tapped, followed
+  with the LOCKED / UNCERTAIN / LOST / RESELECTION_REQUIRED states. The A1 rule "the most prominent person is the
+  target" was removed from the assessment path and survives only as a labelled diagnostic fallback. Measurements over
+  time use only unbroken LOCKED runs.
 * **A landmark is used only if** visibility and presence >= 0.5, it is inside the frame, and inside the target box.
   Never filled in.
 * **Plausibility.** A model can fit a whole body to a face close-up and report visibility 1.0. A pose whose box is

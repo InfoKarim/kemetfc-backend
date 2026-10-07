@@ -12,7 +12,7 @@ print("per-frame file sha256 equal:", hashlib.sha256("\n".join(fa).encode()).hex
 differences = [i for i, (x, y) in enumerate(zip(fa, fb)) if x != y]
 print("differing frames:", len(differences), differences[:10])
 ha, hb = (json.load(open(p / "a1_analysis.json")) for p in (a, b))
-for key in ("summary", "windows", "not_measurable_intervals", "tracks", "target_selection"):
+for key in ("summary", "windows", "not_measurable_intervals", "detector_tracks", "target_selection"):
     print(key, "equal:", ha[key] == hb[key])
 print("per_frame_file sha256:", ha["per_frame_file"]["sha256"], hb["per_frame_file"]["sha256"])
 sys.exit(0 if not differences and len(fa) == len(fb) else 1)

@@ -46,8 +46,7 @@ def _walk(value, path=""):
         yield path, value
 
 
-def validate(frames: list[dict], expected_timestamps: list[float] | None, target_id: int | None,
-             windows: list[dict] | None = None) -> list[dict]:
+def validate(frames: list[dict], expected_timestamps: list[float] | None, windows: list[dict] | None = None) -> list[dict]:
     checks = []
 
     def record(name, problems):
@@ -67,9 +66,33 @@ def validate(frames: list[dict], expected_timestamps: list[float] | None, target
         flagged = [p for p in f["persons"] if p["is_target"]]
         if len(flagged) > 1 or (f["target"] is None) != (len(flagged) == 0):
             problems.append(f["frame_index"])
-        if f["target"] is not None and f["target"]["track_id"] != target_id:
-            problems.append(f["frame_index"])
-    record("one fixed target id; never two targets in a frame; never another id", problems)
+    record("never two targets in a frame; a target box exists exactly when a person is flagged", problems)
+
+    problems = []
+    for f in frames:
+        state = f["identity"]["state"]
+        if state not in ("LOCKED", "UNCERTAIN", "LOST", "RESELECTION_REQUIRED", "NOT_SELECTED"):
+            problems.append((f["frame_index"], "unknown identity state"))
+        if state != "LOCKED":
+            if f["target"] is not None and state in ("LOST", "RESELECTION_REQUIRED", "UNCERTAIN", "NOT_SELECTED"):
+                problems.append((f["frame_index"], "a target box is reported while identity is " + state))
+            if f["pose"]["landmarks"] is not None:
+                problems.append((f["frame_index"], "landmarks exist while identity is " + state))
+            if any(a["state"] == "MEASURED" for a in f["angles"].values()):
+                problems.append((f["frame_index"], "an angle is measured while identity is " + state))
+            if f["pose"]["quality"]["status"] != "NOT_DETECTED":
+                problems.append((f["frame_index"], "pose analysed while identity is " + state))
+    record("player-specific analysis exists only on LOCKED frames", problems)
+
+    problems = []
+    previous = None
+    for f in frames:
+        state = f["identity"]["state"]
+        if (previous == "RESELECTION_REQUIRED" and state == "LOCKED" and f["identity"].get("direction") != "BACKWARD"
+                and f["identity"]["reason"] != "COACH_SELECTED"):
+            problems.append((f["frame_index"], "recovered from RESELECTION_REQUIRED without a new coach selection"))
+        previous = state
+    record("nothing recovers from RESELECTION_REQUIRED except a new coach selection", problems)
 
     problems = []
     for f in frames:
@@ -95,7 +118,7 @@ def validate(frames: list[dict], expected_timestamps: list[float] | None, target
         for name, entry in f["angles"].items():
             kind, needed = ANGLE_DEFINITIONS[name]
             if entry["state"] == "MEASURED":
-                if entry["value"] is None or f["identity"]["state"] != "CONFIRMED" or marks is None \
+                if entry["value"] is None or f["identity"]["state"] != "LOCKED" or marks is None \
                         or not all(marks[n]["usable"] for n in needed):
                     problems.append((f["frame_index"], name, "measured without usable landmarks or identity"))
                     continue
@@ -120,7 +143,7 @@ def validate(frames: list[dict], expected_timestamps: list[float] | None, target
     for f in frames:
         if f["pose"]["quality"]["status"] not in POSE_STATES:
             problems.append((f["frame_index"], "unknown pose status"))
-        if f["identity"]["state"] != "CONFIRMED":
+        if f["identity"]["state"] != "LOCKED":
             mp = f["motion_proxy"]
             if mp["speed_proxy_frame_heights_per_s"]["state"] == "MEASURED" or \
                     mp["acceleration_proxy_frame_heights_per_s2"]["state"] == "MEASURED" or \
@@ -131,7 +154,7 @@ def validate(frames: list[dict], expected_timestamps: list[float] | None, target
     problems = []
     for f in frames:
         seg = f["identity"]["segment"]
-        if (f["identity"]["state"] == "CONFIRMED") != (seg is not None):
+        if (f["identity"]["state"] == "LOCKED") != (seg is not None):
             problems.append((f["frame_index"], "segment id mismatch"))
     segment_frames = {}
     for f in frames:

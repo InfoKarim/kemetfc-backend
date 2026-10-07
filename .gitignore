@@ -20,3 +20,6 @@ analysis/results/
 # and generated Info.plist are build output, not source.
 ios/KemetFCTracker/KemetFCTracker.xcodeproj/
 ios/KemetFCTracker/Sources/Info.plist
+
+# local AI analysis output (debug frames, previews, stress-test artifacts): never committed
+output/

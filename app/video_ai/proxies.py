@@ -73,8 +73,8 @@ def per_frame_proxies(frames: list[dict], aspect_ratio: float) -> list[dict]:
 
     reason_for_frame = [None] * count
     for i, f in enumerate(frames):
-        if f["state"] != "CONFIRMED":
-            reason_for_frame[i] = "IDENTITY_NOT_CONFIRMED"
+        if f["state"] != "LOCKED":
+            reason_for_frame[i] = "IDENTITY_NOT_LOCKED"
         elif f.get("center") is None:
             reason_for_frame[i] = "NO_TARGET_BOX"
         else:
@@ -127,10 +127,10 @@ def per_frame_proxies(frames: list[dict], aspect_ratio: float) -> list[dict]:
 
     # angular velocity per joint angle, only over runs of consecutive frames in which that angle was measured
     for name in DERIVED_ANGLES:
-        measured = [(frames[i]["state"] == "CONFIRMED" and frames[i]["angles"].get(name) is not None)
+        measured = [(frames[i]["state"] == "LOCKED" and frames[i]["angles"].get(name) is not None)
                     for i in range(count)]
         for i in range(count):
-            why = "IDENTITY_NOT_CONFIRMED" if frames[i]["state"] != "CONFIRMED" else "ANGLE_NOT_MEASURABLE"
+            why = "IDENTITY_NOT_LOCKED" if frames[i]["state"] != "LOCKED" else "ANGLE_NOT_MEASURABLE"
             if not measured[i]:
                 out[i]["angular_velocity_deg_per_s"][name] = _empty_proxy(why)
         for start, end in _runs_of_true(measured):
@@ -171,7 +171,7 @@ def _band_peak(times: np.ndarray, values: np.ndarray):
 
 def window_proxies(frames: list[dict], fps: float) -> list[dict]:
     """Cadence proxy and left/right asymmetry over fixed windows. A window is measurable only if every frame in it
-    is CONFIRMED in one identity segment and at least cadence_min_usable_fraction of its frames have the angle."""
+    is LOCKED in one identity segment and at least cadence_min_usable_fraction of its frames have the angle."""
     if not frames:
         return []
     span, hop = PROXY["cadence_window_seconds"], PROXY["cadence_hop_seconds"]
@@ -188,12 +188,12 @@ def window_proxies(frames: list[dict], fps: float) -> list[dict]:
                  "label": LABEL, "definition_version": PROXY_DEFINITION_VERSION}
         results.append(entry)
         t += hop
-        whole_window_ok = (len(idx) > 0 and all(frames[i]["state"] == "CONFIRMED" for i in idx)
+        whole_window_ok = (len(idx) > 0 and all(frames[i]["state"] == "LOCKED" for i in idx)
                            and len({frames[i]["segment"] for i in idx}) == 1)
         for key in ("left_knee_dominant_frequency_hz", "right_knee_dominant_frequency_hz"):
-            entry[key] = _empty_proxy("IDENTITY_NOT_CONFIRMED_THROUGHOUT_WINDOW")
-        entry["knee_angle_asymmetry_mean_abs_deg"] = _empty_proxy("IDENTITY_NOT_CONFIRMED_THROUGHOUT_WINDOW")
-        entry["knee_range_asymmetry_ratio"] = _empty_proxy("IDENTITY_NOT_CONFIRMED_THROUGHOUT_WINDOW")
+            entry[key] = _empty_proxy("IDENTITY_NOT_LOCKED_THROUGHOUT_WINDOW")
+        entry["knee_angle_asymmetry_mean_abs_deg"] = _empty_proxy("IDENTITY_NOT_LOCKED_THROUGHOUT_WINDOW")
+        entry["knee_range_asymmetry_ratio"] = _empty_proxy("IDENTITY_NOT_LOCKED_THROUGHOUT_WINDOW")
         if not whole_window_ok:
             continue
         for side in ("left", "right"):

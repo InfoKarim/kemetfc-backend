@@ -120,67 +120,46 @@ def test_good_requires_enough_mean_visibility_not_just_usable_flags():
     assert geometry.pose_quality(marks, overlap=False, touches_edge=False)["status"] == "PARTIAL"
 
 
-# ---- identity -------------------------------------------------------------------------------------------------
+# ---- identity (A1.5) lives in tests/test_video_ai_target_selection.py -----------------------------------------------
 
 def det(track, x, conf=0.9, w=0.2, y=0.4, h=0.3):
     return {"track_id": track, "confidence": conf, "bbox_norm": [x, y, x + w, y + h]}
 
 
-def test_the_dominant_track_is_chosen_and_short_tracks_are_not_eligible():
+def test_the_most_prominent_person_helper_is_diagnostic_only_and_never_a_verified_identity():
+    from app.video_ai import identity, target_selection
     frames = [[det(1, 0.1), det(2, 0.5, w=0.05, h=0.1)] for _ in range(120)] + [[det(3, 0.3, w=0.5, h=0.6)]] * 10
-    target, tracks, method = identity.select_target(frames, 60.0)
-    assert target == 1 and method == "dominant_track_offline"
-    assert tracks[3]["seconds_present"] < IDENTITY["min_target_presence_seconds"]
-    assert identity.select_target([[det(None, 0.1)]] * 5, 60.0)[0] is None
+    frame_index, detection_index, tracks = identity.select_most_prominent(frames, 60.0)
+    assert frames[frame_index][detection_index]["track_id"] == 1                  # the long, large track, not the brief one
+    assert tracks[3]["seconds_present"] < 1.0
+    assert identity.select_most_prominent([[det(None, 0.1)]] * 5, 60.0) is None
+    assert target_selection.SOURCE_DIAGNOSTIC_MOST_PROMINENT not in target_selection.IDENTITY_VERIFIED_SOURCES
+    assert target_selection.SOURCE_SYNTHETIC_TEST_TAP not in target_selection.IDENTITY_VERIFIED_SOURCES
 
 
-def test_the_target_id_is_never_switched_when_it_is_lost_and_a_new_id_appears_nearby():
-    frames = [[det(1, 0.30)]] * 20 + [[]] * 5 + [[det(9, 0.30)]] * 20 + [[det(1, 0.30)]] * 40
-    result = identity.assess_identity(frames, 1, [False] * len(frames), 0.5625)
-    assert [r["state"] for r in result[20:25]] == ["LOST"] * 5
-    assert all(r["state"] == "LOST" and r["target"] is None for r in result[25:45])        # id 9 is NOT adopted
-    assert all(r["target"]["track_id"] == 1 for r in result if r["target"])
+def test_a_player_assessment_run_without_a_coach_selection_refuses_instead_of_picking_the_biggest_person():
+    import pytest
+    from app.video_ai import pipeline, run
+    with pytest.raises(pipeline.NoTargetSelected):
+        run.run_a1("nowhere.mp4", "nowhere", "R", "P", None)
+    with pytest.raises(pipeline.NoTargetSelected):
+        run.run_a1("nowhere.mp4", "nowhere", "R", "P", [])
 
 
-def test_first_sight_and_reacquisition_are_unverified_for_a_probation_period():
-    frames = [[]] * 3 + [[det(1, 0.3)]] * 40 + [[]] * 5 + [[det(1, 0.3)]] * 40
-    result = identity.assess_identity(frames, 1, [False] * len(frames), 0.5625)
-    n = IDENTITY["reacquire_probation_frames"]
-    assert [r["state"] for r in result[3:3 + n]] == ["REACQUIRED_UNVERIFIED"] * n
-    assert result[3 + n]["state"] == "CONFIRMED"
-    assert result[3]["reason"] == "TARGET_FIRST_SEEN" and result[48]["reason"] == "REACQUIRED_AFTER_GAP"
-    assert result[48 + n]["state"] == "CONFIRMED"
-    assert result[3 + n]["segment"] != result[48 + n]["segment"]
-
-
-def test_an_overlapping_person_makes_the_frame_ambiguous_and_breaks_the_segment():
-    frames = [[det(1, 0.3)]] * 30 + [[det(1, 0.3), det(2, 0.32)]] * 5 + [[det(1, 0.3)]] * 10
-    result = identity.assess_identity(frames, 1, [False] * len(frames), 0.5625)
-    assert all(r["state"] == "OVERLAP_AMBIGUOUS" for r in result[30:35])
-    assert result[29]["segment"] != result[35]["segment"] or result[35]["segment"] is None
-
-
-def test_a_scene_cut_and_an_implausible_jump_start_a_probation_even_if_the_id_persists():
-    frames = [[det(1, 0.3)]] * 60
-    cuts = [False] * 60
-    cuts[30] = True
-    result = identity.assess_identity(frames, 1, cuts, 0.5625)
-    assert result[30]["state"] == "REACQUIRED_UNVERIFIED" and result[30]["reason"] == "AFTER_SCENE_CUT"
-    jumpy = [[det(1, 0.1)]] * 30 + [[det(1, 0.7)]] * 30
-    result = identity.assess_identity(jumpy, 1, [False] * 60, 0.5625)
-    assert result[30]["reason"] == "IMPLAUSIBLE_JUMP" and result[30]["state"] == "REACQUIRED_UNVERIFIED"
-
-
-def test_tracking_confidence_is_scaled_by_identity_trust():
-    assert identity.tracking_confidence(0.8, "CONFIRMED") == 0.8
-    assert identity.tracking_confidence(0.8, "REACQUIRED_UNVERIFIED") == 0.4
-    assert identity.tracking_confidence(0.8, "LOST") == 0.0
-    assert identity.tracking_confidence(None, "CONFIRMED") == 0.0
+def test_a_tap_that_is_not_on_a_person_stops_the_run_it_does_not_guess():
+    import pytest
+    from app.video_ai import pipeline, target_selection
+    records = [{"detections": [{"bbox_norm": [0.1, 0.1, 0.3, 0.6], "confidence": 0.9}]}]
+    off = target_selection.TargetSelection("T", target_selection.SOURCE_COACH_TAP, 0, 0.0, tap_norm=(0.8, 0.8))
+    with pytest.raises(pipeline.SelectionNotOnAPerson):
+        pipeline.resolve_selections(records, [off])
+    on = target_selection.TargetSelection("T", target_selection.SOURCE_COACH_TAP, 0, 0.0, tap_norm=(0.2, 0.3))
+    assert pipeline.resolve_selections(records, [on]) == [(0, 0)]
 
 
 # ---- proxies --------------------------------------------------------------------------------------------------
 
-def series(n, fps=60.0, state="CONFIRMED", segment=1, center=lambda t: (0.5, 0.5), angle=None):
+def series(n, fps=60.0, state="LOCKED", segment=1, center=lambda t: (0.5, 0.5), angle=None):
     out = []
     for i in range(n):
         t = i / fps
@@ -213,7 +192,7 @@ def test_derivatives_never_span_an_identity_gap_or_a_segment_change():
         frames[i]["segment"] = 2
     out = proxies.per_frame_proxies(frames, 0.5625)
     assert all(out[i]["speed_proxy_frame_heights_per_s"]["state"] == "NOT_MEASURABLE" for i in range(50, 60))
-    assert out[50]["speed_proxy_frame_heights_per_s"]["reason"] == "IDENTITY_NOT_CONFIRMED"
+    assert out[50]["speed_proxy_frame_heights_per_s"]["reason"] == "IDENTITY_NOT_LOCKED"
     # nothing near the gap borrows frames from the other side: edges of each run are not measured
     assert out[49]["speed_proxy_frame_heights_per_s"]["reason"] == "RUN_EDGE"
     assert out[60]["speed_proxy_frame_heights_per_s"]["reason"] == "RUN_EDGE"
@@ -249,7 +228,7 @@ def test_cadence_proxy_finds_a_known_oscillation_and_refuses_noise_or_gaps():
     gappy = series(600, angle=lambda t: 140 + 25 * math.sin(2 * math.pi * 1.5 * t))
     gappy[100]["state"], gappy[100]["segment"] = "LOST", None
     assert proxies.window_proxies(gappy, 60.0)[0]["left_knee_dominant_frequency_hz"]["reason"] \
-        == "IDENTITY_NOT_CONFIRMED_THROUGHOUT_WINDOW"
+        == "IDENTITY_NOT_LOCKED_THROUGHOUT_WINDOW"
 
 
 def test_asymmetry_proxy_is_the_left_right_difference():
@@ -267,7 +246,7 @@ def good_frame(index, t, marks=None):
     marks = marks if marks is not None else standing()
     angles = geometry.compute_angles(marks, True)
     return {"frame_index": index, "timestamp_s": t, "persons": [{"is_target": True, "track_id": 1}],
-            "target": {"track_id": 1}, "identity": {"state": "CONFIRMED", "reason": None, "segment": 1},
+            "target": {"bbox_norm": [0.38, 0.2, 0.62, 0.85]}, "identity": {"state": "LOCKED", "reason": None, "segment": 1, "epoch": 1},
             "pose": {"quality": geometry.pose_quality(marks, overlap=False, touches_edge=False), "landmarks": marks},
             "angles": angles,
             "motion_proxy": {"speed_proxy_frame_heights_per_s": {"state": "NOT_MEASURABLE"},
@@ -275,8 +254,8 @@ def good_frame(index, t, marks=None):
                              "angular_velocity_deg_per_s": {}}}
 
 
-def failing(frames, target=1):
-    return [c["check"] for c in validate.validate(frames, None, target) if not c["passed"]]
+def failing(frames):
+    return [c["check"] for c in validate.validate(frames, None) if not c["passed"]]
 
 
 def test_the_validator_accepts_a_clean_analysis():
@@ -293,8 +272,19 @@ def test_the_validator_catches_each_promise_being_broken():
     bad[2]["frame_index"] = 1
     assert any("unique" in c for c in failing(bad))
     bad = copy.deepcopy(frames)
-    bad[2]["target"]["track_id"] = 7
-    assert any("target id" in c for c in failing(bad))
+    bad[2]["persons"] = [{"is_target": True}, {"is_target": True}]                   # two targets in one frame
+    assert any("two targets" in c for c in failing(bad))
+    bad = copy.deepcopy(frames)
+    bad[2]["identity"]["state"] = "LOST"                                              # analysed while identity is LOST
+    assert any("only on LOCKED" in c for c in failing(bad))
+    bad = copy.deepcopy(frames)
+    bad[1]["identity"]["state"] = "RESELECTION_REQUIRED"
+    bad[2]["identity"]["state"], bad[2]["identity"]["reason"] = "LOCKED", None        # recovered without a coach tap
+    for k in (1,):
+        bad[k]["target"], bad[k]["persons"] = None, []
+        bad[k]["pose"] = {"quality": geometry.pose_quality(None, overlap=False, touches_edge=False), "landmarks": None}
+        bad[k]["angles"] = geometry.compute_angles(None, False, "IDENTITY_RESELECTION_REQUIRED")
+    assert any("nothing recovers" in c for c in failing(bad))
     bad = copy.deepcopy(frames)
     bad[1]["pose"]["landmarks"]["left_knee"]["x_norm"] = 1.4                       # usable but off-frame
     assert any("landmark coordinates" in c for c in failing(bad))

@@ -11,8 +11,8 @@ import cv2
 
 from app.video_ai.geometry import SKELETON
 
-STATE_COLOR = {"CONFIRMED": (80, 200, 80), "REACQUIRED_UNVERIFIED": (0, 215, 255), "OVERLAP_AMBIGUOUS": (0, 140, 255),
-               "LOST": (60, 60, 230)}
+STATE_COLOR = {"LOCKED": (80, 200, 80), "UNCERTAIN": (0, 215, 255), "LOST": (60, 60, 230),
+               "RESELECTION_REQUIRED": (200, 90, 200), "NOT_SELECTED": (150, 150, 150)}
 POSE_COLOR = {"GOOD": (80, 200, 80), "PARTIAL": (0, 215, 255), "LOW_CONFIDENCE": (0, 140, 255),
               "OCCLUDED": (200, 90, 200), "NOT_DETECTED": (150, 150, 150)}
 
@@ -34,7 +34,7 @@ def annotate(frame, record, scale):
         x1, y1, x2, y2 = target["bbox_norm"]
         color = STATE_COLOR[state]
         cv2.rectangle(out, (int(x1 * ow), int(y1 * oh)), (int(x2 * ow), int(y2 * oh)), color, 3)
-        cv2.putText(out, f"TARGET id {target['track_id']}", (int(x1 * ow) + 4, int(y1 * oh) + 18),
+        cv2.putText(out, "TARGET", (int(x1 * ow) + 4, int(y1 * oh) + 18),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
     marks = record["pose"]["landmarks"]
     if marks:
