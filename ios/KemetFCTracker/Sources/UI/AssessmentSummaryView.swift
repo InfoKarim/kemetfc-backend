@@ -37,6 +37,10 @@ struct AssessmentSummaryView: View {
     // recording via .onAppear.
     @State private var showPlayerTrackedConfirmation = false
 
+    /// True only when the coach came in through the video-first PLAYER ASSESSMENT. RECORD ASSESSMENT
+    /// clears it, so the classic summary below is shown exactly as before for that route.
+    @ObservedObject private var videoFirst = VideoFirstAssessmentMode.shared
+
     private var record: PendingAssessmentRecord? { store.record(id: recordId) }
 
     var body: some View {
@@ -69,7 +73,19 @@ struct AssessmentSummaryView: View {
         }
     }
 
+    @ViewBuilder
     private func content(for record: PendingAssessmentRecord) -> some View {
+        if videoFirst.isActive {
+            VideoFirstReviewView(
+                store: store, mode: videoFirst, recordId: recordId,
+                onRetryUpload: onRetryUpload, onDone: onDone, onViewPendingUploads: onViewPendingUploads
+            )
+        } else {
+            classicContent(for: record)
+        }
+    }
+
+    private func classicContent(for record: PendingAssessmentRecord) -> some View {
         VStack(spacing: 24) {
             VStack(spacing: 4) {
                 Text("KEMET FC").font(.caption).bold().foregroundStyle(.secondary)
