@@ -23,3 +23,8 @@ ios/KemetFCTracker/Sources/Info.plist
 
 # local AI analysis output (debug frames, previews, stress-test artifacts): never committed
 output/
+
+# ML-1 private training data and trained models: never committed
+datasets/
+models_ml1/
+*.npz

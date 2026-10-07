@@ -1,0 +1,5 @@
+# Neural-network training for ML-1 (app/ml1). Not needed to run the application or its API; install only on a
+# training machine:  pip install -r requirements-ml.txt
+-r requirements.txt
+numpy>=1.26
+torch>=2.5,<3
