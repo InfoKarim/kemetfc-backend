@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DB_NAME = "learning_engine.sqlite3"
 LOCK_NAME = "run.lock"
 
@@ -33,11 +33,39 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS sources_fingerprint_canonical ON sources(text_fingerprint) WHERE duplicate_of IS NULL AND text_fingerprint IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS media_files (
+  media_id TEXT PRIMARY KEY, sha256 TEXT NOT NULL UNIQUE, local_path TEXT NOT NULL, display_name TEXT, size_bytes INTEGER NOT NULL,
+  rights_basis TEXT NOT NULL CHECK (rights_basis IN ('OWN_RECORDING','OWNER_PERMISSION','LICENSED')),
+  rights_grantor TEXT NOT NULL, rights_note TEXT, rights_recorded_by TEXT NOT NULL, rights_recorded_at TEXT NOT NULL,
+  analysis_allowed INTEGER NOT NULL DEFAULT 1 CHECK (analysis_allowed = 1),
+  training_allowed INTEGER NOT NULL DEFAULT 0 CHECK (training_allowed = 0),
+  minors_visible TEXT NOT NULL CHECK (minors_visible IN ('no','yes','unknown')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','rights_withdrawn')), status_at TEXT, status_reason TEXT,
+  registered_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS analyses (
+  analysis_id TEXT PRIMARY KEY, media_id TEXT NOT NULL REFERENCES media_files(media_id), version INTEGER NOT NULL,
+  analyzer_name TEXT NOT NULL, analyzer_version TEXT NOT NULL, method TEXT NOT NULL, is_fixture INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL CHECK (status IN ('knowledge_extracted','no_knowledge','failed')),
+  started_at TEXT NOT NULL, finished_at TEXT NOT NULL, input_sha256 TEXT NOT NULL, duration_s REAL,
+  rejected_notes INTEGER NOT NULL DEFAULT 0, uncertainties_json TEXT NOT NULL DEFAULT '[]', limits_json TEXT NOT NULL DEFAULT '[]',
+  UNIQUE (media_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_notes (
+  note_id INTEGER PRIMARY KEY AUTOINCREMENT, analysis_id TEXT NOT NULL REFERENCES analyses(analysis_id),
+  kind TEXT NOT NULL CHECK (kind IN ('observation','step','equipment','common_error','safety_note','measure_hint')),
+  text TEXT NOT NULL, t_start_s REAL NOT NULL, t_end_s REAL NOT NULL, confidence REAL,
+  origin TEXT NOT NULL DEFAULT 'ANALYZER_EXTRACTED' CHECK (origin = 'ANALYZER_EXTRACTED'),
+  CHECK (t_start_s >= 0 AND t_end_s >= t_start_s)
+);
+
 CREATE TABLE IF NOT EXISTS review_items (
   item_id TEXT PRIMARY KEY,
-  origin TEXT NOT NULL CHECK (origin IN ('YOUTUBE_SOURCE','AI_GENERAL_DRAFT')),
+  origin TEXT NOT NULL CHECK (origin IN ('YOUTUBE_SOURCE','AI_GENERAL_DRAFT','LOCAL_MEDIA')),
   source_video_id TEXT REFERENCES sources(video_id) ON DELETE SET NULL,
-  stage TEXT NOT NULL CHECK (stage IN ('discovered','metadata_only','ai_draft','coach_reviewed')),
+  stage TEXT NOT NULL CHECK (stage IN ('discovered','metadata_only','ai_draft','analysis_draft','coach_reviewed')),
   review_status TEXT NOT NULL DEFAULT 'pending' CHECK (review_status IN ('pending','approved','rejected')),
   current_version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -45,13 +73,15 @@ CREATE TABLE IF NOT EXISTS review_items (
   source_state TEXT NOT NULL DEFAULT 'present' CHECK (source_state IN ('present','removed')),
   approval_state TEXT NOT NULL DEFAULT 'current' CHECK (approval_state IN ('current','review_required')),
   source_issue TEXT, source_issue_at TEXT, source_removed_at TEXT,
-  CHECK ((origin = 'YOUTUBE_SOURCE' AND (source_video_id IS NOT NULL OR source_state = 'removed')) OR (origin = 'AI_GENERAL_DRAFT' AND source_video_id IS NULL))
+  media_id TEXT REFERENCES media_files(media_id), analysis_id TEXT, supersedes_item_id TEXT,
+  CHECK ((origin = 'YOUTUBE_SOURCE' AND (source_video_id IS NOT NULL OR source_state = 'removed')) OR (origin = 'AI_GENERAL_DRAFT' AND source_video_id IS NULL AND media_id IS NULL)
+         OR (origin = 'LOCAL_MEDIA' AND source_video_id IS NULL AND media_id IS NOT NULL))
 );
 
 CREATE TABLE IF NOT EXISTS item_versions (
   item_id TEXT NOT NULL REFERENCES review_items(item_id), version INTEGER NOT NULL,
   content_json TEXT NOT NULL, content_hash TEXT NOT NULL,
-  author_kind TEXT NOT NULL CHECK (author_kind IN ('NONE','AI_DRAFT','COACH')), author_ref TEXT,
+  author_kind TEXT NOT NULL CHECK (author_kind IN ('NONE','AI_DRAFT','ANALYZER','COACH')), author_ref TEXT,
   created_at TEXT NOT NULL, PRIMARY KEY (item_id, version)
 );
 
@@ -78,6 +108,37 @@ CREATE TABLE IF NOT EXISTS ledger (
   CHECK (status <> 'released' OR sent_at IS NULL)
 );
 CREATE INDEX IF NOT EXISTS ledger_day ON ledger(day, kind, provider);
+
+CREATE TABLE IF NOT EXISTS work_queue (
+  queue_id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK (kind IN ('YOUTUBE_METADATA','LOCAL_MEDIA')),
+  video_id TEXT REFERENCES sources(video_id) ON DELETE SET NULL, media_id TEXT REFERENCES media_files(media_id),
+  state TEXT NOT NULL CHECK (state IN ('discovered','awaiting_media','ready','processing','draft_ready','skipped','failed')),
+  reason TEXT, attempts INTEGER NOT NULL DEFAULT 0, last_error TEXT, next_attempt_at TEXT,
+  lease_owner TEXT, lease_until TEXT, analysis_id TEXT,
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL, state_changed_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS work_queue_video ON work_queue(video_id) WHERE video_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS work_queue_media ON work_queue(media_id) WHERE media_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS recommendations (
+  rec_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, player_ref TEXT NOT NULL, is_fixture INTEGER NOT NULL DEFAULT 0,
+  request_json TEXT NOT NULL, item_id TEXT, item_version INTEGER, content_hash TEXT, personalization TEXT NOT NULL,
+  reason_json TEXT NOT NULL, evidence_json TEXT NOT NULL, measure_json TEXT, missing_json TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('awaiting_coach_review','coach_approved_for_use','coach_rejected','needs_rereview','not_generated')),
+  status_reason TEXT, status_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS recommendation_events (
+  event_id INTEGER PRIMARY KEY AUTOINCREMENT, rec_id TEXT NOT NULL REFERENCES recommendations(rec_id), at TEXT NOT NULL, event TEXT NOT NULL,
+  actor TEXT NOT NULL, detail TEXT
+);
+
+CREATE TABLE IF NOT EXISTS outcomes (
+  outcome_id INTEGER PRIMARY KEY AUTOINCREMENT, rec_id TEXT REFERENCES recommendations(rec_id), player_ref TEXT NOT NULL, item_id TEXT,
+  is_fixture INTEGER NOT NULL DEFAULT 0, session_date TEXT NOT NULL, executed INTEGER NOT NULL CHECK (executed IN (0,1)),
+  measure_name TEXT, unit TEXT, before_value REAL, after_value REAL, method_before TEXT, method_after TEXT,
+  conditions TEXT, coach_notes TEXT, recorded_by TEXT NOT NULL, auth_mode TEXT NOT NULL, recorded_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS runs (
   day TEXT NOT NULL, mode TEXT NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL,
@@ -170,7 +231,7 @@ class ResearchStore:
         if version is not None and version > SCHEMA_VERSION:
             raise StoreError("this database was made by a newer version of the engine")
         while version is not None and version < SCHEMA_VERSION:
-            {1: self._upgrade_from_1, 2: self._upgrade_2_to_3, 3: self._upgrade_3_to_4}[version]()
+            {1: self._upgrade_from_1, 2: self._upgrade_2_to_3, 3: self._upgrade_3_to_4, 4: self._upgrade_4_to_5}[version]()
             version = self.schema_version()
         if version is not None:
             return
@@ -299,6 +360,43 @@ class ResearchStore:
         except BaseException:
             self.db.execute("ROLLBACK")
             raise
+
+    def _upgrade_4_to_5(self) -> None:
+        """Version 4 -> 5: the knowledge library, work queue, recommendations and outcomes (new tables), and review_items / item_versions
+        rebuilt so that an item can come from local media and a version can be authored by an analyzer. Every old row is copied unchanged;
+        nothing is deleted. One transaction; any broken reference rolls everything back."""
+        self.db.execute("PRAGMA foreign_keys=OFF")
+        self.db.execute("PRAGMA legacy_alter_table=ON")
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute("ALTER TABLE review_items RENAME TO review_items_v4")
+                self.db.execute("ALTER TABLE item_versions RENAME TO item_versions_v4")
+                for statement in _statements(SCHEMA):
+                    head = statement.lstrip()
+                    if head.startswith("CREATE TABLE IF NOT EXISTS") and not head.startswith(("CREATE TABLE IF NOT EXISTS meta", "CREATE TABLE IF NOT EXISTS sources",
+                                                                                              "CREATE TABLE IF NOT EXISTS reviews", "CREATE TABLE IF NOT EXISTS audit",
+                                                                                              "CREATE TABLE IF NOT EXISTS ledger", "CREATE TABLE IF NOT EXISTS runs")):
+                        self.db.execute(statement)
+                    elif head.startswith("CREATE UNIQUE INDEX IF NOT EXISTS work_queue"):
+                        self.db.execute(statement)
+                self.db.execute("""INSERT INTO review_items(item_id,origin,source_video_id,stage,review_status,current_version,created_at,updated_at,published,
+                                                            source_state,approval_state,source_issue,source_issue_at,source_removed_at)
+                    SELECT item_id,origin,source_video_id,stage,review_status,current_version,created_at,updated_at,published,
+                           source_state,approval_state,source_issue,source_issue_at,source_removed_at FROM review_items_v4""")
+                self.db.execute("INSERT INTO item_versions SELECT * FROM item_versions_v4")
+                self.db.execute("DROP TABLE item_versions_v4")
+                self.db.execute("DROP TABLE review_items_v4")
+                self.db.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
+                if self.db.execute("PRAGMA foreign_key_check").fetchall():
+                    raise StoreError("the upgrade would leave broken references; it was not applied")
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+        finally:
+            self.db.execute("PRAGMA legacy_alter_table=OFF")
+            self.db.execute("PRAGMA foreign_keys=ON")
 
     @contextmanager
     def transaction(self):

@@ -266,7 +266,7 @@ def test_a_version_1_database_is_upgraded_without_losing_a_possibly_sent_request
     db.commit()
     store.close()
     upgraded = ResearchStore(tmp_path / "s")
-    assert upgraded.schema_version() == 4
+    assert upgraded.schema_version() == 5
     assert [r["status"] for r in rows(upgraded)] == ["uncertain", "settled"]            # the old "released" 504 is counted again, conservatively
     refs = [r["sql"] for r in upgraded.db.execute("select sql from sqlite_master where sql like '%review_items_v1%'")]
     assert refs == [] and upgraded.db.execute("pragma foreign_key_check").fetchall() == []   # no table was left pointing at a dropped name

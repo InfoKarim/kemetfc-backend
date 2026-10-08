@@ -13,6 +13,9 @@ from datetime import datetime
 from pathlib import Path
 
 from learning_engine.ai import AIDrafts, ProviderDisabled
+from learning_engine.analyzer import NoAnalyzer
+from learning_engine.pipeline import run_pass
+from learning_engine.recommend import refresh as refresh_recommendations
 from learning_engine.budget import Budget, BudgetExceeded, Pacer, engine_day, quota_day
 from learning_engine.config import Config, paid_blockers, youtube_blockers
 from learning_engine.discovery import Discovery
@@ -37,7 +40,7 @@ def _write_private(path: Path, text: str) -> None:
 
 def run_daily(config: Config, state_dir: Path, *, env: dict | None = None, now: datetime | None = None, day: str | None = None,
               transport=None, ai_transport=None, fixture: bool = False, sleep=time.sleep, wall_clock=time.time,
-              repo_root: Path | None = None) -> dict:
+              repo_root: Path | None = None, analyzer=None) -> dict:
     env = os.environ if env is None else env
     now = now or utc_now()
     clock = lambda: now
@@ -57,7 +60,7 @@ def run_daily(config: Config, state_dir: Path, *, env: dict | None = None, now: 
             db.execute("INSERT INTO runs(day,mode,attempt,status,started_at,checkpoint_json) VALUES (?,?,?,?,?,?) "
                        "ON CONFLICT(day,mode) DO UPDATE SET attempt=excluded.attempt, status='RUNNING', started_at=excluded.started_at",
                        (day, mode, attempt, "RUNNING", iso(now), json.dumps(checkpoint)))
-        report = _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_transport, fixture, sleep, wall_clock, clock, Path(state_dir))
+        report = _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_transport, fixture, sleep, wall_clock, clock, Path(state_dir), analyzer)
         with store.transaction() as db:
             db.execute("UPDATE runs SET status=?, finished_at=?, checkpoint_json=?, report_json=? WHERE day=? AND mode=?",
                        (report["status"], iso(clock()), json.dumps({} if report["status"] == "SUCCESS" else checkpoint),      # a finished day keeps no video ids
@@ -72,7 +75,7 @@ def run_daily(config: Config, state_dir: Path, *, env: dict | None = None, now: 
         store.close()
 
 
-def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_transport, fixture, sleep, wall_clock, clock, state_dir) -> dict:
+def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_transport, fixture, sleep, wall_clock, clock, state_dir, analyzer=None) -> dict:
     budget = Budget(store, config, clock)
     stale = budget.recover_stale()
     errors: list[dict] = []
@@ -127,6 +130,16 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
             services["youtube"] = {"status": "ok" if channels_done == planned and not errors else "partial" if channels_done else "failed",
                                    "reasons": [], "channels_done": channels_done, "channels_planned": planned,
                                    "request_attempts_this_run": client.attempts}
+
+    # ---- local knowledge pipeline (no network, no paid service; off unless config.pipeline.enabled) ----------------------------------
+    pass_result = None
+    flagged_recs = 0
+    if config.pipeline.enabled:
+        try:
+            pass_result = run_pass(store, config.pipeline, analyzer or NoAnalyzer(), now)
+            flagged_recs = refresh_recommendations(store, now)
+        except Exception as exc:                          # type name only
+            errors.append({"where": "pipeline", "code": f"UNEXPECTED_{type(exc).__name__}"})
 
     # ---- AI drafts (every gate must be open; none is in the default configuration) -----------------------------------------
     for provider in ("openai", "anthropic"):
@@ -193,12 +206,41 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
         "cost_usd": {p: {"reserved": spend[p]["usd_reserved"], "actual_estimate_from_operator_prices": spend[p]["usd_actual"]} for p in ("openai", "anthropic")},
         "cost_note": "reserved and estimated from operator-supplied ceilings and prices: not a guarantee of any provider invoice",
         "retention": retention, "audit_chain_ok": store.verify_audit(),
+        "knowledge": _knowledge_block(store, config, pass_result, flagged_recs),
         "discovery": {"mode": config.youtube.discovery_mode, "query": config.youtube.query, "queries_sent_this_run": 1 if public_mode and channels_done else 0,
                       "future_queries_prepared_not_sent": list(config.youtube.future_queries),
                       "class": "PUBLIC_METADATA_DISCOVERY" if public_mode else "ALLOWLISTED_CHANNEL",
                       "meaning": ("public metadata found by a keyword search: not an approved channel, not a trusted source, no permission from any owner, "
                                   "nothing downloaded or analysed, nothing about the drill or its suitability for children is known") if public_mode
                       else "found inside an allowlisted channel the operator chose"},
+    }
+
+
+def _knowledge_block(store, config, res, flagged) -> dict:
+    """Keeps apart: sources found, videos actually analysed, analyses that produced knowledge, skipped sources (with reasons), drafts waiting,
+    approved knowledge, recommendations waiting and recorded session results. Totals are over the whole library; `this_run` is this pass only."""
+    db = store.db
+    one = lambda sql: db.execute(sql).fetchone()[0]       # noqa: E731
+    queue = {r["state"]: r["n"] for r in db.execute("SELECT state, COUNT(*) n FROM work_queue GROUP BY state")}
+    reasons = {r["reason"] or "": r["n"] for r in db.execute("SELECT reason, COUNT(*) n FROM work_queue WHERE state IN ('skipped','awaiting_media') GROUP BY reason")}
+    return {
+        "enabled": config.pipeline.enabled, "analyzer": "none (ANALYZER_NOT_CONFIGURED unless one is plugged in by code)" if res is None or res.blocked else "plugged in",
+        "sources_discovered": one("SELECT COUNT(*) FROM sources"),
+        "queue": {s: queue.get(s, 0) for s in ("discovered", "awaiting_media", "ready", "processing", "draft_ready", "skipped", "failed")},
+        "skipped_or_waiting_reasons": reasons,
+        "videos_analyzed": one("SELECT COUNT(DISTINCT media_id) FROM analyses WHERE status IN ('knowledge_extracted','no_knowledge')"),
+        "analyses_that_produced_knowledge": one("SELECT COUNT(*) FROM analyses WHERE status='knowledge_extracted'"),
+        "fixture_analyses": one("SELECT COUNT(*) FROM analyses WHERE is_fixture=1"),
+        "drafts_awaiting_review": one("SELECT COUNT(*) FROM review_items WHERE analysis_id IS NOT NULL AND review_status='pending'"),
+        "approved_valid_knowledge": one("SELECT COUNT(*) FROM review_items WHERE review_status='approved' AND approval_state='current'"),
+        "recommendations_awaiting_review": one("SELECT COUNT(*) FROM recommendations WHERE status='awaiting_coach_review'"),
+        "recommendations_needing_rereview": one("SELECT COUNT(*) FROM recommendations WHERE status='needs_rereview'"),
+        "session_results_recorded": one("SELECT COUNT(*) FROM outcomes"),
+        "this_run": None if res is None else {"analyzed": res.analyzed, "knowledge_extracted": res.knowledge_extracted, "no_knowledge": res.no_knowledge, "drafts_created": res.drafts_created,
+                                              "skipped": res.skipped, "failed_attempts": res.failed_attempts, "blocked": sorted(set(res.blocked)), "stopped_by": res.stopped_by,
+                                              "recommendations_flagged_needing_rereview": flagged},
+        "quota_and_cost": "YouTube quota and AI cost are in the sections above; the local pipeline uses no quota and costs nothing",
+        "note": "a source is counted as analysed only when an analyzer actually processed a rights-recorded local file; a discovered YouTube link is not knowledge",
     }
 
 
@@ -218,6 +260,13 @@ def render_markdown(r: dict) -> str:
     lines += ["", "## Calls and limits", "", f"- API calls: {r['api_calls']}", f"- limits: {r['limits']}",
               f"- cost (reserved / estimated): {r['cost_usd']} - {r['cost_note']}", "", "## Errors", ""]
     lines += [f"- {e}" for e in r["errors"]] or ["- none"]
+    k = r.get("knowledge") or {}
+    lines += ["", "## Knowledge pipeline (local)", "", f"- enabled: {k.get('enabled')}, analyzer: {k.get('analyzer')}", f"- queue: {k.get('queue')}",
+              f"- sources discovered: {k.get('sources_discovered')}; videos actually analysed: {k.get('videos_analyzed')}; analyses that produced knowledge: {k.get('analyses_that_produced_knowledge')}"
+              f" (fixture analyses: {k.get('fixture_analyses')})", f"- skipped / waiting, with reasons: {k.get('skipped_or_waiting_reasons')}",
+              f"- drafts awaiting review: {k.get('drafts_awaiting_review')}; approved valid knowledge: {k.get('approved_valid_knowledge')}",
+              f"- recommendations awaiting review: {k.get('recommendations_awaiting_review')} (needing re-review: {k.get('recommendations_needing_rereview')}); session results recorded: {k.get('session_results_recorded')}",
+              f"- this run: {k.get('this_run')}"]
     lines += ["", "## Notes", ""] + ([f"- {n}" for n in r["notes"]] or ["- none"])
     lines += ["", f"Retention: {r['retention']}", f"Audit chain intact: {r['audit_chain_ok']}", ""]
     return "\n".join(lines)

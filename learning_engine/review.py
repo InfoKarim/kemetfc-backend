@@ -21,6 +21,7 @@ it, which is NOT authentication.
 """
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -30,6 +31,7 @@ AUTH_BACKEND = "backend_user"
 AUTH_CLI = "local_cli_unauthenticated"
 ROLES = ("coach", "admin")
 CATEGORY = "dribbling"
+SKILL_TAG = re.compile(r"^[a-z][a-z0-9_]{2,31}$")
 
 
 class ReviewError(ValueError):
@@ -56,7 +58,8 @@ def content_problems(content: dict) -> list[str]:
     if not isinstance(content, dict):
         return ["CONTENT_NOT_AN_OBJECT"]
     out = []
-    allowed = {"title", "category", "steps", "equipment", "duration_minutes", "age_min", "age_max", "safety_notes", "coach_notes"}
+    allowed = {"title", "category", "steps", "equipment", "duration_minutes", "age_min", "age_max", "safety_notes", "coach_notes",
+               "objective", "skill_tags", "measure", "unverified_fields"}
     if set(content) - allowed:
         out.append("UNKNOWN_FIELDS:" + ",".join(sorted(set(content) - allowed)))
     if not isinstance(content.get("title"), str) or not 3 <= len(content["title"].strip()) <= 120:
@@ -77,6 +80,19 @@ def content_problems(content: dict) -> list[str]:
         out.append("AGE_RANGE_REQUIRED_3_TO_21")
     if not isinstance(content.get("safety_notes"), str) or len(content["safety_notes"].strip()) < 10:
         out.append("SAFETY_NOTES_REQUIRED")
+    # optional fields the recommendation engine can use; when present they must be well formed
+    if "objective" in content and not (isinstance(content["objective"], str) and 3 <= len(content["objective"].strip()) <= 300):
+        out.append("OBJECTIVE_3_TO_300_CHARACTERS")
+    tags = content.get("skill_tags")
+    if "skill_tags" in content and not (isinstance(tags, list) and 1 <= len(tags) <= 10 and all(isinstance(t, str) and SKILL_TAG.match(t) for t in tags)):
+        out.append("SKILL_TAGS_1_TO_10_LOWERCASE_NAMES_LIKE_close_control")
+    m = content.get("measure")
+    if "measure" in content and not (isinstance(m, dict) and set(m) == {"name", "unit", "direction", "how"} and all(isinstance(m[k], str) and m[k].strip() for k in m)
+                                     and m["direction"] in ("higher_is_better", "lower_is_better") and 3 <= len(m["name"]) <= 60 and len(m["unit"]) <= 20 and 10 <= len(m["how"]) <= 300):
+        out.append("MEASURE_NEEDS_NAME_UNIT_DIRECTION_AND_HOW_TO_MEASURE")
+    flags = content.get("unverified_fields")
+    if "unverified_fields" in content and not (isinstance(flags, list) and all(isinstance(f, str) for f in flags)):
+        out.append("UNVERIFIED_FIELDS_MUST_BE_A_LIST")
     return out
 
 
@@ -112,7 +128,10 @@ class ReviewService:
                                                               "discovery_class", "discovery_query")}
         last = self.store.db.execute("SELECT version, decision, reviewer_id, at, review_basis FROM reviews WHERE item_id=? ORDER BY review_id DESC LIMIT 1", (item_id,)).fetchone()
         state, approval = item["source_state"], item["approval_state"]
-        if item["origin"] != "YOUTUBE_SOURCE":
+        if item["origin"] == "LOCAL_MEDIA" or item["analysis_id"]:
+            note = ("draft made by a local analyzer from a locally registered, rights-recorded media file: the suggestion is NOT a coach decision, "
+                    "the extracted notes carry the video times that support them, and ages, duration and safety are unverified until a coach confirms them")
+        elif item["origin"] != "YOUTUBE_SOURCE":
             note = "general AI draft: unverified, not based on any source video"
         elif approval == "review_required" and state == "removed":
             note = ("the source stopped being valid and was later removed by the retention window; the earlier decision is kept in the history but is "
@@ -132,7 +151,8 @@ class ReviewService:
             note = "metadata-only source: the title says nothing proven about the drill or its suitability"
         return {"item_id": item_id, "origin": item["origin"], "stage": item["stage"], "review_status": item["review_status"],
                 "version": item["current_version"], "published": bool(item["published"]), "source": src,
-                "source_state": state, "approval_state": approval, "needs_source_review": approval == "review_required",
+                "source_state": state, "approval_state": approval, "media_id": item["media_id"], "analysis_id": item["analysis_id"], "supersedes_item_id": item["supersedes_item_id"],
+                "needs_source_review": approval == "review_required",
                 "valid_for_export": item["review_status"] == "approved" and approval == "current", "source_issue": item["source_issue"],
                 "source_issue_at": item["source_issue_at"], "source_removed_at": item["source_removed_at"],
                 "last_decision": None if last is None else dict(last),
@@ -192,13 +212,16 @@ class ReviewService:
                 problems = content_problems(content)
                 if problems:
                     raise ReviewError("the drill content is not complete: " + ", ".join(problems))
+                if content.get("unverified_fields"):
+                    raise ReviewError("the coach has not yet confirmed these analyzer suggestions: " + ", ".join(content["unverified_fields"])
+                                      + " (edit the content and remove them from unverified_fields once checked)")
                 if item["origin"] == "YOUTUBE_SOURCE" and item["source_state"] == "present":
                     src = db.execute("SELECT availability, exclusion_reason FROM sources WHERE video_id=?", (item["source_video_id"],)).fetchone()
                     if src is None or src["availability"] != "available":
                         raise ReviewError("the source is not confirmed available; it cannot be approved")
                     if not set(refs) <= set(sources_checked):
                         raise ReviewError("record the source you inspected (its link) when approving")
-            basis = ("AI_DRAFT_NO_SOURCE" if item["origin"] != "YOUTUBE_SOURCE" else
+            basis = ("LOCAL_MEDIA_ANALYSIS" if item["origin"] == "LOCAL_MEDIA" else "AI_DRAFT_NO_SOURCE" if item["origin"] != "YOUTUBE_SOURCE" else
                      "INDEPENDENT_CONTENT_SOURCE_REMOVED" if item["source_state"] == "removed" else "SOURCE_AVAILABLE_AT_DECISION")
             db.execute("INSERT INTO reviews(item_id,version,content_hash,decision,reviewer_id,auth_mode,reasons,sources_json,at,review_basis) VALUES (?,?,?,?,?,?,?,?,?,?)",
                        (item_id, version, row["content_hash"], decision, reviewer.reviewer_id, reviewer.auth_mode, reasons.strip(),

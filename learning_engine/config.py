@@ -128,6 +128,21 @@ class RetentionConfig:
 
 
 @dataclass(frozen=True)
+class PipelineConfig:
+    """The local processing queue. Everything here is a LIMIT. `analyzer` can only be "none" (ANALYZER_NOT_CONFIGURED) in this build:
+    a real analyzer is plugged in by code, never by a config string, and an external (cloud) analyzer is refused whatever is written here."""
+    enabled: bool = False
+    analyzer: str = "none"
+    max_items_per_run: int = 5
+    max_seconds_per_run: int = 600
+    max_file_mb: int = 2048
+    max_attempts: int = 3
+    backoff_base_s: int = 60
+    backoff_max_s: int = 3600
+    lease_minutes: int = 30
+
+
+@dataclass(frozen=True)
 class Config:
     mode: str = "offline"
     network_enabled: bool = False
@@ -136,10 +151,11 @@ class Config:
     providers: dict = field(default_factory=dict)
     budget: BudgetConfig = field(default_factory=BudgetConfig)
     retention: RetentionConfig = field(default_factory=RetentionConfig)
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
 
 
 def parse_config(data: dict) -> Config:
-    _only(data, {"schema", "mode", "network_enabled", "timezone", "youtube", "providers", "budget", "retention"}, "config")
+    _only(data, {"schema", "mode", "network_enabled", "timezone", "youtube", "providers", "budget", "retention", "pipeline"}, "config")
     if data.get("schema") != SCHEMA:
         raise ConfigError(f"config schema must be {SCHEMA}")
     mode = data.get("mode", "offline")
@@ -251,8 +267,21 @@ def parse_config(data: dict) -> Config:
         reports_days=_int(r.get("reports_days", 90), 7, 3650, "retention.reports_days"))
     if retention.refresh_window_days >= retention.youtube_data_days:
         raise ConfigError("retention.refresh_window_days must be shorter than retention.youtube_data_days")
+    pl = data.get("pipeline", {})
+    _only(pl, {"enabled", "analyzer", "max_items_per_run", "max_seconds_per_run", "max_file_mb", "max_attempts", "backoff_base_s", "backoff_max_s", "lease_minutes"}, "pipeline")
+    if pl.get("analyzer", "none") != "none":
+        raise ConfigError("pipeline.analyzer must be \"none\": no analyzer is built in, and one cannot be selected by a config string")
+    pipeline = PipelineConfig(
+        enabled=_bool(pl.get("enabled", False), "pipeline.enabled"), analyzer="none",
+        max_items_per_run=_int(pl.get("max_items_per_run", 5), 1, 50, "pipeline.max_items_per_run"),
+        max_seconds_per_run=_int(pl.get("max_seconds_per_run", 600), 10, 7_200, "pipeline.max_seconds_per_run"),
+        max_file_mb=_int(pl.get("max_file_mb", 2048), 1, 20_480, "pipeline.max_file_mb"),
+        max_attempts=_int(pl.get("max_attempts", 3), 1, 10, "pipeline.max_attempts"),
+        backoff_base_s=_int(pl.get("backoff_base_s", 60), 1, 86_400, "pipeline.backoff_base_s"),
+        backoff_max_s=_int(pl.get("backoff_max_s", 3600), 1, 604_800, "pipeline.backoff_max_s"),
+        lease_minutes=_int(pl.get("lease_minutes", 30), 1, 1_440, "pipeline.lease_minutes"))
     return Config(mode=mode, network_enabled=_bool(data.get("network_enabled", False), "network_enabled"), timezone=tz,
-                  youtube=yt, providers=providers, budget=budget, retention=retention)
+                  youtube=yt, providers=providers, budget=budget, retention=retention, pipeline=pipeline)
 
 
 def load_config(path: Path) -> Config:

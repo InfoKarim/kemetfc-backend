@@ -11,6 +11,8 @@ Nothing in this repository installs, loads, enables or starts any of these. They
 
 The templates are config-driven: they run whatever `discovery_mode` the config says (`allowlisted_channels` or `public_keyword_search`) and stay offline unless the config is live. A real daily schedule needs a chosen host and a separate decision to enable it; none is installed.
 
+The daily `run` also performs the local knowledge-pipeline pass (queue triage and, when an analyzer is plugged in by code, bounded analysis) if `pipeline.enabled` is true in the config; it uses no network and no paid service.
+
 Operating reality: a local schedule only runs while the computer is on (and, for launchd, the user is logged in). A closed
 laptop runs nothing; launchd does not make up a missed run, systemd with `Persistent=true` runs a missed day once. Either way
 the engine is idempotent per day and refuses to overlap, so catching up is safe.

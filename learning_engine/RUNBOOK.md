@@ -41,6 +41,32 @@ python3 tests/demo_fixture_run.py /absolute/NEW/empty/scratch/dir
 A fake transport answers instead of YouTube; channel and videos are marked `[DEMO]`; the report says `fixture_data_not_live_results`. The review and export steps go through the real
 CLI. Nothing is written outside the directory you give; nothing enters the player library or any training dataset.
 
+## Knowledge library, recommendations, results (local; see KNOWLEDGE_PIPELINE.md)
+
+```sh
+python3 -m learning_engine --config $CFG --state $STATE queue                       # every source and its state (discovered ... failed)
+python3 -m learning_engine --config $CFG --state $STATE media-register /abs/file.mp4 --rights-basis OWN_RECORDING --grantor "who allows it" --minors no --recorded-by NAME [--queue-id Q-...]
+python3 -m learning_engine --config $CFG --state $STATE pipeline-run                # one bounded pass; says ANALYZER_NOT_CONFIGURED until an analyzer is plugged in by code
+python3 -m learning_engine --config $CFG --state $STATE drafts                      # drafts waiting for review, one line each
+python3 -m learning_engine --config $CFG --state $STATE draft ITEM_ID               # timed notes / analyzer suggestion / coach decisions, apart
+python3 -m learning_engine --config $CFG --state $STATE library                     # videos knowledge was extracted from
+python3 -m learning_engine --config $CFG --state $STATE rights-withdraw MED-... --reason "..." --by NAME
+python3 -m learning_engine --config $CFG --state $STATE recommend --context player.json --requested-by NAME
+python3 -m learning_engine --config $CFG --state $STATE rec-list                    # re-checks validity every time
+python3 -m learning_engine --config $CFG --state $STATE rec-decide REC_ID --decision approve --reviewer-id NAME --reasons "..."
+python3 -m learning_engine --config $CFG --state $STATE outcome-add --player ALIAS --date 2026-10-09 --executed yes --recorded-by NAME --rec-id REC_ID --measure clean_runs_30s --unit count --before 5 --after 7 --method-before "..." --method-after "..." [--conditions "..."]
+python3 -m learning_engine --config $CFG --state $STATE outcomes
+python3 -m learning_engine --config $CFG --state $STATE dashboard --out /abs/path/coach-view.html     # read-only page, no server
+```
+
+`player.json` holds only: `player_ref` (a local alias, never a name), `age`, optional `goal_skill`, `minutes_available`, `equipment_available`, `skill_ratings`
+(`{"close_control": {"rating": 2, "scale_max": 5, "rated_by": "NAME", "rated_on": "2026-10-01"}}`), `constraints` (`avoid_equipment`, `max_items`), `health_note` (the engine
+only refers it to the coach). Unknown fields are refused. Fixture end-to-end demonstration (not a live search, not a real video analysis):
+`python3 tests/demo_knowledge_cycle.py /absolute/NEW/empty/scratch/dir`.
+
+Daily schedule: the templates in `deploy/learning_engine/` run `run`, which includes the pipeline pass when `pipeline.enabled` is true. They are not installed or enabled; a real
+daily run needs a chosen host and your separate decision.
+
 ## First live search (public keyword metadata) - prepared, NOT yet run
 
 Mode `public_keyword_search`: no channel needed (see README). The private run folder `/Users/karim/kemet-le-first-live/` (outside the repository, `0700`) holds

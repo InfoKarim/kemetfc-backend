@@ -51,7 +51,7 @@ def purge_expired(store: ResearchStore, config: Config, now: datetime) -> dict:
         for vid in stale:
             for item in db.execute("SELECT item_id FROM review_items WHERE source_video_id=?", (vid,)).fetchall():
                 item_id = item["item_id"]
-                has_work = db.execute("SELECT 1 FROM item_versions WHERE item_id=? AND author_kind='COACH' LIMIT 1", (item_id,)).fetchone() or \
+                has_work = db.execute("SELECT 1 FROM item_versions WHERE item_id=? AND author_kind IN ('COACH','ANALYZER') LIMIT 1", (item_id,)).fetchone() or \
                     db.execute("SELECT 1 FROM reviews WHERE item_id=? LIMIT 1", (item_id,)).fetchone()
                 if has_work:
                     new_id = item_id
@@ -67,6 +67,9 @@ def purge_expired(store: ResearchStore, config: Config, now: datetime) -> dict:
                     db.execute("DELETE FROM item_versions WHERE item_id=?", (item_id,))
                     db.execute("DELETE FROM review_items WHERE item_id=?", (item_id,))
                     removed["items_deleted"] += 1
+            db.execute("DELETE FROM work_queue WHERE video_id=? AND media_id IS NULL", (vid,))     # a YouTube candidate nobody attached media to: nothing to keep
+            db.execute("DELETE FROM work_queue WHERE video_id IN (SELECT video_id FROM sources WHERE duplicate_of=?) AND media_id IS NULL", (vid,))
+            db.execute("UPDATE work_queue SET video_id=NULL WHERE video_id=?", (vid,))             # with media: the local analysis stays, the YouTube identifier goes
             db.execute("DELETE FROM sources WHERE duplicate_of=?", (vid,))       # its duplicates carry the same stale text
             db.execute("DELETE FROM sources WHERE video_id=?", (vid,))
             db.execute("UPDATE sources SET fingerprint_conflict_with=NULL WHERE fingerprint_conflict_with=?", (vid,))      # no stale pointer to a deleted id

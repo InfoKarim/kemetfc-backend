@@ -36,6 +36,10 @@ and videos.list client - `discovery.py` validation, duplicates, states - `budget
   reviews it. Refresh, retention, invalidation, deduplication and the request/quota limits work as before. `future_queries` may hold later queries; this build never sends them.
   Official references used (read 2026-10-08): search.list (`channelId` is optional; 1 unit in its own bucket of 100 calls/day) and the quota page (updated 2026-10-08).
 
+## Knowledge library and recommendations
+
+See `KNOWLEDGE_PIPELINE.md`: a persistent queue, a local-media analysis interface (no analyzer built in), a library of analysed sources with timed notes, pending drafts, explainable recommendations from approved knowledge, and a results log. Real video analysis has not happened; everything tested used fixtures.
+
 ## Using it (offline first)
 
 ```sh

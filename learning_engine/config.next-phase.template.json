@@ -29,5 +29,16 @@
     "youtube_data_days": 30,
     "refresh_window_days": 3,
     "reports_days": 90
+  },
+  "pipeline": {
+    "enabled": false,
+    "analyzer": "none",
+    "max_items_per_run": 5,
+    "max_seconds_per_run": 600,
+    "max_file_mb": 2048,
+    "max_attempts": 3,
+    "backoff_base_s": 60,
+    "backoff_max_s": 3600,
+    "lease_minutes": 30
   }
 }

@@ -98,11 +98,11 @@ def test_the_state_is_private_versioned_and_separate(tmp_path):
     s = ResearchStore(tmp_path / "state")
     assert oct((tmp_path / "state").stat().st_mode & 0o777) == "0o700"
     assert oct(s.db_path.stat().st_mode & 0o777) == "0o600"
-    assert s.schema_version() == 4 and s.db_path.name == "learning_engine.sqlite3"
+    assert s.schema_version() == 5 and s.db_path.name == "learning_engine.sqlite3"
     assert s.db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     s.close()
     again = ResearchStore(tmp_path / "state")                          # reopening keeps the version and does not break
-    assert again.schema_version() == 4
+    assert again.schema_version() == 5
     again.close()
 
 

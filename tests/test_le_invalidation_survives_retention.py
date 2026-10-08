@@ -183,7 +183,7 @@ def states(tmp_path):
     from learning_engine.store import ResearchStore
     st = ResearchStore(tmp_path / "s")
     try:
-        assert st.schema_version() == 4 and st.verify_audit()
+        assert st.schema_version() == 5 and st.verify_audit()
         return {r["item_id"]: (r["source_state"], r["approval_state"], r["source_issue"]) for r in st.db.execute("select * from review_items")}
     finally:
         st.close()

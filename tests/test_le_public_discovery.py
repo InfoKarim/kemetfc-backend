@@ -201,6 +201,6 @@ def test_a_version_3_database_upgrades_and_old_sources_are_marked_as_allowlisted
     st.close()
     up = ResearchStore(tmp_path / "s")
     row = up.db.execute("select discovery_class, discovery_query from sources").fetchone()
-    assert up.schema_version() == 4 and (row[0], row[1]) == ("ALLOWLISTED_CHANNEL", None)
+    assert up.schema_version() == 5 and (row[0], row[1]) == ("ALLOWLISTED_CHANNEL", None)
     up.close()
-    assert ResearchStore(tmp_path / "s").schema_version() == 4
+    assert ResearchStore(tmp_path / "s").schema_version() == 5

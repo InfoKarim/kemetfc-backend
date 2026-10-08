@@ -151,7 +151,7 @@ def test_reopening_the_database_neither_repeats_the_upgrade_nor_changes_a_decisi
         assert (state_of(tmp_path, "SRC-a"), state_of(tmp_path, "SRC-b")) == first
         assert exported(tmp_path) == ["SRC-b"]
     st = ResearchStore(tmp_path / "s")
-    assert st.schema_version() == 4 and st.db.execute("select count(*) from audit where event='LEGACY_APPROVALS_SUSPENDED_AT_UPGRADE'").fetchone()[0] == 1
+    assert st.schema_version() == 5 and st.db.execute("select count(*) from audit where event='LEGACY_APPROVALS_SUSPENDED_AT_UPGRADE'").fetchone()[0] == 1
     st.close()
 
 
@@ -174,7 +174,7 @@ def test_a_failure_in_the_middle_of_the_upgrade_rolls_everything_back(tmp_path, 
     assert not con.execute("select name from sqlite_master where name like '%_v1'").fetchall()
     con.close()
     st = ResearchStore(path)                                                                     # and a later, healthy open still upgrades it
-    assert st.schema_version() == 4
+    assert st.schema_version() == 5
     st.close()
     assert exported(tmp_path) == []
 
@@ -197,7 +197,7 @@ def test_a_schema_2_database_still_upgrades_and_its_sent_ai_rows_still_count(tmp
     st.db.commit()
     st.close()
     up = ResearchStore(tmp_path / "s")
-    assert up.schema_version() == 4
+    assert up.schema_version() == 5
     assert up.db.execute("select approval_state from review_items").fetchone()[0] == "current"       # 2 -> 3 behaviour unchanged
     with pytest.raises(BudgetExceeded):
         Budget(up, cfg, lambda: NOW).reserve_ai("openai", 50, 100)
