@@ -15,7 +15,7 @@ from learning_engine.config import load_config
 from learning_engine.daily import render_markdown, run_daily
 from learning_engine.review import AUTH_BACKEND, AUTH_CLI, ReviewError, ReviewService, Reviewer, content_hash, content_problems
 from learning_engine.store import ResearchStore
-from tests.le_helpers import CH1, FAKE_KEY, FakeTransport, NOW, NoNetwork, Sleeps, config, err, ok, search_item, vid, video_item
+from tests.le_helpers import CH1, FAKE_KEY, FakeTransport, NOW, NoNetwork, Sleeps, config, err, iid, ok, search_item, vid, video_item
 
 ROOT = Path(__file__).resolve().parent.parent
 ENV = {"KEMET_LE_YOUTUBE_API_KEY": FAKE_KEY}
@@ -57,7 +57,7 @@ def test_the_report_has_everything_asked_for_and_is_written_as_json_and_markdown
 def test_the_report_numbers_are_the_real_counts_not_illustrations(tmp_path):
     report, t = happy(tmp_path)
     assert report["api_calls"] == {"youtube_search": 1, "youtube_other": 1, "openai": 0, "anthropic": 0} and len(t.requests) == 2
-    assert report["sources"]["new"] == 2 and report["review"] == {"pending": 2, "approved": 0, "rejected": 0}
+    assert report["sources"]["new"] == 2 and report["review"] == {"pending": 2, "approved": 0, "rejected": 0, "source_review_required": 0, "source_removed_after_retention": 0}
     assert report["tokens"]["openai"] == {"reserved": 0, "actual_reported": 0, "uncertain_calls": 0}
     assert report["quota"]["quota_day_pacific"] == "2026-10-08"
     assert report["services"]["openai"]["reasons"] == ["PROVIDER_NOT_CONFIGURED"]
@@ -137,20 +137,19 @@ def test_a_symlinked_report_file_is_refused(tmp_path):
 # ---- retention -----------------------------------------------------------------------------------------------------------------------
 def test_data_older_than_the_window_is_deleted_or_cleared_never_kept_silently(tmp_path):
     report, _ = happy(tmp_path)
+    item = iid(tmp_path / "state", 1)
     svc = ReviewService(open_store(tmp_path))
-    svc.save_content(f"SRC-{vid(1)}", GOOD, COACH)
-    svc.decide(f"SRC-{vid(1)}", 2, "approved", COACH, "Inspected the source and wrote the steps myself.", [f"https://www.youtube.com/watch?v={vid(1)}"])
+    svc.save_content(item, GOOD, COACH)
+    svc.decide(item, 2, "approved", COACH, "Inspected the source and wrote the steps myself.", [f"https://www.youtube.com/watch?v={vid(1)}"])
     svc.store.close()
     later = NOW + timedelta(days=31)
     report2 = run_daily(config(mode="offline", network_enabled=False), tmp_path / "state", env={}, now=later)
-    assert report2["retention"]["sources_deleted"] == 1 and report2["retention"]["api_fields_cleared_on_approved"] == 1
+    assert report2["retention"]["sources_deleted"] == 2 and report2["retention"]["items_kept_with_source_removed"] == 1 and report2["retention"]["items_deleted"] == 1
     s = open_store(tmp_path)
-    rows = {r["video_id"]: dict(r) for r in s.db.execute("select * from sources")}
-    assert vid(2) not in rows                                                                  # the pending one is gone
-    kept = rows[vid(1)]
-    assert kept["title"] is None and kept["published_at"] is None and kept["duration_s"] is None and kept["text_fingerprint"] is None
-    approved = ReviewService(s).get(f"SRC-{vid(1)}")
-    assert approved["review_status"] == "approved" and approved["content"]["title"] == "Cone weave dribble"            # the coach's own content stays
+    assert s.db.execute("select count(*) from sources").fetchone()[0] == 0                          # no video id, channel id, link or title survives
+    kept = ReviewService(s).get(item)
+    assert kept["review_status"] == "approved" and kept["content"]["title"] == "Cone weave dribble"                  # the coach's own content stays
+    assert kept["source"] is None and kept["source_state"] == "removed" and kept["source_removed_at"] and "removed after the retention window" in kept["note"]
     assert s.verify_audit()
     s.close()
 
@@ -193,7 +192,7 @@ def test_old_reports_are_removed_after_the_report_window(tmp_path):
 def test_pending_to_approved_records_who_when_why_which_version_and_which_source(tmp_path):
     happy(tmp_path)
     svc = ReviewService(open_store(tmp_path), clock=lambda: NOW)
-    item = f"SRC-{vid(1)}"
+    item = iid(tmp_path / "state", 1)
     assert svc.get(item)["review_status"] == "pending" and svc.get(item)["stage"] == "metadata_only"
     svc.save_content(item, GOOD, COACH)
     out = svc.decide(item, 2, "approved", COACH, "Watched the source; the steps are my own wording and safe.", [f"https://www.youtube.com/watch?v={vid(1)}"])
@@ -211,8 +210,8 @@ def test_nothing_is_approved_automatically_and_drill_steps_are_coach_content_not
     svc = ReviewService(open_store(tmp_path))
     assert [i["review_status"] for i in svc.list_items()] == ["pending", "pending"]
     with pytest.raises(ReviewError, match="not complete"):                                      # no content was ever written
-        svc.decide(f"SRC-{vid(1)}", 1, "approved", COACH, "Looks fine to me, approving it.", [f"https://www.youtube.com/watch?v={vid(1)}"])
-    assert svc.get(f"SRC-{vid(1)}")["content"] == {} and svc.get(f"SRC-{vid(1)}")["content_problems"]
+        svc.decide(iid(tmp_path / "state", 1), 1, "approved", COACH, "Looks fine to me, approving it.", [f"https://www.youtube.com/watch?v={vid(1)}"])
+    assert svc.get(iid(tmp_path / "state", 1))["content"] == {} and svc.get(iid(tmp_path / "state", 1))["content_problems"]
     assert svc.approved_content() == []
     svc.store.close()
 
@@ -229,7 +228,7 @@ def test_incomplete_or_odd_content_cannot_be_approved(tmp_path, change, expected
 def test_approving_needs_reasons_the_current_version_the_source_link_and_a_coach_or_admin(tmp_path):
     happy(tmp_path)
     svc = ReviewService(open_store(tmp_path))
-    item, link = f"SRC-{vid(1)}", f"https://www.youtube.com/watch?v={vid(1)}"
+    item, link = iid(tmp_path / "state", 1), f"https://www.youtube.com/watch?v={vid(1)}"
     svc.save_content(item, GOOD, COACH)
     with pytest.raises(ReviewError, match="written reasons"):
         svc.decide(item, 2, "approved", COACH, "ok", [link])
@@ -253,17 +252,17 @@ def test_approving_needs_reasons_the_current_version_the_source_link_and_a_coach
 def test_a_rejection_needs_reasons_but_no_complete_content(tmp_path):
     happy(tmp_path)
     svc = ReviewService(open_store(tmp_path))
-    out = svc.decide(f"SRC-{vid(2)}", 1, "rejected", COACH, "Not a dribbling drill, wrong topic for us.", [])
+    out = svc.decide(iid(tmp_path / "state", 2), 1, "rejected", COACH, "Not a dribbling drill, wrong topic for us.", [])
     assert out["review_status"] == "rejected" and out["stage"] == "coach_reviewed"
     with pytest.raises(ReviewError, match="only a pending item"):
-        svc.decide(f"SRC-{vid(2)}", 1, "approved", COACH, "Changing my mind without new content.", [])
+        svc.decide(iid(tmp_path / "state", 2), 1, "approved", COACH, "Changing my mind without new content.", [])
     svc.store.close()
 
 
 def test_any_change_to_approved_content_sends_it_back_to_review_with_a_new_version(tmp_path):
     happy(tmp_path)
     svc = ReviewService(open_store(tmp_path), clock=lambda: NOW)
-    item, link = f"SRC-{vid(1)}", f"https://www.youtube.com/watch?v={vid(1)}"
+    item, link = iid(tmp_path / "state", 1), f"https://www.youtube.com/watch?v={vid(1)}"
     svc.save_content(item, GOOD, COACH)
     svc.decide(item, 2, "approved", COACH, "Source inspected, content written and checked.", [link])
     assert len(svc.approved_content()) == 1
@@ -282,7 +281,7 @@ def test_sources_that_are_unavailable_or_excluded_cannot_be_approved(tmp_path):
     go(tmp_path, t)
     svc = ReviewService(open_store(tmp_path))
     for n in (1, 2):                                                                             # 1: made for kids -> excluded, 2: not returned -> unavailable
-        item, link = f"SRC-{vid(n)}", f"https://www.youtube.com/watch?v={vid(n)}"
+        item, link = iid(tmp_path / "state", n), f"https://www.youtube.com/watch?v={vid(n)}"
         svc.save_content(item, GOOD, COACH)
         with pytest.raises(ReviewError, match="not confirmed available"):
             svc.decide(item, 2, "approved", COACH, "Trying to approve an unusable source.", [link])
@@ -306,12 +305,12 @@ def test_the_cli_marks_reviewer_names_as_unauthenticated_and_works_end_to_end(tm
     base = ["--config", str(cfg_path), "--state", str(tmp_path / "state")]
     content = tmp_path / "content.json"; content.write_text(json.dumps(GOOD))
     assert main(base + ["list", "--status", "pending"]) == 0
-    assert main(base + ["save-content", f"SRC-{vid(1)}", "--file", str(content), "--reviewer-id", "typed-name"]) == 0
+    assert main(base + ["save-content", iid(tmp_path / "state", 1), "--file", str(content), "--reviewer-id", "typed-name"]) == 0
     assert NOTICE.split(".")[0] in capsys.readouterr().err
-    assert main(base + ["decide", f"SRC-{vid(1)}", "--version", "2", "--decision", "approved", "--reviewer-id", "typed-name",
+    assert main(base + ["decide", iid(tmp_path / "state", 1), "--version", "2", "--decision", "approved", "--reviewer-id", "typed-name",
                         "--reasons", "Source inspected and content written by me.", "--source-checked", f"https://www.youtube.com/watch?v={vid(1)}"]) == 0
     s = open_store(tmp_path)
-    assert ReviewService(s).history(f"SRC-{vid(1)}")[0]["auth_mode"] == "local_cli_unauthenticated"
+    assert ReviewService(s).history(iid(tmp_path / "state", 1))[0]["auth_mode"] == "local_cli_unauthenticated"
     s.close()
     assert main(base + ["status"]) == 0
     assert main(["--config", str(tmp_path / "missing.json"), "--state", str(tmp_path / "x"), "validate-config"]) == 2

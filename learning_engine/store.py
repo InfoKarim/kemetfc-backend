@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 DB_NAME = "learning_engine.sqlite3"
 LOCK_NAME = "run.lock"
 
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS sources (
   video_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, url TEXT NOT NULL,
   title TEXT, published_at TEXT, duration_s INTEGER, made_for_kids INTEGER, privacy_status TEXT,
   discovered_at TEXT NOT NULL, verified_at TEXT, query_version TEXT NOT NULL,
-  text_fingerprint TEXT, duplicate_of TEXT REFERENCES sources(video_id),
+  text_fingerprint TEXT, duplicate_of TEXT REFERENCES sources(video_id), fingerprint_conflict_with TEXT,
   stage TEXT NOT NULL CHECK (stage IN ('discovered','metadata_only')),
   availability TEXT NOT NULL DEFAULT 'unknown' CHECK (availability IN ('available','unavailable','unknown','excluded')),
   exclusion_reason TEXT
@@ -34,13 +34,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS sources_fingerprint_canonical ON sources(text_
 CREATE TABLE IF NOT EXISTS review_items (
   item_id TEXT PRIMARY KEY,
   origin TEXT NOT NULL CHECK (origin IN ('YOUTUBE_SOURCE','AI_GENERAL_DRAFT')),
-  source_video_id TEXT REFERENCES sources(video_id),
+  source_video_id TEXT REFERENCES sources(video_id) ON DELETE SET NULL,
   stage TEXT NOT NULL CHECK (stage IN ('discovered','metadata_only','ai_draft','coach_reviewed')),
   review_status TEXT NOT NULL DEFAULT 'pending' CHECK (review_status IN ('pending','approved','rejected')),
   current_version INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   published INTEGER NOT NULL DEFAULT 0 CHECK (published = 0),
-  CHECK ((origin = 'YOUTUBE_SOURCE' AND source_video_id IS NOT NULL) OR (origin = 'AI_GENERAL_DRAFT' AND source_video_id IS NULL))
+  source_state TEXT NOT NULL DEFAULT 'present' CHECK (source_state IN ('present','removed')),
+  approval_state TEXT NOT NULL DEFAULT 'current' CHECK (approval_state IN ('current','review_required')),
+  source_issue TEXT, source_issue_at TEXT, source_removed_at TEXT,
+  CHECK ((origin = 'YOUTUBE_SOURCE' AND (source_video_id IS NOT NULL OR source_state = 'removed')) OR (origin = 'AI_GENERAL_DRAFT' AND source_video_id IS NULL))
 );
 
 CREATE TABLE IF NOT EXISTS item_versions (
@@ -54,7 +57,8 @@ CREATE TABLE IF NOT EXISTS reviews (
   review_id INTEGER PRIMARY KEY AUTOINCREMENT,
   item_id TEXT NOT NULL, version INTEGER NOT NULL, content_hash TEXT NOT NULL,
   decision TEXT NOT NULL CHECK (decision IN ('approved','rejected')),
-  reviewer_id TEXT NOT NULL, auth_mode TEXT NOT NULL, reasons TEXT NOT NULL, sources_json TEXT NOT NULL, at TEXT NOT NULL
+  reviewer_id TEXT NOT NULL, auth_mode TEXT NOT NULL, reasons TEXT NOT NULL, sources_json TEXT NOT NULL, at TEXT NOT NULL,
+  review_basis TEXT
 );
 
 CREATE TABLE IF NOT EXISTS audit (
@@ -67,8 +71,9 @@ CREATE TABLE IF NOT EXISTS ledger (
   kind TEXT NOT NULL CHECK (kind IN ('ai','youtube_search','youtube_other')), provider TEXT NOT NULL,
   requests INTEGER NOT NULL DEFAULT 1, units INTEGER NOT NULL DEFAULT 0,
   tokens_reserved INTEGER NOT NULL DEFAULT 0, usd_reserved REAL NOT NULL DEFAULT 0,
-  status TEXT NOT NULL CHECK (status IN ('reserved','settled','uncertain','released')),
-  tokens_actual INTEGER, usd_actual REAL, created_at TEXT NOT NULL, settled_at TEXT, note TEXT
+  status TEXT NOT NULL CHECK (status IN ('reserved','sent','settled','uncertain','rate_limited','released')),
+  tokens_actual INTEGER, usd_actual REAL, created_at TEXT NOT NULL, sent_at TEXT, settled_at TEXT, note TEXT,
+  CHECK (status <> 'released' OR sent_at IS NULL)
 );
 CREATE INDEX IF NOT EXISTS ledger_day ON ledger(day, kind, provider);
 
@@ -159,12 +164,126 @@ class ResearchStore:
             row = self.db.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
         except sqlite3.OperationalError:
             pass
-        if row is not None and int(row["value"]) > SCHEMA_VERSION:
+        version = int(row["value"]) if row is not None else None
+        if version is not None and version > SCHEMA_VERSION:
             raise StoreError("this database was made by a newer version of the engine")
+        if version == 1:
+            self._upgrade_from_1()
+            return
+        if version == 2:
+            self._upgrade_2_to_3()
+            return
         with self.transaction():
             for statement in _statements(SCHEMA):
                 self.db.execute(statement)
             self.db.execute("INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)", (str(SCHEMA_VERSION),))
+
+    def _upgrade_from_1(self) -> None:
+        """Version 1 -> current (3, built directly in the final shape). Conservative about approvals (see below) and about money and requests: in version 1 a 'released' AI reservation could follow a request that
+        WAS sent (the defect this version fixes), so every version-1 AI row that is not plainly settled becomes 'uncertain' and keeps
+        counting. Nothing is deleted."""
+        self.db.execute("PRAGMA foreign_keys=OFF")
+        self.db.execute("PRAGMA legacy_alter_table=ON")      # a rename must not rewrite the child tables' REFERENCES to the old name
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute("ALTER TABLE sources ADD COLUMN fingerprint_conflict_with TEXT")
+                self.db.execute("ALTER TABLE ledger RENAME TO ledger_v1")
+                self.db.execute("DROP INDEX IF EXISTS ledger_day")
+                for statement in _statements(SCHEMA):
+                    if statement.lstrip().startswith(("CREATE TABLE IF NOT EXISTS ledger", "CREATE INDEX IF NOT EXISTS ledger_day")):
+                        self.db.execute(statement)
+                self.db.execute("""INSERT INTO ledger(id,day,kind,provider,requests,units,tokens_reserved,usd_reserved,status,tokens_actual,usd_actual,created_at,sent_at,settled_at,note)
+                    SELECT id,day,kind,provider,requests,units,tokens_reserved,usd_reserved,
+                           CASE WHEN kind='ai' AND status IN ('reserved','released') THEN 'uncertain' ELSE status END,
+                           tokens_actual,usd_actual,created_at,
+                           CASE WHEN kind='ai' THEN created_at ELSE NULL END, settled_at,
+                           CASE WHEN kind='ai' AND status IN ('reserved','released') THEN 'migrated from version 1: may have been sent' ELSE note END
+                    FROM ledger_v1""")
+                self.db.execute("DROP TABLE ledger_v1")
+                self.db.execute("ALTER TABLE review_items RENAME TO review_items_v1")
+                for statement in _statements(SCHEMA):
+                    if statement.lstrip().startswith("CREATE TABLE IF NOT EXISTS review_items"):
+                        self.db.execute(statement)
+                self.db.execute("""INSERT INTO review_items(item_id,origin,source_video_id,stage,review_status,current_version,created_at,updated_at,published)
+                    SELECT item_id,origin,source_video_id,stage,review_status,current_version,created_at,updated_at,published FROM review_items_v1""")
+                self.db.execute("DROP TABLE review_items_v1")
+                self.db.execute("ALTER TABLE reviews ADD COLUMN review_basis TEXT")
+                # Version 1 let an approved item keep its approval after its source was excluded or lost, and nothing recorded that the
+                # approval had been suspended. So an approval is carried over as valid ONLY if the source is recorded as available. A
+                # source that is excluded, unavailable, unknown or missing suspends it (`review_required`) with the recorded reason and
+                # date, or UNDETERMINABLE_LEGACY_STATE when none was recorded. An old REVIEW_APPROVED audit event proves nothing about
+                # the source and never overrides this. Nothing is deleted.
+                suspended = self.db.execute(
+                    "UPDATE review_items SET approval_state='review_required', "
+                    "source_issue=COALESCE((SELECT NULLIF(s.exclusion_reason,'') FROM sources s WHERE s.video_id=review_items.source_video_id), 'UNDETERMINABLE_LEGACY_STATE'), "
+                    "source_issue_at=(SELECT s.verified_at FROM sources s WHERE s.video_id=review_items.source_video_id) "
+                    "WHERE review_status='approved' AND origin='YOUTUBE_SOURCE' AND (source_video_id IS NULL OR NOT EXISTS "
+                    "(SELECT 1 FROM sources s WHERE s.video_id=review_items.source_video_id AND s.availability='available'))").rowcount
+                if suspended:
+                    self.audit("LEGACY_APPROVALS_SUSPENDED_AT_UPGRADE", "system", {"from_schema": 1, "count": suspended})
+                self.db.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
+                violations = self.db.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise StoreError("the upgrade would leave broken references; it was not applied")
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+        finally:
+            self.db.execute("PRAGMA legacy_alter_table=OFF")
+            self.db.execute("PRAGMA foreign_keys=ON")
+
+    def _upgrade_2_to_3(self) -> None:
+        """Version 2 -> 3. Splits two things version 2 had put in one column: whether the coach's APPROVAL is still valid
+        (`approval_state`) and whether the source DATA is still held (`source_state`). In version 2 a retention purge overwrote
+        'review_required' with 'removed', so an item whose source had been invalidated could look approved again. For every
+        version-2 item in 'removed' state the audit log decides: if it shows an invalidation after the last approval the item stays
+        `review_required` with that reason and date; if the audit log cannot show that (chain broken, or nothing about the item), the
+        item is `review_required` with reason UNDETERMINABLE_LEGACY_STATE. It is never assumed valid. Nothing is deleted."""
+        self.db.execute("PRAGMA foreign_keys=OFF")
+        self.db.execute("PRAGMA legacy_alter_table=ON")
+        try:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                self.db.execute("ALTER TABLE review_items RENAME TO review_items_v2")
+                for statement in _statements(SCHEMA):
+                    if statement.lstrip().startswith("CREATE TABLE IF NOT EXISTS review_items"):
+                        self.db.execute(statement)
+                self.db.execute("""INSERT INTO review_items(item_id,origin,source_video_id,stage,review_status,current_version,created_at,updated_at,published,
+                                                            source_state,approval_state,source_issue,source_issue_at,source_removed_at)
+                    SELECT item_id,origin,source_video_id,stage,review_status,current_version,created_at,updated_at,published,
+                           CASE WHEN source_state='removed' THEN 'removed' ELSE 'present' END,
+                           CASE WHEN source_state='review_required' THEN 'review_required' ELSE 'current' END,
+                           source_issue,source_issue_at,source_removed_at FROM review_items_v2""")
+                chain_ok = self.verify_audit()
+                events = [dict(r, data=json.loads(r["data_json"])) for r in self.db.execute("SELECT n, event, data_json FROM audit ORDER BY n")]
+                for item in self.db.execute("SELECT item_id, review_status, source_issue FROM review_items WHERE source_state='removed' AND approval_state='current' "
+                                            "AND review_status='approved'").fetchall():
+                    mine = [e for e in events if e["data"].get("item_id") == item["item_id"]]
+                    approvals = [e["n"] for e in mine if e["event"] == "REVIEW_APPROVED"]
+                    invalid = [e for e in mine if e["event"] == "SOURCE_INVALIDATED_REVIEW_REQUIRED" and approvals and e["n"] > max(approvals)]
+                    if invalid:
+                        reason = invalid[-1]["data"].get("reason") or "UNDETERMINABLE_LEGACY_STATE"
+                        at = self.db.execute("SELECT at FROM audit WHERE n=?", (invalid[-1]["n"],)).fetchone()["at"]
+                    elif chain_ok and approvals:
+                        continue                                      # the audit log shows an approval and no later invalidation
+                    else:
+                        reason, at = "UNDETERMINABLE_LEGACY_STATE", None
+                    self.db.execute("UPDATE review_items SET approval_state='review_required', source_issue=?, source_issue_at=? WHERE item_id=?",
+                                    (reason, at, item["item_id"]))
+                self.db.execute("DROP TABLE review_items_v2")
+                self.db.execute("ALTER TABLE reviews ADD COLUMN review_basis TEXT")
+                self.db.execute("UPDATE meta SET value='3' WHERE key='schema_version'")
+                if self.db.execute("PRAGMA foreign_key_check").fetchall():
+                    raise StoreError("the upgrade would leave broken references; it was not applied")
+                self.db.execute("COMMIT")
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+        finally:
+            self.db.execute("PRAGMA legacy_alter_table=OFF")
+            self.db.execute("PRAGMA foreign_keys=ON")
 
     @contextmanager
     def transaction(self):

@@ -269,8 +269,10 @@ def build_dataset(examples: list[tuple[dict, dict]], *, version: str, now: datet
             if proof:
                 raise consent_rules.ConsentError(f"example {meta['example_id']} claims to be synthetic but is not: {', '.join(proof)}")
         validate_arrays(arrays)
+    lineage = [] if synthetic_only else sorted({(m["video_id"], str(m["provenance"].get("source_video_sha256", "")).lower()) for m, _ in examples})
     return {"format": DATASET_FORMAT, "schema_version": SCHEMA_VERSION, "version": version, "fingerprint": fingerprint(examples),
-            "synthetic_only": synthetic_only, "examples": examples, "keypoints": KEYPOINTS, "angles": ANGLES, "motion": MOTION}
+            "synthetic_only": synthetic_only, "examples": examples, "keypoints": KEYPOINTS, "angles": ANGLES, "motion": MOTION,
+            "coverage_lineage": [{"video_id": v, "video_sha256": h} for v, h in lineage]}
 
 
 def save_dataset(directory: Path, dataset: dict) -> Path:

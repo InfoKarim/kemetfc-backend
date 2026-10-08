@@ -39,10 +39,9 @@ def test_every_missing_piece_of_consent_makes_a_real_example_ineligible():
     assert "CONSENT_NOT_YET_GRANTED" in problems(m)
     m = real_meta(); m["consent"]["dataset_entry_status"] = "pending_review"
     assert "DATASET_ENTRY_NOT_APPROVED" in problems(m)
-    m = real_meta(); m["consent"]["covers_all_visible_children"] = False
-    assert "CONSENT_NOT_VERIFIED_FOR_EVERY_VISIBLE_CHILD" in problems(m)
-    m = real_meta(); m["consent"]["covers_all_visible_children"] = "yes"
-    assert "CONSENT_NOT_VERIFIED_FOR_EVERY_VISIBLE_CHILD" in problems(m)
+    for claim in (False, "yes", True):                       # the self-written claim is not read at all: it neither blocks nor helps
+        m = real_meta(); m["consent"]["covers_all_visible_children"] = claim
+        assert problems(m) == []
     m = real_meta(); m["consent"]["reviewed_by_ref"] = "someone"
     assert "NO_NAMED_CONSENT_REVIEWER" in problems(m)
     m = real_meta(); m["consent"]["consent_ref"] = "guardian-123"
@@ -123,9 +122,9 @@ def test_player_ids_are_pseudonymous_stable_salted_and_never_the_raw_id():
 
 def test_an_ineligible_example_stops_the_whole_dataset_from_being_built():
     ex = real_examples(6, 1, 1)
-    ex[3][0]["consent"]["covers_all_visible_children"] = False
+    ex[3][0]["consent"]["dataset_entry_status"] = "pending_review"
     reg, _ = make_registry(real_pairs(6, 1))
-    with pytest.raises(c.ConsentError, match="CONSENT_NOT_VERIFIED_FOR_EVERY_VISIBLE_CHILD"):
+    with pytest.raises(c.ConsentError, match="DATASET_ENTRY_NOT_APPROVED"):
         ds.build_dataset(ex, version="x", now=NOW, registry=reg)
 
 
@@ -160,11 +159,12 @@ def test_a_model_trained_on_data_whose_consent_is_later_withdrawn_is_invalidated
     reg, _ = make_registry(real_pairs(10, 2))
     d = ds.build_dataset(ex, version="x", now=NOW, registry=reg)
     model_dir = train.train_candidate(d, ds.split_dataset(d, seed=1), root=tmp_path, name="m", requested_by_ref=HUMAN, now=NOW, config={"epochs": 1}, registry=reg)
-    registry.load_model(model_dir)
+    registry.inspect_candidate(model_dir)
+    registry.load_model_for_use(model_dir, registry=reg, purpose="EVALUATION", now=NOW)           # valid today
     hit = registry.invalidate_for_withdrawn_consent(tmp_path, {ex[0][0]["consent"]["consent_ref"]})
     assert hit == [f"m/{model_dir.name}"]
-    with pytest.raises(registry.RegistryError, match="invalidated"):
-        registry.load_model(model_dir)
+    with pytest.raises(registry.RegistryError, match="MODEL_INVALIDATED"):
+        registry.load_model_for_use(model_dir, registry=reg, purpose="EVALUATION", now=NOW)
     assert "MODEL_INVALIDATED" in registry.approval_problems(model_dir)
     assert registry.invalidate_for_withdrawn_consent(tmp_path, {"CR-ffffffffffffffff"}) == []          # an unrelated consent touches nothing
     assert (model_dir / "weights.pt").exists()                                # nothing is deleted

@@ -175,7 +175,7 @@ def test_each_run_is_a_new_version_that_is_never_overwritten(synth, tmp_path):
     a, b = fit(synth, tmp_path), fit(synth, tmp_path)
     assert a.name != b.name and a.name.startswith("v0001-") and b.name.startswith("v0002-") and synth[0]["fingerprint"][:8] in a.name
     assert registry.list_versions(tmp_path, "pose_tcn") == [a.name, b.name]
-    model, _ = registry.load_model(a)
+    model, _ = registry.inspect_candidate(a)
     with pytest.raises(registry.RegistryError, match="already exists"):
         registry.save_candidate(tmp_path, "pose_tcn", model, report=json.loads((a / "report.json").read_text()), classes=None, version=a.name)
 
@@ -183,8 +183,8 @@ def test_each_run_is_a_new_version_that_is_never_overwritten(synth, tmp_path):
 @pytest.mark.trains_models
 def test_a_saved_model_loads_and_reproduces_its_own_outputs(synth, tmp_path):
     d = fit(synth, tmp_path)
-    model, info = registry.load_model(d)
-    again, _ = registry.load_model(d)
+    model, info = registry.inspect_candidate(d)
+    again, _ = registry.inspect_candidate(d)
     x, valid, _, _ = to_tensors(synth[0]["examples"][:5])
     assert torch.equal(model(x, valid)["embedding"], again(x, valid)["embedding"]) and not model.training
     assert info["card"]["status"] == "CANDIDATE" and info["card"]["released"] is False
@@ -195,17 +195,17 @@ def test_a_saved_model_loads_and_reproduces_its_own_outputs(synth, tmp_path):
 @pytest.mark.trains_models
 def test_a_changed_weights_file_or_an_unknown_architecture_is_refused(synth, tmp_path):
     d = fit(synth, tmp_path)
-    model, _ = registry.load_model(d)
+    model, _ = registry.inspect_candidate(d)
     state = model.state_dict()
     key = next(iter(state)); state[key] = state[key] + 1.0
     torch.save(state, d / "weights.pt")
     with pytest.raises(registry.RegistryError, match="SHA-256"):
-        registry.load_model(d)
+        registry.inspect_candidate(d)
     d2 = fit(synth, tmp_path / "x")
     cfg = json.loads((d2 / "config.json").read_text()); cfg["architecture"] = "something-else/9"
     (d2 / "config.json").write_text(json.dumps(cfg))
     with pytest.raises(registry.RegistryError, match="unsupported architecture"):
-        registry.load_model(d2)
+        registry.inspect_candidate(d2)
 
 
 @pytest.mark.trains_models

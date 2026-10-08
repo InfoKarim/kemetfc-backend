@@ -40,7 +40,7 @@ def test_discovered_then_metadata_only_with_provenance_and_nothing_else(tmp_path
     assert s["url"] == f"https://www.youtube.com/watch?v={s['video_id']}" and s["channel_id"] == CH1 and s["query_version"] == "dribbling-v1"
     assert s["discovered_at"].endswith("Z") and s["verified_at"].endswith("Z")
     assert set(s) == {"video_id", "channel_id", "url", "title", "published_at", "duration_s", "made_for_kids", "privacy_status", "discovered_at",
-                      "verified_at", "query_version", "text_fingerprint", "duplicate_of", "stage", "availability", "exclusion_reason"}    # no description, no thumbnail, no transcript
+                      "verified_at", "query_version", "text_fingerprint", "duplicate_of", "fingerprint_conflict_with", "stage", "availability", "exclusion_reason"}    # no description, no thumbnail, no transcript
     items = rows(tmp_path, "select origin, stage, review_status, published from review_items")
     assert all(i == {"origin": "YOUTUBE_SOURCE", "stage": "metadata_only", "review_status": "pending", "published": 0} for i in items)
     assert report["stages"] == {"discovered": 0, "metadata_only": 2, "ai_draft": 0, "coach_reviewed": 0}
@@ -100,8 +100,9 @@ def test_details_exclude_not_public_made_for_kids_live_and_implausible_videos(tm
     got = {r["video_id"]: (r["availability"], r["exclusion_reason"]) for r in rows(tmp_path, "select video_id, availability, exclusion_reason from sources")}
     assert got[vid(1)] == ("available", None)
     assert got[vid(2)] == ("excluded", "NOT_PUBLIC") and got[vid(3)] == ("excluded", "MADE_FOR_KIDS") and got[vid(4)] == ("excluded", "LIVE_OR_UPCOMING_BROADCAST")
-    assert got[vid(5)] == ("excluded", "IMPLAUSIBLE_DURATION") and got[vid(6)] == ("excluded", "IMPLAUSIBLE_DURATION") and got[vid(7)] == ("excluded", "CHANNEL_CHANGED")
-    assert report["sources"]["metadata_only"] == 1 and report["sources"]["excluded"] == 6
+    assert got[vid(5)] == ("excluded", "IMPLAUSIBLE_DURATION") and got[vid(7)] == ("excluded", "CHANNEL_CHANGED")
+    assert got[vid(6)] == ("unknown", None)                                    # an unreadable duration is a malformed answer, not proof the video is unusable
+    assert report["sources"]["metadata_only"] == 1 and report["sources"]["excluded"] == 5 and report["sources"]["invalid_items"] == 1
 
 
 def test_a_video_the_details_call_does_not_return_is_unavailable_never_assumed_fine(tmp_path):
@@ -124,7 +125,7 @@ def test_the_same_video_id_is_never_stored_twice_across_runs_and_pages(tmp_path)
 def test_exact_normalized_title_duplicates_are_flagged_but_different_wording_is_not(tmp_path):
     items = [search_item(1, title="Dribbling Drill: Cone Weave!"), search_item(2, title="  dribbling drill  cone weave "), search_item(3, title="DRIBBLING DRILL — CONE WEAVE"),
              search_item(4, title="Cone weaving dribbling exercise")]
-    t = FakeTransport(search=[ok({"items": items})], videos=[ok({"items": [video_item(1), video_item(4)]})])
+    t = FakeTransport(search=[ok({"items": items})], videos=[ok({"items": [video_item(1, title="Dribbling Drill: Cone Weave!"), video_item(4, title="Cone weaving dribbling exercise")]})])
     report, _ = run(tmp_path, t, config(youtube={"max_pages_per_channel": 1, "results_per_page": 10}))
     assert report["sources"]["duplicate_by_text_fingerprint"] == 2 and report["sources"]["new"] == 2
     dups = rows(tmp_path, "select video_id, duplicate_of from sources where duplicate_of is not null order by video_id")

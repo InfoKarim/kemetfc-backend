@@ -216,7 +216,7 @@ def train_candidate(dataset: dict, splits: dict[str, list[int]], *, root: Path, 
               "classifier": {"trained": bool(classes), "reason": why},
               "evaluation": evaluation,
               "consent_audit": {"passed": True, "n_examples": len(ex), "consent_refs": refs,
-                                "synthetic_only": dataset["synthetic_only"]},
+                                "synthetic_only": dataset["synthetic_only"], "coverage_lineage": dataset.get("coverage_lineage", [])},
               "leakage_check": {"passed": True, "rule": "players, source videos and assessments are disjoint across splits"},
               "no_player_scores": True}
     return registry.save_candidate(Path(root), name, model, report=report, classes=classes)

@@ -60,7 +60,8 @@ def run_daily(config: Config, state_dir: Path, *, env: dict | None = None, now: 
         report = _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_transport, fixture, sleep, wall_clock, clock, Path(state_dir))
         with store.transaction() as db:
             db.execute("UPDATE runs SET status=?, finished_at=?, checkpoint_json=?, report_json=? WHERE day=? AND mode=?",
-                       (report["status"], iso(clock()), json.dumps(checkpoint), json.dumps(report, sort_keys=True), day, mode))
+                       (report["status"], iso(clock()), json.dumps({} if report["status"] == "SUCCESS" else checkpoint),      # a finished day keeps no video ids
+                        json.dumps(report, sort_keys=True), day, mode))
         reports = store.dir / "reports"
         reports.mkdir(mode=0o700, exist_ok=True)
         os.chmod(reports, 0o700)
@@ -105,7 +106,10 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
                 new_ids = [i for st in checkpoint.values() if isinstance(st, dict) for i in st.get("ids", [])]
                 pending = [r["video_id"] for r in store.db.execute("SELECT video_id FROM sources WHERE stage='discovered' AND availability='unknown' AND duplicate_of IS NULL ORDER BY video_id")]
                 refresh = due_for_refresh(store, config, now)
-                disc.verify(sorted(set(new_ids) | set(pending) | set(refresh)), now, counts, errors)
+                approved = [r["video_id"] for r in store.db.execute(          # re-checked every run: an approved source can go private or be deleted
+                    "SELECT DISTINCT s.video_id FROM sources s JOIN review_items i ON i.source_video_id=s.video_id "
+                    "WHERE i.review_status='approved' AND i.source_state='present' AND s.duplicate_of IS NULL ORDER BY s.video_id")]
+                disc.verify(sorted(set(new_ids) | set(pending) | set(refresh) | set(approved)), now, counts, errors)
             except YouTubeApiError as exc:
                 fatal = True
                 errors.append({"where": "youtube", "code": exc.code})
@@ -128,12 +132,12 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
         if blockers or fixture and ai_transport is None:
             services[provider]["reasons"] = blockers or ["FIXTURE_RUN_HAS_NO_AI_TRANSPORT"]
             continue
-        already = store.db.execute("SELECT COUNT(*) FROM ledger WHERE day=? AND kind='ai' AND provider=? AND status IN ('settled','uncertain')", (day, provider)).fetchone()[0]
+        already = store.db.execute("SELECT COUNT(*) FROM ledger WHERE day=? AND kind='ai' AND provider=? AND status IN ('settled','uncertain','sent')", (day, provider)).fetchone()[0]
         if already:
-            services[provider] = {"status": "skipped", "reasons": ["ALREADY_DRAFTED_TODAY"]}
+            services[provider] = {"status": "skipped", "reasons": ["ALREADY_REQUESTED_TODAY_NOT_RETRIED"]}
             continue
         try:
-            outcome = AIDrafts(store, config, budget, ai_transport or UrllibTransport(), env, clock).generate(provider)
+            outcome = AIDrafts(store, config, budget, ai_transport or UrllibTransport(), env, clock, sleep, wall_clock).generate(provider)
             services[provider] = {"status": "ok", "reasons": [], "item": outcome["item_id"], "usage": outcome["usage"]}
         except (ProviderDisabled, BudgetExceeded) as exc:
             services[provider] = {"status": "skipped", "reasons": getattr(exc, "blockers", None) or [exc.reason]}
@@ -162,9 +166,11 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
 
     db = store.db
     review = {s: db.execute("SELECT COUNT(*) FROM review_items WHERE review_status=?", (s,)).fetchone()[0] for s in ("pending", "approved", "rejected")}
+    review["source_review_required"] = db.execute("SELECT COUNT(*) FROM review_items WHERE approval_state='review_required'").fetchone()[0]
+    review["source_removed_after_retention"] = db.execute("SELECT COUNT(*) FROM review_items WHERE source_state='removed'").fetchone()[0]
     stages = {s: db.execute("SELECT COUNT(*) FROM review_items WHERE stage=?", (s,)).fetchone()[0] for s in ("discovered", "metadata_only", "ai_draft", "coach_reviewed")}
     spend = budget.report(day, quota_day(now))
-    ai_calls = {p: spend[p]["requests"] for p in ("openai", "anthropic")}
+    ai_calls = {p: spend[p]["requests_sent"] for p in ("openai", "anthropic")}
     return {
         "schema": REPORT_SCHEMA, "date": day, "timezone": config.timezone, "generated_at": iso(now),
         "mode": mode, "live": mode == "live", "fixture_data_not_live_results": fixture,
@@ -175,8 +181,10 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
                    "ai_requests_per_day": config.budget.daily_ai_requests, "ai_tokens_per_day": config.budget.daily_ai_tokens,
                    "ai_cost_usd_per_day": config.budget.daily_cost_usd, "youtube_retries": config.youtube.max_retries},
         "api_calls": {"youtube_search": spend["youtube"]["search_calls"], "youtube_other": spend["youtube"]["other_calls"], **ai_calls},
-        "quota": spend["youtube"], "tokens": {p: {"reserved": spend[p]["tokens_reserved"], "actual_reported": spend[p]["tokens_actual"],
-                                                    "uncertain_calls": spend[p]["uncertain"]} for p in ("openai", "anthropic")},
+        "quota": spend["youtube"], "ai_requests": {p: {k: spend[p][k] for k in ("requests_attempted", "requests_sent", "requests_counted_against_cap", "settled", "uncertain",
+                                                      "rate_limited", "in_flight", "released_not_sent")} for p in ("openai", "anthropic")},
+        "tokens": {p: {"reserved": spend[p]["tokens_reserved"], "actual_reported": spend[p]["tokens_actual"],
+                       "uncertain_calls": spend[p]["uncertain"]} for p in ("openai", "anthropic")},
         "cost_usd": {p: {"reserved": spend[p]["usd_reserved"], "actual_estimate_from_operator_prices": spend[p]["usd_actual"]} for p in ("openai", "anthropic")},
         "cost_note": "reserved and estimated from operator-supplied ceilings and prices: not a guarantee of any provider invoice",
         "retention": retention, "audit_chain_ok": store.verify_audit(),

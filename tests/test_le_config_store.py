@@ -98,11 +98,11 @@ def test_the_state_is_private_versioned_and_separate(tmp_path):
     s = ResearchStore(tmp_path / "state")
     assert oct((tmp_path / "state").stat().st_mode & 0o777) == "0o700"
     assert oct(s.db_path.stat().st_mode & 0o777) == "0o600"
-    assert s.schema_version() == 1 and s.db_path.name == "learning_engine.sqlite3"
+    assert s.schema_version() == 3 and s.db_path.name == "learning_engine.sqlite3"
     assert s.db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     s.close()
     again = ResearchStore(tmp_path / "state")                          # reopening keeps the version and does not break
-    assert again.schema_version() == 1
+    assert again.schema_version() == 3
     again.close()
 
 
@@ -140,11 +140,11 @@ def test_symlinks_relative_paths_application_data_and_the_repository_are_refused
 def test_the_database_cannot_mark_anything_published():
     import sqlite3, tempfile
     s = ResearchStore(Path(tempfile.mkdtemp()) / "s")
-    s.db.execute("INSERT INTO review_items VALUES ('AI-x','AI_GENERAL_DRAFT',NULL,'ai_draft','pending',1,'t','t',0)")
+    s.db.execute("INSERT INTO review_items(item_id,origin,source_video_id,stage,review_status,current_version,created_at,updated_at,published) VALUES ('AI-x','AI_GENERAL_DRAFT',NULL,'ai_draft','pending',1,'t','t',0)")
     with pytest.raises(sqlite3.IntegrityError):
         s.db.execute("UPDATE review_items SET published=1 WHERE item_id='AI-x'")
     with pytest.raises(sqlite3.IntegrityError):                           # an AI draft may not be tied to a source video
-        s.db.execute("INSERT INTO review_items VALUES ('AI-y','AI_GENERAL_DRAFT','vid',  'ai_draft','pending',1,'t','t',0)")
+        s.db.execute("INSERT INTO review_items(item_id,origin,source_video_id,stage,review_status,current_version,created_at,updated_at,published) VALUES ('AI-y','AI_GENERAL_DRAFT','vid',  'ai_draft','pending',1,'t','t',0)")
     s.close()
 
 

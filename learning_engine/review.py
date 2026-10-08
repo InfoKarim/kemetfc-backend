@@ -5,6 +5,16 @@ equipment, duration, age range, safety notes); that content, not the video's tit
 recorded as coach-reviewed content with its version and hash. Any change to approved content creates a new version and puts
 the item back to pending. Approval changes nothing for any player: `published` is fixed at 0 by the database itself.
 
+A source can stop being valid after approval (private, deleted, made for kids, other channel, excluded). The approval and the
+coach's content stay in the history, but the item moves to `approval_state = 'review_required'`: it is left out of the export, shows
+why and since when, and a source that later turns public again does NOT bring the approval back. A coach or admin must decide
+again, on the current version, while the source is confirmed available. Whether the approval is still valid (`approval_state`) and whether the source data is still held (`source_state`: present or
+removed by retention) are two separate facts. When the retention window removes the source link (retention.py) the coach's own
+content remains, flagged as having no source, and an approval that had been suspended STAYS suspended with its reason and date: deleting
+data never makes an item valid again. A person can approve independent content again with an explicit decision, which is recorded as
+`review_basis = INDEPENDENT_CONTENT_SOURCE_REMOVED`: a review of the coach's own content, not a check of the deleted source.
+Nothing here publishes anything to any player.
+
 WHO reviewed: the reviewer id, how they were identified (`auth_mode`) and when are stored with every decision. Through the
 backend API the id is an authenticated coach/admin account; through the command line it is only a name typed by whoever runs
 it, which is NOT authentication.
@@ -97,23 +107,45 @@ class ReviewService:
         src = None
         if item["source_video_id"]:
             s = self.store.db.execute("SELECT * FROM sources WHERE video_id=?", (item["source_video_id"],)).fetchone()
-            src = None if s is None else {k: s[k] for k in ("video_id", "channel_id", "url", "title", "published_at", "discovered_at", "verified_at",
-                                                              "query_version", "stage", "availability", "exclusion_reason")}
+            src = None if s is None else {k: s[k] for k in ("video_id", "channel_id", "url", "title", "published_at", "discovered_at", "verified_at", "duration_s",
+                                                              "privacy_status", "made_for_kids", "query_version", "stage", "availability", "exclusion_reason")}
+        last = self.store.db.execute("SELECT version, decision, reviewer_id, at, review_basis FROM reviews WHERE item_id=? ORDER BY review_id DESC LIMIT 1", (item_id,)).fetchone()
+        state, approval = item["source_state"], item["approval_state"]
+        if item["origin"] != "YOUTUBE_SOURCE":
+            note = "general AI draft: unverified, not based on any source video"
+        elif approval == "review_required" and state == "removed":
+            note = ("the source stopped being valid and was later removed by the retention window; the earlier decision is kept in the history but is "
+                    "not valid for export. A new decision would be an independent review of the coach's own content, not a check of the deleted source")
+        elif approval == "review_required":
+            note = ("the earlier decision is kept in the history, but the source is no longer valid (see source_issue); it is excluded from the "
+                    "export until a coach reviews it again")
+        elif state == "removed" and last is not None and last["review_basis"] == "INDEPENDENT_CONTENT_SOURCE_REMOVED" and last["decision"] == "approved":
+            note = ("the source was removed after the retention window; the current approval is an independent review of the coach's own content, "
+                    "not a check of the source")
+        elif state == "removed":
+            note = "the source was removed after the retention window; this is the coach's own content with no source attached"
+        else:
+            note = "metadata-only source: the title says nothing proven about the drill or its suitability"
         return {"item_id": item_id, "origin": item["origin"], "stage": item["stage"], "review_status": item["review_status"],
                 "version": item["current_version"], "published": bool(item["published"]), "source": src,
+                "source_state": state, "approval_state": approval, "needs_source_review": approval == "review_required",
+                "valid_for_export": item["review_status"] == "approved" and approval == "current", "source_issue": item["source_issue"],
+                "source_issue_at": item["source_issue_at"], "source_removed_at": item["source_removed_at"],
+                "last_decision": None if last is None else dict(last),
                 "content": json.loads(version["content_json"]), "content_hash": version["content_hash"], "author_kind": version["author_kind"],
-                "content_problems": content_problems(json.loads(version["content_json"])),
-                "note": "metadata-only source: the title says nothing proven about the drill or its suitability" if item["origin"] == "YOUTUBE_SOURCE"
-                else "general AI draft: unverified, not based on any source video"}
+                "content_problems": content_problems(json.loads(version["content_json"])), "note": note}
 
-    def list_items(self, status: str | None = None) -> list[dict]:
+    def list_items(self, status: str | None = None, needs_source_review: bool = False) -> list[dict]:
         if status is not None and status not in ("pending", "approved", "rejected"):
             raise ReviewError("status must be pending, approved or rejected")
-        if status:
+        if needs_source_review:
+            rows = self.store.db.execute("SELECT item_id FROM review_items WHERE approval_state='review_required' ORDER BY created_at, item_id").fetchall()
+        elif status:
             rows = self.store.db.execute("SELECT item_id FROM review_items WHERE review_status=? ORDER BY created_at, item_id", (status,)).fetchall()
         else:
             rows = self.store.db.execute("SELECT item_id FROM review_items ORDER BY created_at, item_id").fetchall()
-        return [self.get(r["item_id"]) for r in rows]
+        items = [self.get(r["item_id"]) for r in rows]
+        return [i for i in items if status is None or i["review_status"] == status] if needs_source_review else items
 
     # ---- writing: content ------------------------------------------------------------------------------------------------------
     def save_content(self, item_id: str, content: dict, reviewer: Reviewer) -> dict:
@@ -144,8 +176,9 @@ class ReviewService:
         now = self.clock()
         with self.store.transaction() as db:
             item = self._item(item_id)
-            if item["review_status"] != "pending":
-                raise ReviewError("only a pending item can be decided; changing approved content sends it back to pending")
+            re_review = item["approval_state"] == "review_required"
+            if item["review_status"] != "pending" and not re_review:
+                raise ReviewError("only a pending item can be decided (or an approved one whose source needs a new review); changing approved content sends it back to pending")
             if version != item["current_version"]:
                 raise ReviewError("the content changed since you looked at it; review the current version")
             row = db.execute("SELECT content_json, content_hash FROM item_versions WHERE item_id=? AND version=?", (item_id, version)).fetchone()
@@ -155,26 +188,34 @@ class ReviewService:
                 problems = content_problems(content)
                 if problems:
                     raise ReviewError("the drill content is not complete: " + ", ".join(problems))
-                if item["origin"] == "YOUTUBE_SOURCE":
+                if item["origin"] == "YOUTUBE_SOURCE" and item["source_state"] == "present":
                     src = db.execute("SELECT availability, exclusion_reason FROM sources WHERE video_id=?", (item["source_video_id"],)).fetchone()
                     if src is None or src["availability"] != "available":
                         raise ReviewError("the source is not confirmed available; it cannot be approved")
                     if not set(refs) <= set(sources_checked):
                         raise ReviewError("record the source you inspected (its link) when approving")
-            db.execute("INSERT INTO reviews(item_id,version,content_hash,decision,reviewer_id,auth_mode,reasons,sources_json,at) VALUES (?,?,?,?,?,?,?,?,?)",
+            basis = ("AI_DRAFT_NO_SOURCE" if item["origin"] != "YOUTUBE_SOURCE" else
+                     "INDEPENDENT_CONTENT_SOURCE_REMOVED" if item["source_state"] == "removed" else "SOURCE_AVAILABLE_AT_DECISION")
+            db.execute("INSERT INTO reviews(item_id,version,content_hash,decision,reviewer_id,auth_mode,reasons,sources_json,at,review_basis) VALUES (?,?,?,?,?,?,?,?,?,?)",
                        (item_id, version, row["content_hash"], decision, reviewer.reviewer_id, reviewer.auth_mode, reasons.strip(),
-                        json.dumps(sorted(set(sources_checked))), iso(now)))
-            db.execute("UPDATE review_items SET review_status=?, stage='coach_reviewed', updated_at=? WHERE item_id=?", (decision, iso(now), item_id))
+                        json.dumps(sorted(set(sources_checked))), iso(now), basis))
+            db.execute("UPDATE review_items SET review_status=?, stage='coach_reviewed', approval_state='current', source_issue=NULL, source_issue_at=NULL, updated_at=? WHERE item_id=?",
+                       (decision, iso(now), item_id))
             self.store.audit(f"REVIEW_{decision.upper()}", reviewer.reviewer_id,
-                             {"item_id": item_id, "version": version, "content_hash": row["content_hash"], "auth_mode": reviewer.auth_mode}, now)
+                             {"item_id": item_id, "version": version, "content_hash": row["content_hash"], "auth_mode": reviewer.auth_mode,
+                              "re_review_after_source_change": re_review, "previous_source_issue": item["source_issue"]}, now)
         return self.get(item_id)
 
     # ---- the only way out: read-only ------------------------------------------------------------------------------------------------------
     def approved_content(self) -> list[dict]:
-        """Approved drill content for a coach to carry into the drill library BY HAND. Nothing here publishes anything."""
+        """Approved drill content for a coach to carry into the drill library BY HAND. Nothing here publishes anything. Items whose
+        source stopped being valid are left out until they are reviewed again; an item whose source was removed by retention is
+        included, flagged, because its content is the coach's own."""
         return [{"item_id": i["item_id"], "version": i["version"], "content_hash": i["content_hash"], "content": i["content"],
-                 "origin": i["origin"], "source_url": (i["source"] or {}).get("url")} for i in self.list_items("approved")]
+                 "origin": i["origin"], "source_url": (i["source"] or {}).get("url"), "source_removed": i["source_state"] == "removed",
+                 "review_basis": (i["last_decision"] or {}).get("review_basis")}
+                for i in self.list_items("approved") if i["valid_for_export"]]
 
     def history(self, item_id: str) -> list[dict]:
-        rows = self.store.db.execute("SELECT version, content_hash, decision, reviewer_id, auth_mode, reasons, sources_json, at FROM reviews WHERE item_id=? ORDER BY review_id", (item_id,)).fetchall()
+        rows = self.store.db.execute("SELECT version, content_hash, decision, reviewer_id, auth_mode, reasons, sources_json, at, review_basis FROM reviews WHERE item_id=? ORDER BY review_id", (item_id,)).fetchall()
         return [{**dict(r), "sources_json": json.loads(r["sources_json"])} for r in rows]

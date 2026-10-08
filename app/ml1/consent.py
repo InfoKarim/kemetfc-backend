@@ -3,7 +3,8 @@
 An example may enter a dataset only if every check here passes, and the checks run again every time a dataset is
 built, split or trained on (a consent can be withdrawn or expire after an example was accepted). Real children's
 videos need verified, unexpired, unwithdrawn guardian consent for the purpose `ml_training`, a named reviewer who
-confirmed that the consent covers EVERY child visible in the footage, and a dataset entry marked approved. Third-party
+a dataset entry marked approved, and, for EVERY child visible in the footage, a current consent listed in a trusted coverage record
+for that exact video file (registry_adapter.CoverageRecord; never a field in the example, and a general approval is not coverage). Third-party
 content (for example a social-media clip) is never eligible, whatever consent is claimed. Synthetic fixtures are
 allowed only to test the pipeline and can never lead to an approved model.
 """
@@ -131,8 +132,9 @@ def eligibility_problems(meta: dict, now: datetime | None = None, withdrawn_refs
                 problems.append("CONSENT_EXPIRED")
             if consent.get("dataset_entry_status") != "approved":
                 problems.append("DATASET_ENTRY_NOT_APPROVED")
-            if consent.get("covers_all_visible_children") is not True:
-                problems.append("CONSENT_NOT_VERIFIED_FOR_EVERY_VISIBLE_CHILD")
+            # Whether consent covers every child visible in the footage is NOT decided here and NOT by anything written in the
+            # example: a `covers_all_visible_children` field, if present, is ignored. Only a trusted coverage record, read by the
+            # registry adapter, can show it; without one the adapter answers VISIBLE_CHILD_CONSENT_COVERAGE_NOT_VERIFIABLE.
             if not _REF.match(str(consent.get("reviewed_by_ref", ""))):
                 problems.append("NO_NAMED_CONSENT_REVIEWER")
         if target.get("identity_verified_by_coach") is not True or target.get("source") != "COACH_TAP":

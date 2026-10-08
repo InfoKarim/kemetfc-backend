@@ -9,17 +9,40 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base
 from app.db_models import DataRecordDB, GuardianConsentDB, MLDatasetEntryDB, PlayerDB, VideoDB
-from app.ml1.registry_adapter import SqlAlchemyConsentRegistry
+from app.ml1.registry_adapter import COVERAGE_SCOPE, CoverageRecord, SqlAlchemyConsentRegistry
 from tests.ml1_helpers import NOW, SALT, video_sha
 
 
-def make_registry(pairs, *, status="approved", reviewer="coach-007"):
-    """pairs: iterable of (raw_player, raw_video). Returns (registry, session_factory)."""
+class MockCoverageEvidenceNotRealConsent:
+    """A STAND-IN for a trusted coverage store, used only to test the success path and the refusals around it. It proves nothing about
+    real consent: no such store exists in the platform. Records are built from an explicit map {raw_video: [raw consent ids]}; a
+    video missing from the map has no record (like the real default). `overrides` replaces fields of one video's record."""
+
+    def __init__(self, mapping, overrides=None, fail=False):
+        self.mapping, self.overrides, self.fail = mapping, overrides or {}, fail
+
+    def record_for_video(self, video_id):
+        if self.fail:
+            raise ConnectionError("coverage store unreachable")
+        if video_id not in self.mapping:
+            return None
+        fields = dict(video_id=video_id, video_sha256=video_sha(video_id), scope=COVERAGE_SCOPE, consent_ids=tuple(self.mapping[video_id]),
+                      reviewed_by_user_id="coach-007", reviewed_at=NOW)
+        fields.update(self.overrides.get(video_id, {}))
+        return CoverageRecord(**fields)
+
+
+def make_registry(pairs, *, status="approved", reviewer="coach-007", coverage="mock"):
+    """pairs: iterable of (raw_player, raw_video). Returns (registry, session_factory).
+    coverage: "mock" = a stand-in coverage store listing each video's own player consent (NOT real evidence); None = the real default
+    (no coverage store, so every real example is refused); or a ready-made evidence object."""
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     seed(factory, pairs, status=status, reviewer=reviewer)
-    return SqlAlchemyConsentRegistry(factory, SALT), factory
+    if coverage == "mock":
+        coverage = MockCoverageEvidenceNotRealConsent({video: [f"consent-{player}"] for player, video in set(pairs)})
+    return SqlAlchemyConsentRegistry(factory, SALT, coverage), factory
 
 
 def seed(factory, pairs, *, status="approved", reviewer="coach-007"):

@@ -2,10 +2,15 @@
 
 * YouTube: request counts and quota units are tracked separately (search.list has its own documented daily bucket).
   The quota day is the Pacific-time day, because that is when Google resets quota (determine_quota_cost page).
-* AI: every call reserves its worst-case tokens and cost first. After the call the reservation is settled with the real
-  usage if the provider reported it; if the outcome is uncertain (timeout, no usage) the reserved amount stays counted and
-  the call is NEVER retried blindly. These figures come from operator-set ceilings and prices: they are a reservation
-  and an estimate, not a guarantee of what a provider will invoice.
+* AI: every call reserves its worst-case tokens and cost first (status `reserved`). Just before the request leaves the
+  process the row is committed as `sent`; from then on it counts against the REQUEST cap whatever happens next, because a
+  request that was sent is a request, whether or not it was ever billed or settled. After the call it becomes `settled`
+  (real usage reported), `rate_limited` (HTTP 429: refused by the provider's limiter) or `uncertain` (anything else: HTTP
+  5xx/504, timeout, lost connection, no usage numbers). Only `rate_limited` and `uncertain` rows keep their worst-case
+  token and cost reservation, and an uncertain paid request is NEVER retried automatically. The one way a row leaves the
+  count is `released`, allowed only for a row that was never marked sent (the request provably did not leave), and every
+  release writes an audit event. These figures come from operator-set ceilings and prices: they are a reservation and an
+  estimate, not a guarantee of what a provider will invoice.
 """
 import math
 import time
@@ -69,7 +74,7 @@ class Budget:
     # ---- AI -------------------------------------------------------------------------------------------------------------------
     def _ai_totals(self, db, day: str) -> tuple[int, int, float]:
         rows = db.execute("SELECT status, requests, tokens_reserved, usd_reserved, tokens_actual, usd_actual FROM ledger "
-                          "WHERE day=? AND kind='ai' AND status<>'released'", (day,)).fetchall()
+                          "WHERE day=? AND kind='ai' AND status<>'released'", (day,)).fetchall()      # every sent attempt counts, settled or not
         requests = sum(r["requests"] for r in rows)
         tokens = sum((r["tokens_actual"] if r["status"] == "settled" and r["tokens_actual"] is not None else r["tokens_reserved"]) for r in rows)
         usd = sum((r["usd_actual"] if r["status"] == "settled" and r["usd_actual"] is not None else r["usd_reserved"]) for r in rows)
@@ -100,36 +105,66 @@ class Budget:
                              (day, "ai", provider, 1, tokens, usd, "reserved", iso(now)))
             return Reservation(cur.lastrowid, provider, tokens, usd)
 
+    def begin_send(self, reservation: Reservation) -> None:
+        """Commit `sent` BEFORE the transport is called. If the process dies after this, the request counts."""
+        now = self.clock()
+        with self.store.transaction() as db:
+            cur = db.execute("UPDATE ledger SET status='sent', sent_at=? WHERE id=? AND status='reserved' AND sent_at IS NULL", (iso(now), reservation.id))
+            if cur.rowcount != 1:
+                raise BudgetExceeded("RESERVATION_NOT_AVAILABLE")
+
     def settle_ai(self, reservation: Reservation, input_tokens: int | None, output_tokens: int | None) -> str:
-        """Record the real usage. Without usage numbers the call is UNCERTAIN and keeps its reserved amount counted."""
+        """Record the real usage of a SENT request. Without usage numbers it is UNCERTAIN and keeps its reserved amount."""
         now = self.clock()
         p = self.config.providers[reservation.provider]
         with self.store.transaction() as db:
             if input_tokens is None or output_tokens is None or not isinstance(input_tokens, int) or not isinstance(output_tokens, int) or p.pricing is None:
-                db.execute("UPDATE ledger SET status='uncertain', settled_at=?, note=? WHERE id=?", (iso(now), "provider did not report usage", reservation.id))
+                db.execute("UPDATE ledger SET status='uncertain', settled_at=?, note=? WHERE id=? AND status IN ('sent','reserved')",
+                           (iso(now), "provider did not report usage", reservation.id))
                 return "uncertain"
             usd = _up(input_tokens * p.pricing.input_usd_per_million / 1e6 + output_tokens * p.pricing.output_usd_per_million / 1e6)
-            db.execute("UPDATE ledger SET status='settled', tokens_actual=?, usd_actual=?, settled_at=? WHERE id=?",
+            db.execute("UPDATE ledger SET status='settled', tokens_actual=?, usd_actual=?, settled_at=? WHERE id=? AND status IN ('sent','reserved')",
                        (input_tokens + output_tokens, usd, iso(now), reservation.id))
             return "settled"
 
     def mark_uncertain(self, reservation: Reservation, note: str) -> None:
         with self.store.transaction() as db:
-            db.execute("UPDATE ledger SET status='uncertain', settled_at=?, note=? WHERE id=?", (iso(self.clock()), note[:80], reservation.id))
-
-    def release_ai(self, reservation: Reservation, note: str) -> None:
-        """Only for a request that was DEFINITELY never sent."""
-        with self.store.transaction() as db:
-            db.execute("UPDATE ledger SET status='released', settled_at=?, note=? WHERE id=? AND status='reserved'",
+            db.execute("UPDATE ledger SET status='uncertain', settled_at=?, note=? WHERE id=? AND status IN ('sent','reserved')",
                        (iso(self.clock()), note[:80], reservation.id))
 
+    def mark_rate_limited(self, reservation: Reservation, note: str) -> None:
+        """HTTP 429. Still a sent request and still counted; the worst-case reservation stays because neither provider's
+        error page says whether a refused request is billed."""
+        with self.store.transaction() as db:
+            db.execute("UPDATE ledger SET status='rate_limited', settled_at=?, note=? WHERE id=? AND status='sent'",
+                       (iso(self.clock()), note[:80], reservation.id))
+
+    def release_ai(self, reservation: Reservation, reason: str, *, proven_not_sent: bool = False) -> bool:
+        """Give back a reservation for a request that never left this process. Without proof only a row that was never marked
+        sent can go. `proven_not_sent=True` is passed only by the caller that holds the proof (the transport refused the request
+        before any connection, `TransportError.sent is False`); it clears the marker. Anything else returns False and the
+        request keeps counting. Every release writes an audit event."""
+        now = self.clock()
+        with self.store.transaction() as db:
+            if proven_not_sent:
+                cur = db.execute("UPDATE ledger SET status='released', sent_at=NULL, settled_at=?, note=? WHERE id=? AND status IN ('reserved','sent')",
+                                 (iso(now), reason[:80], reservation.id))
+            else:
+                cur = db.execute("UPDATE ledger SET status='released', settled_at=?, note=? WHERE id=? AND status='reserved' AND sent_at IS NULL",
+                                 (iso(now), reason[:80], reservation.id))
+            if cur.rowcount != 1:
+                return False
+            self.store.audit("AI_RESERVATION_RELEASED_NOT_SENT", "budget",
+                             {"reservation": reservation.id, "provider": reservation.provider, "reason": reason[:80], "proof": "transport_refused_before_sending" if proven_not_sent else "never_marked_sent"}, now)
+            return True
+
     def recover_stale(self) -> int:
-        """After a crash a reservation may be stuck as 'reserved'. We do not know whether the request went out, so it
-        becomes 'uncertain': still counted, never retried automatically."""
+        """After a crash a row may be stuck as `reserved` or `sent`. We do not know whether the request went out or what
+        happened, so it becomes `uncertain`: still counted, never retried automatically."""
         cutoff = iso(self.clock() - timedelta(minutes=self.config.budget.reservation_stale_minutes))
         with self.store.transaction() as db:
-            cur = db.execute("UPDATE ledger SET status='uncertain', note='stale reservation after interruption' "
-                             "WHERE kind='ai' AND status='reserved' AND created_at<?", (cutoff,))
+            cur = db.execute("UPDATE ledger SET status='uncertain', note='stale after interruption' "
+                             "WHERE kind='ai' AND status IN ('reserved','sent') AND created_at<?", (cutoff,))
             return cur.rowcount
 
     # ---- reporting -----------------------------------------------------------------------------------------------------------------
@@ -140,27 +175,35 @@ class Budget:
         out = {"youtube": {"quota_day_pacific": qday, "search_calls": searches, "other_calls": others, "units_used": searches + others,
                            "search_calls_limit": self.config.youtube.search_calls_per_day, "units_limit": self.config.youtube.units_per_day}}
         for provider in ("openai", "anthropic"):
-            rows = db.execute("SELECT status, tokens_reserved, usd_reserved, tokens_actual, usd_actual FROM ledger "
-                              "WHERE day=? AND kind='ai' AND provider=? AND status<>'released'", (day, provider)).fetchall()
-            out[provider] = {"requests": len(rows), "tokens_reserved": sum(r["tokens_reserved"] for r in rows),
-                             "usd_reserved": round(sum(r["usd_reserved"] for r in rows), 8),
-                             "tokens_actual": sum(r["tokens_actual"] or 0 for r in rows if r["status"] == "settled"),
-                             "usd_actual": round(sum(r["usd_actual"] or 0 for r in rows if r["status"] == "settled"), 8),
-                             "uncertain": sum(1 for r in rows if r["status"] == "uncertain")}
+            rows = db.execute("SELECT status, sent_at, tokens_reserved, usd_reserved, tokens_actual, usd_actual FROM ledger "
+                              "WHERE day=? AND kind='ai' AND provider=?", (day, provider)).fetchall()
+            counted = [r for r in rows if r["status"] != "released"]
+            count = lambda *names: sum(1 for r in rows if r["status"] in names)
+            out[provider] = {
+                "requests_attempted": len(rows),                                   # every reservation made, including released ones
+                "requests_sent": sum(1 for r in rows if r["sent_at"] is not None),  # left (or may have left) this process
+                "requests_counted_against_cap": len(counted),                      # what the daily request cap sees
+                "requests": len(counted),
+                "settled": count("settled"), "uncertain": count("uncertain"), "rate_limited": count("rate_limited"),
+                "in_flight": count("sent"), "released_not_sent": count("released"),
+                "tokens_reserved": sum(r["tokens_reserved"] for r in counted),
+                "usd_reserved": round(sum(r["usd_reserved"] for r in counted), 8),
+                "tokens_actual": sum(r["tokens_actual"] or 0 for r in rows if r["status"] == "settled"),
+                "usd_actual": round(sum(r["usd_actual"] or 0 for r in rows if r["status"] == "settled"), 8)}
         return out
 
 
 class Pacer:
     """Minimum gap between any two external requests, kept across restarts in the research database."""
 
-    def __init__(self, store: ResearchStore, min_interval_s: float, clock=time.time, sleep=time.sleep):
-        self.store, self.min_interval_s, self.clock, self.sleep = store, min_interval_s, clock, sleep
+    def __init__(self, store: ResearchStore, min_interval_s: float, clock=time.time, sleep=time.sleep, key: str = "last_external_call"):
+        self.store, self.min_interval_s, self.clock, self.sleep, self.key = store, min_interval_s, clock, sleep, key
 
     def wait(self) -> None:
-        row = self.store.db.execute("SELECT value FROM meta WHERE key='last_external_call'").fetchone()
+        row = self.store.db.execute("SELECT value FROM meta WHERE key=?", (self.key,)).fetchone()
         last = float(row["value"]) if row else 0.0
         gap = self.clock() - last
         if 0 <= gap < self.min_interval_s:
             self.sleep(self.min_interval_s - gap)
         with self.store.transaction() as db:
-            db.execute("INSERT INTO meta(key,value) VALUES('last_external_call',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (repr(self.clock()),))
+            db.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (self.key, repr(self.clock())))

@@ -34,7 +34,7 @@ def real_meta(player="player-1", video="vid-1", assessment=None, drill="SYNTH_DR
         "model_confidence": {"mean_tracking_confidence": 0.9, "mean_keypoint_confidence": 0.85, "observed_fraction": 0.9},
         "consent": {"kind": c.GUARDIAN_CONSENT_KIND, "purpose": "ml_training", "consent_ref": c.consent_ref(f"consent-{player}", SALT),
                     "granted_at": (NOW - timedelta(days=30)).isoformat(), "expires_at": (NOW + timedelta(days=300)).isoformat(),
-                    "withdrawn_at": None, "dataset_entry_status": "approved", "covers_all_visible_children": True,
+                    "withdrawn_at": None, "dataset_entry_status": "approved",
                     "reviewed_by_ref": HUMAN},
         "provenance": {"source": "CAMERA_RECORDING", "recording_id": f"REC-{video}", "source_video_sha256": video_sha(video),
                        "pipeline_version": "a1.0.0", "third_party_content": False},

@@ -47,10 +47,25 @@ def anthropic_ok(text="A generic drill.", usage=True):
     return HttpResponse(200, json.dumps(body).encode())
 
 
-def make(tmp_path, cfg, transport, env=ENV):
+class WallClock:
+    """A fake wall clock whose fake sleep advances it, so pacing and backoff are tested without waiting."""
+
+    def __init__(self, start=1000.0):
+        self.now, self.sleeps = start, []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def make(tmp_path, cfg, transport, env=ENV, wall=None):
     store = ResearchStore(tmp_path / "s")
     budget = Budget(store, cfg, lambda: NOW)
-    return store, budget, ai.AIDrafts(store, cfg, budget, transport, env, lambda: NOW)
+    wall = wall or WallClock()
+    return store, budget, ai.AIDrafts(store, cfg, budget, transport, env, lambda: NOW, sleep=wall.sleep, wall_clock=wall)
 
 
 def ledger(store):
@@ -161,17 +176,23 @@ def test_a_timeout_is_uncertain_and_is_never_retried_because_it_might_have_been_
     store.close()
 
 
-def test_a_definite_429_is_retried_within_the_limits_and_each_attempt_reserves_again(tmp_path):
-    t = Transport(HttpResponse(429, b"{}"), openai_ok())
-    store, _, drafts = make(tmp_path, paid(), t)
+def test_a_429_with_retry_after_is_retried_within_the_limits_and_each_attempt_counts(tmp_path):
+    wall = WallClock()
+    t = Transport(HttpResponse(429, b"{}", {"retry-after": "3"}), openai_ok())
+    store, _, drafts = make(tmp_path, paid(), t, wall=wall)
     assert drafts.generate("openai")["usage"] == "settled"
-    assert len(t.requests) == 2 and [r["status"] for r in ledger(store)] == ["released", "settled"]
+    assert len(t.requests) == 2 and [r["status"] for r in ledger(store)] == ["rate_limited", "settled"]
+    assert wall.sleeps == [3.0]                                    # waited for the provider's Retry-After; the 2 s pacing gap had already passed
+    store.close()
+
+
+def test_a_server_error_is_never_retried_automatically(tmp_path):
     t2 = Transport(HttpResponse(500, b"{}"), HttpResponse(500, b"{}"), HttpResponse(500, b"{}"))
     store2, _, drafts2 = make(tmp_path / "b", paid(), t2)
     with pytest.raises(TransportError):
         drafts2.generate("openai")
-    assert len(t2.requests) == 2                                                                         # 1 attempt + max_retries(1), never more
-    store.close(); store2.close()
+    assert len(t2.requests) == 1 and [r["status"] for r in ledger(store2)] == ["uncertain"]
+    store2.close()
 
 
 def test_an_unexpected_status_is_uncertain_not_retried(tmp_path):

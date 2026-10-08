@@ -1,4 +1,12 @@
-"""Model versions on disk: save, load, verify, approve. Nothing here deploys anything.
+"""Model versions on disk: save, inspect, authorise use, approve. Nothing here deploys anything.
+
+Two different things are kept apart on purpose:
+  * `inspect_candidate` rebuilds the network and checks its weights against their recorded SHA-256. That is an INTEGRITY
+    check of an artifact. It says nothing about whether anyone may use the model.
+  * `load_model_for_use` is the only way to get a model object for evaluation or use. For a model that claims real data it
+    re-verifies, at that moment, against the trusted consent registry, that every consent behind the training data is still
+    valid. A missing or unreachable registry, an empty or malformed consent list, a withdrawn or expired consent all refuse.
+    A local `invalidated.json` can only add a refusal; its absence proves nothing, and nothing here relies on it.
 
 A trained model is a CANDIDATE. It becomes APPROVED_CANDIDATE only by a named human, only if it was trained on real
 (non-synthetic) consented data, passed the evaluation gates on the held-out test split, and its dataset still passes
@@ -6,6 +14,7 @@ the consent audit. Released is a further, separate human act and is only a marke
 """
 import hashlib
 import json
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,7 +23,7 @@ import torch
 
 from app.ml1.config import APPROVAL_GATES, MODEL_ARCHITECTURE
 from app.ml1.consent import _REF
-from app.ml1.registry_adapter import REGISTRY_NOT_CONFIGURED
+from app.ml1.registry_adapter import COVERAGE_NOT_VERIFIABLE, REGISTRY_NOT_CONFIGURED, REGISTRY_UNAVAILABLE
 from app.ml1.model import PoseTemporalCNN
 
 
@@ -66,15 +75,14 @@ def save_candidate(root: Path, name: str, model: PoseTemporalCNN, *, report: dic
     return directory
 
 
-def load_model(directory: Path) -> tuple[PoseTemporalCNN, dict]:
-    """Rebuild the network from its config, load the weights, and verify they are the ones that were saved."""
+def inspect_candidate(directory: Path) -> tuple[PoseTemporalCNN, dict]:
+    """INTEGRITY ONLY: rebuild the network from its config, load the weights, verify they are the ones that were saved. This
+    does not authorise using the model: use `load_model_for_use`."""
     directory = Path(directory)
     config = json.loads((directory / "config.json").read_text())
     card = json.loads((directory / "card.json").read_text())
     if config.get("architecture") != MODEL_ARCHITECTURE:
         raise RegistryError(f"unsupported architecture {config.get('architecture')}")
-    if (directory / "invalidated.json").exists():
-        raise RegistryError("this model was invalidated (for example a consent was withdrawn) and must not be used")
     model = PoseTemporalCNN(channels=config["channels"], embedding_dim=config["embedding_dim"], n_classes=config["n_classes"],
                             n_kp=config["n_kp"], n_ang=config["n_ang"], n_mot=config["n_mot"])
     model.load_state_dict(torch.load(directory / "weights.pt", map_location="cpu", weights_only=True))
@@ -82,6 +90,108 @@ def load_model(directory: Path) -> tuple[PoseTemporalCNN, dict]:
     if weights_sha256(model) != card["weights_sha256"]:
         raise RegistryError("the weights do not match their recorded SHA-256: the file was changed")
     return model, {"config": config, "card": card}
+
+
+def load_model(*_args, **_kwargs):
+    raise RegistryError("load_model was removed because it did not check consent: use inspect_candidate (integrity only) or load_model_for_use")
+
+
+PURPOSES = ("EVALUATION", "USE")
+_CONSENT_REF = re.compile(r"^CR-[0-9a-f]{16}$")
+
+
+def _data_origin(report: dict, card: dict) -> str | None:
+    synthetic = (report.get("dataset") or {}).get("synthetic_only")
+    origin = card.get("data_origin")
+    if synthetic is True and origin == "SYNTHETIC":
+        return "SYNTHETIC"
+    if synthetic is False and origin == "REAL_CONSENTED":
+        return "REAL"
+    return None
+
+
+def _model_consent_problems(report: dict, registry, now: datetime) -> list[str]:
+    """For a model that claims real data: the consent references must exist, be well formed, and each must be confirmed valid
+    TODAY by the trusted registry. Anything missing, empty, malformed or unreachable fails closed."""
+    refs = (report.get("consent_audit") or {}).get("consent_refs")
+    if not isinstance(refs, list) or not refs:
+        return ["CONSENT_REFS_MISSING_FOR_REAL_DATA_MODEL"]
+    if any(not isinstance(r, str) or not _CONSENT_REF.match(r) for r in refs):
+        return ["CONSENT_REF_MALFORMED"]
+    if registry is None:
+        return [REGISTRY_NOT_CONFIGURED]
+    try:
+        found = registry.verify_consent_refs(set(refs), now.replace(tzinfo=None))
+    except Exception:
+        return [REGISTRY_UNAVAILABLE]
+    if not isinstance(found, list):
+        return [REGISTRY_UNAVAILABLE]
+    problems = [f"CONSENT_NO_LONGER_VALID:{p}" for p in found]
+    # The consent list above is one consent per training player. It says nothing about OTHER children visible in the same videos, so
+    # a real model also needs, per source video, a trusted coverage record that is still valid now. A model whose report carries no
+    # lineage (an older artifact) cannot be shown to be covered and is refused until that evidence exists.
+    lineage = (report.get("consent_audit") or {}).get("coverage_lineage")
+    if not isinstance(lineage, list) or not lineage or not all(isinstance(i, dict) and isinstance(i.get("video_id"), str) and isinstance(i.get("video_sha256"), str) for i in lineage):
+        return problems + ["COVERAGE_LINEAGE_MISSING_FOR_REAL_DATA_MODEL", COVERAGE_NOT_VERIFIABLE]
+    verify = getattr(registry, "verify_coverage_lineage", None)
+    if verify is None:
+        return problems + [COVERAGE_NOT_VERIFIABLE]
+    try:
+        covered = verify(lineage, now.replace(tzinfo=None))
+    except Exception:
+        return problems + [REGISTRY_UNAVAILABLE]
+    if not isinstance(covered, list):
+        return problems + [REGISTRY_UNAVAILABLE]
+    return problems + [f"COVERAGE_NO_LONGER_VALID:{p}" for p in covered]
+
+
+def use_problems(directory: Path, *, registry, purpose: str, now: datetime | None = None) -> list[str]:
+    """Why this model may not be used now for `purpose` (EVALUATION or USE); [] only if it may. Nothing is written."""
+    if purpose not in PURPOSES:
+        return ["UNKNOWN_PURPOSE"]
+    directory = Path(directory)
+    now = now or datetime.now(timezone.utc)
+    try:
+        report_bytes = (directory / "report.json").read_bytes()
+        report = json.loads(report_bytes)
+        card = json.loads((directory / "card.json").read_text())
+    except (OSError, ValueError):
+        return ["MODEL_RECORDS_UNREADABLE"]
+    problems = []
+    if hashlib.sha256(report_bytes).hexdigest() != card.get("report_sha256"):
+        problems.append("REPORT_CHANGED_AFTER_TRAINING")            # the consent list comes from this file, so it must be the one recorded
+    if (directory / "invalidated.json").exists():
+        problems.append("MODEL_INVALIDATED")                          # can only add a refusal
+    origin = _data_origin(report, card)
+    if origin is None:
+        problems.append("DATA_ORIGIN_UNCLEAR")
+    elif origin == "REAL":
+        problems += _model_consent_problems(report, registry, now)
+        if not (report.get("consent_audit") or {}).get("passed"):
+            problems.append("CONSENT_AUDIT_NOT_PASSED")
+    elif purpose == "USE":
+        problems.append("SYNTHETIC_MODEL_NEVER_FOR_USE")
+    if purpose == "USE":
+        try:
+            approval = json.loads((directory / "approval.json").read_text())
+        except (OSError, ValueError):
+            approval = {}
+        if card.get("status") not in ("APPROVED_CANDIDATE", "RELEASED_MARKER") or approval.get("weights_sha256") != card.get("weights_sha256"):
+            problems.append("MODEL_NOT_APPROVED_BY_A_HUMAN")
+    return problems
+
+
+def load_model_for_use(directory: Path, *, registry, purpose: str, now: datetime | None = None) -> tuple[PoseTemporalCNN, dict]:
+    """The only way to obtain a model object. Consent is re-verified against the trusted registry on every call, BEFORE the
+    weights are loaded. Raises RegistryError with every reason if the model may not be used."""
+    problems = use_problems(directory, registry=registry, purpose=purpose, now=now)
+    if problems:
+        raise RegistryError("this model may not be used: " + ", ".join(problems))
+    model, info = inspect_candidate(directory)
+    origin = _data_origin(json.loads((Path(directory) / "report.json").read_text()), info["card"])
+    info["authorised_for"] = purpose
+    info["scope"] = "SYNTHETIC_EVALUATION_ONLY" if origin == "SYNTHETIC" else "REAL_CONSENT_VERIFIED_AT_LOAD"
+    return model, info
 
 
 def list_versions(root: Path, name: str) -> list[str]:
@@ -114,19 +224,13 @@ def approval_problems(directory: Path, *, registry=None, now: datetime | None = 
         problems.append("REPORT_AND_CARD_DISAGREE_ON_WEIGHTS")
     else:
         try:
-            load_model(directory)
-        except RegistryError as exc:
-            if "invalidated" not in str(exc):
-                problems.append("WEIGHTS_DO_NOT_MATCH_THE_RECORDED_HASH")
+            inspect_candidate(directory)
+        except RegistryError:
+            problems.append("WEIGHTS_DO_NOT_MATCH_THE_RECORDED_HASH")
     if report["dataset"]["synthetic_only"] or card["data_origin"] != "REAL_CONSENTED":
         problems.append("TRAINED_ON_SYNTHETIC_DATA_NEVER_APPROVABLE")
     else:
-        refs = set(report.get("consent_audit", {}).get("consent_refs", []))
-        if registry is None:
-            problems.append(REGISTRY_NOT_CONFIGURED)
-        else:
-            current = registry.verify_consent_refs(refs, (now or datetime.now(timezone.utc)).replace(tzinfo=None))
-            problems += [f"CONSENT_NO_LONGER_VALID:{p}" for p in current]
+        problems += _model_consent_problems(report, registry, now or datetime.now(timezone.utc))
     if not report.get("consent_audit", {}).get("passed"):
         problems.append("CONSENT_AUDIT_NOT_PASSED")
     if not report.get("leakage_check", {}).get("passed"):
@@ -182,8 +286,9 @@ def release_marker(directory: Path, *, releaser_ref: str, now: datetime | None =
 
 
 def invalidate_for_withdrawn_consent(root: Path, withdrawn_refs: set[str]) -> list[str]:
-    """When a guardian withdraws consent, every model whose training data used it is marked invalid and cannot be
-    loaded or approved. Returns the versions invalidated. Nothing is deleted."""
+    """A convenience for operators: when a guardian withdraws consent, mark every model whose training data used it. It is NOT
+    the consent gate (that is `load_model_for_use`, which asks the trusted registry every time and does not depend on this file
+    having been written). Returns the versions marked. Nothing is deleted."""
     hit = []
     for report_file in Path(root).glob("*/*/report.json"):
         report = json.loads(report_file.read_text())

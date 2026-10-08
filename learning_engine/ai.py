@@ -17,8 +17,9 @@ UNCERTAIN (its reserved cost stays counted) rather than guessed.
 import hashlib
 import json
 import math
+import time
 
-from learning_engine.budget import Budget, BudgetExceeded
+from learning_engine.budget import Budget, BudgetExceeded, Pacer
 from learning_engine.config import Config, paid_blockers
 from learning_engine.http import HttpRequest, TransportError
 from learning_engine.store import ResearchStore, iso, utc_now
@@ -29,7 +30,13 @@ PROMPT = ("Propose one generic football dribbling drill for coach review: title,
 ALLOWED_PROMPTS = frozenset({PROMPT})
 ENDPOINTS = {"openai": "https://api.openai.com/v1/responses", "anthropic": "https://api.anthropic.com/v1/messages"}
 ANTHROPIC_VERSION = "2023-06-01"
-RETRYABLE_DEFINITE = {429, 500, 502, 503, 504}
+RATE_LIMITED = 429
+# Retry policy (official error pages, checked 2026-10-08): Anthropic documents 429 as a rate limit that carries `retry-after`
+# (a spend-limit 429 carries none and keeps failing) and says 500 should be retried with exponential backoff and 504 means the
+# request "timed out while processing"; OpenAI says to wait at least Retry-After on a rate-limit 429 and that quota/spend 429s
+# are not helped by retrying. Neither page says whether a failed request was billed or processed. So for a PAID request:
+# a 429 WITH a usable Retry-After is retried (bounded, paced, each attempt reserving and counting again); a 5xx, 504, timeout,
+# lost connection, unreadable answer or any other status is UNCERTAIN and is never retried automatically.
 
 
 class ProviderDisabled(Exception):
@@ -72,47 +79,73 @@ def parse_response(provider: str, data: dict) -> tuple[str, int | None, int | No
     return text, usage.get("input_tokens"), usage.get("output_tokens")
 
 
+def retry_after_seconds(headers: dict | None) -> float | None:
+    """Seconds from a delta-seconds Retry-After header; None when absent, malformed, negative or not finite. (An HTTP-date
+    form is not parsed: treating it as absent means no retry, the safe side.)"""
+    raw = (headers or {}).get("retry-after")
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
 class AIDrafts:
-    def __init__(self, store: ResearchStore, config: Config, budget: Budget, transport, env: dict, clock=utc_now):
+    def __init__(self, store: ResearchStore, config: Config, budget: Budget, transport, env: dict, clock=utc_now,
+                 sleep=time.sleep, wall_clock=time.time):
         self.store, self.config, self.budget, self.transport, self.env, self.clock = store, config, budget, transport, env, clock
+        self.sleep, self.wall_clock = sleep, wall_clock
 
     def generate(self, provider: str) -> dict:
         """One general draft from one provider. Raises ProviderDisabled (nothing sent) when any condition is unmet and
-        BudgetExceeded when a limit would be passed. A definite 429/5xx response is retried within the limits, each attempt
-        reserving again; a timeout or lost connection is UNCERTAIN and is never retried."""
+        BudgetExceeded when a limit would be passed. Every attempt that was sent counts against the request cap. Only a 429
+        with a usable Retry-After is retried, within `max_retries` and `max_backoff_s`; everything else that is not a clean
+        200 is UNCERTAIN and stops the run without a retry."""
         blockers = paid_blockers(self.config, provider, self.env)
         if blockers:
             raise ProviderDisabled(blockers)
         p = self.config.providers[provider]
         key = self.env[p.api_key_env]
         est_in = estimate_tokens(PROMPT)
-        last_error = "NO_ATTEMPT"
+        pacer = Pacer(self.store, p.min_interval_s, self.wall_clock, self.sleep, key=f"last_ai_call_{provider}")
         for attempt in range(1 + p.max_retries):
             reservation = self.budget.reserve_ai(provider, est_in, p.max_output_tokens)      # may raise BudgetExceeded
-            request = build_request(provider, p.model, p.max_output_tokens, key, timeout_s=p.timeout_s)
+            try:
+                request = build_request(provider, p.model, p.max_output_tokens, key, timeout_s=p.timeout_s)
+            except PayloadRefused:
+                self.budget.release_ai(reservation, "request refused before sending")
+                raise
+            pacer.wait()
+            self.budget.begin_send(reservation)              # committed first: from here the request counts whatever happens
             try:
                 response = self.transport(request)
             except TransportError as exc:
-                self.budget.mark_uncertain(reservation, f"transport {exc.code}")
+                if exc.sent:
+                    self.budget.mark_uncertain(reservation, f"transport {exc.code}")
+                elif not self.budget.release_ai(reservation, f"not sent: {exc.code}", proven_not_sent=True):
+                    self.budget.mark_uncertain(reservation, f"transport {exc.code}")
                 raise
             except Exception:
                 self.budget.mark_uncertain(reservation, "unexpected error while sending")
                 raise
-            if response.status in RETRYABLE_DEFINITE and attempt < p.max_retries:
-                self.budget.release_ai(reservation, f"HTTP {response.status}, not processed")
-                last_error = f"HTTP_{response.status}"
+            if response.status == 200:
+                try:
+                    text, tin, tout = parse_response(provider, json.loads(response.body))
+                except (ValueError, AttributeError):
+                    self.budget.mark_uncertain(reservation, "unreadable response")
+                    raise TransportError("BAD_RESPONSE") from None
+                outcome = self.budget.settle_ai(reservation, tin, tout)
+                return self._store_draft(provider, p.model, text, outcome, reservation)
+            if response.status == RATE_LIMITED:
+                self.budget.mark_rate_limited(reservation, "HTTP 429")
+                wait = retry_after_seconds(getattr(response, "headers", None))
+                if wait is None or wait > p.max_backoff_s or attempt >= p.max_retries:
+                    raise TransportError("HTTP_429")
+                self.sleep(min(p.max_backoff_s, max(wait, 2.0 ** attempt)))
                 continue
-            if response.status != 200:
-                self.budget.mark_uncertain(reservation, f"HTTP {response.status}")
-                raise TransportError(f"HTTP_{response.status}")
-            try:
-                text, tin, tout = parse_response(provider, json.loads(response.body))
-            except (ValueError, AttributeError):
-                self.budget.mark_uncertain(reservation, "unreadable response")
-                raise TransportError("BAD_RESPONSE") from None
-            outcome = self.budget.settle_ai(reservation, tin, tout)
-            return self._store_draft(provider, p.model, text, outcome, reservation)
-        raise TransportError(last_error)
+            self.budget.mark_uncertain(reservation, f"HTTP {response.status}")      # 5xx/504/other: never retried
+            raise TransportError(f"HTTP_{response.status}")
+        raise TransportError("HTTP_429")
 
     def _store_draft(self, provider: str, model: str, text: str, outcome: str, reservation) -> dict:
         now = self.clock()

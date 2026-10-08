@@ -10,12 +10,18 @@ from dataclasses import dataclass, field
 ALLOWED_HOSTS = frozenset({"www.googleapis.com", "api.openai.com", "api.anthropic.com"})
 
 
-class TransportError(Exception):
-    """`code` is one of a fixed set; the message never includes request or response content."""
+NEVER_SENT_CODES = frozenset({"NOT_HTTPS", "HOST_NOT_ALLOWED"})
 
-    def __init__(self, code: str):
+
+class TransportError(Exception):
+    """`code` is one of a fixed set; the message never includes request or response content. `sent` is False ONLY when the
+    request is proven never to have left this process (it was refused by the checks before any connection); every other
+    failure (timeout, lost connection, refused redirect, oversized answer) may have reached the provider, so it is True."""
+
+    def __init__(self, code: str, sent: bool | None = None):
         super().__init__(code)
         self.code = code
+        self.sent = (code not in NEVER_SENT_CODES) if sent is None else sent
 
 
 @dataclass
@@ -32,6 +38,7 @@ class HttpRequest:
 class HttpResponse:
     status: int
     body: bytes
+    headers: dict = field(default_factory=dict)        # lower-case names; only used to read Retry-After
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -58,8 +65,10 @@ class UrllibTransport:
             with opener.open(req, timeout=request.timeout_s) as response:
                 body = response.read(request.max_bytes + 1)
                 status = response.status
+                headers = {k.lower(): v for k, v in response.headers.items()}
         except urllib.error.HTTPError as exc:
             body, status = exc.read(request.max_bytes + 1), exc.code
+            headers = {k.lower(): v for k, v in (exc.headers or {}).items()}
         except TransportError:
             raise
         except (socket.timeout, TimeoutError):
@@ -68,7 +77,7 @@ class UrllibTransport:
             raise TransportError("CONNECTION") from None
         if len(body) > request.max_bytes:
             raise TransportError("RESPONSE_TOO_LARGE")
-        return HttpResponse(status, body)
+        return HttpResponse(status, body, headers)
 
 
 def redact(text: str, secrets=()) -> str:

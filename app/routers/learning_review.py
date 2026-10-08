@@ -57,17 +57,17 @@ def _reviewer(user):
 
 def _fail(exc):
     text = str(exc)
-    status = 409 if ("only a pending" in text or "changed since" in text) else 422
+    status = 409 if ("only a pending" in text or "changed since" in text or "not confirmed available" in text) else 422
     raise HTTPException(status_code=status, detail=text)
 
 
 @router.get("/items")
-def list_items(request: Request, status: str | None = None):
+def list_items(request: Request, status: str | None = None, needs_source_review: bool = False):
     _gate(request)
     from learning_engine.review import ReviewError, ReviewService
     store = _open()
     try:
-        return ReviewService(store).list_items(status)
+        return ReviewService(store).list_items(status, needs_source_review)
     except ReviewError as exc:
         _fail(exc)
     finally:

@@ -49,8 +49,8 @@ def search_item(n, channel=CH1, title=None):
     return {"id": {"kind": "youtube#video", "videoId": vid(n)}, "snippet": {"channelId": channel, "title": title or f"Dribbling drill number {n}", "publishedAt": "2026-09-01T00:00:00Z"}}
 
 
-def video_item(n, channel=CH1, privacy="public", kids=False, duration="PT5M30S", live="none", title=None):
-    return {"id": vid(n), "snippet": {"channelId": channel, "title": title or f"Dribbling drill number {n}", "liveBroadcastContent": live},
+def video_item(n, channel=CH1, privacy="public", kids=False, duration="PT5M30S", live="none", title=None, published="2026-09-01T00:00:00Z"):
+    return {"id": vid(n), "snippet": {"channelId": channel, "title": title or f"Dribbling drill number {n}", "publishedAt": published, "liveBroadcastContent": live},
             "contentDetails": {"duration": duration}, "status": {"privacyStatus": privacy, "madeForKids": kids}}
 
 
@@ -97,3 +97,15 @@ class Sleeps:
 
     def __call__(self, seconds):
         self.calls.append(seconds)
+
+
+def iid(state_dir, n):
+    """The review item that rests on video number n. Item ids are random (they must not contain the video id), so tests look them up."""
+    from pathlib import Path
+    from learning_engine.store import ResearchStore
+    store = ResearchStore(Path(state_dir))
+    try:
+        row = store.db.execute("SELECT item_id FROM review_items WHERE source_video_id=?", (vid(n),)).fetchone()
+        return row["item_id"] if row else None
+    finally:
+        store.close()

@@ -100,7 +100,9 @@ class ProviderConfig:
     max_call_usd: float = 0.0
     pricing: Pricing | None = None
     timeout_s: float = 30.0
-    max_retries: int = 1
+    max_retries: int = 1              # only a 429 that carries Retry-After is ever retried (see ai.py); never a 5xx/timeout
+    min_interval_s: float = 2.0       # minimum gap between two requests to this provider, kept across restarts
+    max_backoff_s: float = 30.0       # a Retry-After longer than this is not waited for: the run stops instead
 
 
 @dataclass(frozen=True)
@@ -191,8 +193,8 @@ def parse_config(data: dict) -> Config:
     p_all = data.get("providers", {})
     _only(p_all, set(PROVIDERS), "providers")
     for name, p in p_all.items():
-        _only(p, {"enabled", "model", "api_key_env", "max_input_tokens", "max_output_tokens", "max_call_usd", "pricing", "timeout_s", "max_retries"},
-              f"providers.{name}")
+        _only(p, {"enabled", "model", "api_key_env", "max_input_tokens", "max_output_tokens", "max_call_usd", "pricing", "timeout_s", "max_retries",
+                    "min_interval_s", "max_backoff_s"}, f"providers.{name}")
         pricing = None
         if p.get("pricing") is not None:
             pr = p["pricing"]
@@ -215,7 +217,9 @@ def parse_config(data: dict) -> Config:
             max_output_tokens=_int(p.get("max_output_tokens", 500), 1, 1_500, f"providers.{name}.max_output_tokens"),
             max_call_usd=_num(p.get("max_call_usd", 0.0), 0, HARD_MAX_DAILY_USD, f"providers.{name}.max_call_usd"), pricing=pricing,
             timeout_s=_num(p.get("timeout_s", 30.0), 1, 120, f"providers.{name}.timeout_s"),
-            max_retries=_int(p.get("max_retries", 1), 0, 2, f"providers.{name}.max_retries"))
+            max_retries=_int(p.get("max_retries", 1), 0, 2, f"providers.{name}.max_retries"),
+            min_interval_s=_num(p.get("min_interval_s", 2.0), 0.5, 600, f"providers.{name}.min_interval_s"),
+            max_backoff_s=_num(p.get("max_backoff_s", 30.0), 1, 120, f"providers.{name}.max_backoff_s"))
 
     b = data.get("budget", {})
     _only(b, {"daily_ai_requests", "daily_ai_tokens", "daily_cost_usd", "paid_execution_approved_by", "paid_execution_approved_on",

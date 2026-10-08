@@ -24,6 +24,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status")
     pend = sub.add_parser("list")
     pend.add_argument("--status", choices=["pending", "approved", "rejected"])
+    pend.add_argument("--needs-source-review", action="store_true", help="approved items whose source is no longer valid and must be reviewed again")
     show = sub.add_parser("show")
     show.add_argument("item_id")
     save = sub.add_parser("save-content")
@@ -60,10 +61,13 @@ def main(argv=None) -> int:
             if args.command == "status":
                 print(json.dumps({"schema_version": store.schema_version(), "audit_chain_ok": store.verify_audit(),
                                   "pending": len(service.list_items("pending")), "approved": len(service.list_items("approved")),
-                                  "rejected": len(service.list_items("rejected"))}, indent=2))
+                                  "rejected": len(service.list_items("rejected")),
+                                  "source_review_required": len(service.list_items(needs_source_review=True))}, indent=2))
             elif args.command == "list":
-                for item in service.list_items(args.status):
-                    print(f"{item['item_id']}\t{item['review_status']}\t{item['stage']}\tv{item['version']}\t{(item['source'] or {}).get('title') or item['origin']}")
+                for item in service.list_items(args.status, args.needs_source_review):
+                    flag = ("\tNEEDS_REVIEW" + (f"({item['source_issue']})" if item["source_issue"] else "")) if item["needs_source_review"] else ""
+                    flag += "\tSOURCE_REMOVED" if item["source_state"] == "removed" else ""
+                    print(f"{item['item_id']}\t{item['review_status']}\t{item['stage']}\tv{item['version']}\t{(item['source'] or {}).get('title') or item['origin']}{flag}")
             elif args.command == "show":
                 print(json.dumps({**service.get(args.item_id), "history": service.history(args.item_id)}, indent=2, default=str))
             elif args.command == "save-content":

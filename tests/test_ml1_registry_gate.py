@@ -131,7 +131,8 @@ def test_a_read_only_sqlite_factory_can_verify_but_cannot_write(tmp_path):
     seed(sessionmaker(bind=engine, autoflush=False, expire_on_commit=False), [("player-1", "vid-1")])
     engine.dispose()
     factory = ra.readonly_sqlite_factory(path)
-    reg = ra.SqlAlchemyConsentRegistry(factory, SALT)
+    from tests.ml1_registry_fixture import MockCoverageEvidenceNotRealConsent
+    reg = ra.SqlAlchemyConsentRegistry(factory, SALT, MockCoverageEvidenceNotRealConsent({"vid-1": ["consent-player-1"]}))
     assert reg.verify_example(real_meta(), NOW) == []
     with factory() as db:
         with pytest.raises(OperationalError):
@@ -209,7 +210,8 @@ def _fake_candidate(tmp_path, refs, synthetic_only=False):
     report = {"dataset": {"version": "v", "fingerprint": "f" * 64, "synthetic_only": synthetic_only, "n_examples": 300, "split_sizes": {}, "split_sha256": "x"},
               "training": {"seed": 1, "requested_by_ref": HUMAN, "history": []}, "classifier": {"trained": False, "reason": "none"},
               "evaluation": {"test": {"n_examples": 80, "reconstruction_improvement_over_baseline": improvement}, "baseline": "mean pose"},
-              "consent_audit": {"passed": True, "n_examples": 300, "consent_refs": sorted(refs), "synthetic_only": synthetic_only},
+              "consent_audit": {"passed": True, "n_examples": 300, "consent_refs": sorted(refs), "synthetic_only": synthetic_only,
+                                "coverage_lineage": [{"video_id": c.video_ref(f"vid-{p}", SALT), "video_sha256": video_sha(f"vid-{p}")} for p in range(len(refs))]},
               "leakage_check": {"passed": True}, "no_player_scores": True}
     return registry.save_candidate(tmp_path, "m", model, report=report, classes=None)
 
@@ -253,3 +255,44 @@ def test_every_candidate_states_what_it_is_and_is_not_validated_for(tmp_path):
     assert "mean-pose baseline" in card["claims"][0]
     for word in ("dribbling", "drill quality", "player assessment", "children"):
         assert any(word in item for item in card["not_validated_for"]), word
+
+
+# ---- review fix 5: "covers every visible child" is a reviewer's attestation in the registry, never a field in the example --------------------
+def test_a_covers_all_visible_children_claim_in_the_example_cannot_open_the_gate():
+    meta = real_meta()
+    meta["consent"]["covers_all_visible_children"] = True                        # the claim the review found to be self-written
+    pending, factory = make_registry([("player-1", "vid-1")], status="pending_review")
+    assert "DATASET_ENTRY_NOT_APPROVED" in pending.verify_example(meta, NOW)
+    examples = real_examples(6, 1, 1)
+    for each, _arrays in examples:
+        each["consent"]["covers_all_visible_children"] = True
+    with pytest.raises(c.ConsentError, match="DATASET_ENTRY_NOT_APPROVED"):
+        ds.build_dataset(examples, version="x", now=NOW, registry=make_registry(real_pairs(6, 1), status="pending_review")[0])
+    unreviewed, f2 = make_registry([("player-1", "vid-1")])
+    with f2() as db:
+        db.query(MLDatasetEntryDB).update({"reviewed_by_user_id": None, "reviewed_at": None})
+        db.commit()
+    assert "NO_NAMED_CONSENT_REVIEWER" in unreviewed.verify_example(meta, NOW)
+
+
+def test_the_field_is_ignored_in_both_directions_and_the_registry_decides():
+    reg, _ = make_registry([("player-1", "vid-1")])
+    for claim in (True, False, "yes", None):
+        meta = real_meta()
+        meta["consent"]["covers_all_visible_children"] = claim
+        assert c.eligibility_problems(meta, NOW) == [] and reg.verify_example(meta, NOW) == []
+    meta = real_meta()
+    meta["consent"].pop("covers_all_visible_children", None)
+    assert c.eligibility_problems(meta, NOW) == [] and reg.verify_example(meta, NOW) == []
+
+
+def test_the_review_must_be_dated_after_the_entry_was_flagged_and_after_the_consent_was_granted_and_not_in_the_future():
+    meta = real_meta()
+    for column, value, expected in (("reviewed_at", NOW - timedelta(days=1), "REVIEW_PREDATES_THE_DATASET_ENTRY"),
+                                    ("reviewed_at", NOW - timedelta(days=45), "REVIEW_PREDATES_THE_CONSENT"),
+                                    ("reviewed_at", NOW + timedelta(days=2), "REVIEW_IS_DATED_IN_THE_FUTURE")):
+        reg, factory = make_registry([("player-1", "vid-1")])
+        with factory() as db:
+            db.query(MLDatasetEntryDB).update({column: value})
+            db.commit()
+        assert expected in reg.verify_example(meta, NOW), expected
