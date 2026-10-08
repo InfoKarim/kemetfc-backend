@@ -108,7 +108,8 @@ class ReviewService:
         if item["source_video_id"]:
             s = self.store.db.execute("SELECT * FROM sources WHERE video_id=?", (item["source_video_id"],)).fetchone()
             src = None if s is None else {k: s[k] for k in ("video_id", "channel_id", "url", "title", "published_at", "discovered_at", "verified_at", "duration_s",
-                                                              "privacy_status", "made_for_kids", "query_version", "stage", "availability", "exclusion_reason")}
+                                                              "privacy_status", "made_for_kids", "query_version", "stage", "availability", "exclusion_reason",
+                                                              "discovery_class", "discovery_query")}
         last = self.store.db.execute("SELECT version, decision, reviewer_id, at, review_basis FROM reviews WHERE item_id=? ORDER BY review_id DESC LIMIT 1", (item_id,)).fetchone()
         state, approval = item["source_state"], item["approval_state"]
         if item["origin"] != "YOUTUBE_SOURCE":
@@ -124,6 +125,9 @@ class ReviewService:
                     "not a check of the source")
         elif state == "removed":
             note = "the source was removed after the retention window; this is the coach's own content with no source attached"
+        elif src is not None and src["discovery_class"] == "PUBLIC_METADATA_DISCOVERY":
+            note = ("found by a public keyword search (metadata only): the channel is not approved, no one gave permission, nothing was watched or "
+                    "downloaded, and the title says nothing proven about the drill or its suitability")
         else:
             note = "metadata-only source: the title says nothing proven about the drill or its suitability"
         return {"item_id": item_id, "origin": item["origin"], "stage": item["stage"], "review_status": item["review_status"],

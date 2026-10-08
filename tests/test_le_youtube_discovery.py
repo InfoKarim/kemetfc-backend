@@ -40,7 +40,7 @@ def test_discovered_then_metadata_only_with_provenance_and_nothing_else(tmp_path
     assert s["url"] == f"https://www.youtube.com/watch?v={s['video_id']}" and s["channel_id"] == CH1 and s["query_version"] == "dribbling-v1"
     assert s["discovered_at"].endswith("Z") and s["verified_at"].endswith("Z")
     assert set(s) == {"video_id", "channel_id", "url", "title", "published_at", "duration_s", "made_for_kids", "privacy_status", "discovered_at",
-                      "verified_at", "query_version", "text_fingerprint", "duplicate_of", "fingerprint_conflict_with", "stage", "availability", "exclusion_reason"}    # no description, no thumbnail, no transcript
+                      "verified_at", "query_version", "text_fingerprint", "duplicate_of", "fingerprint_conflict_with", "discovery_class", "discovery_query", "stage", "availability", "exclusion_reason"}    # no description, no thumbnail, no transcript
     items = rows(tmp_path, "select origin, stage, review_status, published from review_items")
     assert all(i == {"origin": "YOUTUBE_SOURCE", "stage": "metadata_only", "review_status": "pending", "published": 0} for i in items)
     assert report["stages"] == {"discovered": 0, "metadata_only": 2, "ai_draft": 0, "coach_reviewed": 0}

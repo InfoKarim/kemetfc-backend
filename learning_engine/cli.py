@@ -47,7 +47,7 @@ def main(argv=None) -> int:
         return 2
     if args.command == "validate-config":
         print(json.dumps({"valid": True, "mode": config.mode, "network_enabled": config.network_enabled,
-                          "youtube_channels_allowlisted": len(config.youtube.channels),
+                          "discovery_mode": config.youtube.discovery_mode, "youtube_channels_allowlisted": len(config.youtube.channels),
                           "providers_enabled": [n for n, p in config.providers.items() if p.enabled]}, indent=2))
         return 0
     try:

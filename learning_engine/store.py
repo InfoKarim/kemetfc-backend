@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DB_NAME = "learning_engine.sqlite3"
 LOCK_NAME = "run.lock"
 
@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS sources (
   title TEXT, published_at TEXT, duration_s INTEGER, made_for_kids INTEGER, privacy_status TEXT,
   discovered_at TEXT NOT NULL, verified_at TEXT, query_version TEXT NOT NULL,
   text_fingerprint TEXT, duplicate_of TEXT REFERENCES sources(video_id), fingerprint_conflict_with TEXT,
+  discovery_class TEXT NOT NULL DEFAULT 'ALLOWLISTED_CHANNEL' CHECK (discovery_class IN ('ALLOWLISTED_CHANNEL','PUBLIC_METADATA_DISCOVERY')),
+  discovery_query TEXT,
   stage TEXT NOT NULL CHECK (stage IN ('discovered','metadata_only')),
   availability TEXT NOT NULL DEFAULT 'unknown' CHECK (availability IN ('available','unavailable','unknown','excluded')),
   exclusion_reason TEXT
@@ -167,11 +169,10 @@ class ResearchStore:
         version = int(row["value"]) if row is not None else None
         if version is not None and version > SCHEMA_VERSION:
             raise StoreError("this database was made by a newer version of the engine")
-        if version == 1:
-            self._upgrade_from_1()
-            return
-        if version == 2:
-            self._upgrade_2_to_3()
+        while version is not None and version < SCHEMA_VERSION:
+            {1: self._upgrade_from_1, 2: self._upgrade_2_to_3, 3: self._upgrade_3_to_4}[version]()
+            version = self.schema_version()
+        if version is not None:
             return
         with self.transaction():
             for statement in _statements(SCHEMA):
@@ -222,7 +223,7 @@ class ResearchStore:
                     "(SELECT 1 FROM sources s WHERE s.video_id=review_items.source_video_id AND s.availability='available'))").rowcount
                 if suspended:
                     self.audit("LEGACY_APPROVALS_SUSPENDED_AT_UPGRADE", "system", {"from_schema": 1, "count": suspended})
-                self.db.execute("UPDATE meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),))
+                self.db.execute("UPDATE meta SET value='3' WHERE key='schema_version'")
                 violations = self.db.execute("PRAGMA foreign_key_check").fetchall()
                 if violations:
                     raise StoreError("the upgrade would leave broken references; it was not applied")
@@ -284,6 +285,20 @@ class ResearchStore:
         finally:
             self.db.execute("PRAGMA legacy_alter_table=OFF")
             self.db.execute("PRAGMA foreign_keys=ON")
+
+    def _upgrade_3_to_4(self) -> None:
+        """Version 3 -> 4: records HOW each source was found. Every existing source came from an allowlisted channel, which is the default
+        class. Two added columns, one transaction."""
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            self.db.execute("ALTER TABLE sources ADD COLUMN discovery_class TEXT NOT NULL DEFAULT 'ALLOWLISTED_CHANNEL' "
+                            "CHECK (discovery_class IN ('ALLOWLISTED_CHANNEL','PUBLIC_METADATA_DISCOVERY'))")
+            self.db.execute("ALTER TABLE sources ADD COLUMN discovery_query TEXT")
+            self.db.execute("UPDATE meta SET value='4' WHERE key='schema_version'")
+            self.db.execute("COMMIT")
+        except BaseException:
+            self.db.execute("ROLLBACK")
+            raise
 
     @contextmanager
     def transaction(self):

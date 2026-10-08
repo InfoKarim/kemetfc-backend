@@ -8,7 +8,8 @@
 # API keys, if you ever enable live mode, come from the environment (for example launchd's EnvironmentVariables or a
 # root-owned EnvironmentFile for systemd), never from this file or the config.
 #
-# The run is OFFLINE unless the config says mode "live" AND network_enabled true AND a channel allowlist and key exist.
+# The run is OFFLINE unless the config says mode "live" AND network_enabled true AND youtube.enabled AND a key exists AND (an allowlisted channel exists,
+# or youtube.discovery_mode is public_keyword_search).
 set -euo pipefail
 umask 077
 export TZ=America/Detroit

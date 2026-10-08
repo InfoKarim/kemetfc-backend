@@ -54,13 +54,25 @@ def parse_duration(value) -> int | None:
     return d * 86400 + h * 3600 + mi * 60 + s
 
 
-def parse_search_item(item, channel_id: str) -> dict | None:
-    """A search result, only if every field we rely on is present and plausible AND it belongs to the allowlisted channel."""
+PUBLIC = "PUBLIC_METADATA_DISCOVERY"
+ALLOWLISTED = "ALLOWLISTED_CHANNEL"
+CHANNEL_ID_RE = re.compile(r"^UC[A-Za-z0-9_-]{22}$")
+
+
+def parse_search_item(item, channel_id: str | None) -> dict | None:
+    """A search result, only if every field we rely on is present and plausible. With a channel id it must belong to that allowlisted
+    channel; with None (public keyword search) it must carry a well-formed channel id of its own, which is only recorded."""
     if not isinstance(item, dict) or not isinstance(item.get("id"), dict) or not isinstance(item.get("snippet"), dict):
         return None
     vid, snip = item["id"].get("videoId"), item["snippet"]
     title = snip.get("title")
-    if not isinstance(vid, str) or not VIDEO_ID.match(vid) or snip.get("channelId") != channel_id:
+    if not isinstance(vid, str) or not VIDEO_ID.match(vid):
+        return None
+    if channel_id is None:
+        channel_id = snip.get("channelId")
+        if not isinstance(channel_id, str) or not CHANNEL_ID_RE.match(channel_id):
+            return None
+    elif snip.get("channelId") != channel_id:
         return None
     if not isinstance(title, str) or not title.strip() or len(title) > MAX_TITLE:
         return None
@@ -100,17 +112,18 @@ class Discovery:
         self.store, self.config, self.client, self.now_fn = store, config, client, now_fn
 
     # ---- storing ---------------------------------------------------------------------------------------------------------
-    def _upsert_discovered(self, found: dict, now: datetime) -> str:
+    def _upsert_discovered(self, found: dict, now: datetime, discovery_class: str = ALLOWLISTED) -> str:
         """'new', 'duplicate_id' or 'duplicate_text'. Never overwrites an existing source's stage."""
         db = self.store.db
         if db.execute("SELECT 1 FROM sources WHERE video_id=?", (found["video_id"],)).fetchone():
             return "duplicate_id"
         fp = fingerprint(found["title"])
         canonical = db.execute("SELECT video_id FROM sources WHERE text_fingerprint=? AND duplicate_of IS NULL", (fp,)).fetchone() if fp else None
-        db.execute("INSERT INTO sources(video_id,channel_id,url,title,published_at,discovered_at,query_version,text_fingerprint,duplicate_of,stage,availability) "
-                   "VALUES (?,?,?,?,?,?,?,?,?,'discovered','unknown')",
+        db.execute("INSERT INTO sources(video_id,channel_id,url,title,published_at,discovered_at,query_version,text_fingerprint,duplicate_of,stage,availability,"
+                   "discovery_class,discovery_query) VALUES (?,?,?,?,?,?,?,?,?,'discovered','unknown',?,?)",
                    (found["video_id"], found["channel_id"], f"https://www.youtube.com/watch?v={found['video_id']}", found["title"],
-                    found["published_at"], iso(now), self.config.youtube.query_version, fp, canonical["video_id"] if canonical else None))
+                    found["published_at"], iso(now), self.config.youtube.query_version, fp, canonical["video_id"] if canonical else None,
+                    discovery_class, self.config.youtube.query))
         if canonical:
             return "duplicate_text"
         self._create_item(found["video_id"], "discovered", now)
@@ -245,21 +258,29 @@ class Discovery:
     # ---- one channel ---------------------------------------------------------------------------------------------------------
     def discover_channel(self, channel_id: str, now: datetime, counts: dict, errors: list, checkpoint: dict) -> bool:
         """Search one allowlisted channel, a bounded number of pages. Returns True if the channel was fully processed."""
+        return self._search_pages(channel_id, channel_id, ALLOWLISTED, now, counts, errors, checkpoint)
+
+    def discover_public(self, now: datetime, counts: dict, errors: list, checkpoint: dict) -> bool:
+        """The public keyword search: ONE configured query, no channel restriction, a bounded number of pages. Whatever it finds is recorded
+        as PUBLIC_METADATA_DISCOVERY: public metadata only, from a channel nobody has approved. Returns True if fully processed."""
+        return self._search_pages(None, "public_search", PUBLIC, now, counts, errors, checkpoint)
+
+    def _search_pages(self, channel_id: str | None, key: str, discovery_class: str, now: datetime, counts: dict, errors: list, checkpoint: dict) -> bool:
         yt = self.config.youtube
-        state = checkpoint.setdefault(channel_id, {"pages": 0, "next": None, "done": False, "ids": []})
+        state = checkpoint.setdefault(key, {"pages": 0, "next": None, "done": False, "ids": []})
         if state["done"]:
             return True
         while state["pages"] < yt.max_pages_per_channel:
             try:
                 data = self.client.search(channel_id, state["next"])
             except YouTubeApiError as exc:
-                errors.append({"where": "search.list", "channel": channel_id, "code": exc.code})
+                errors.append({"where": "search.list", "channel": channel_id or "public_search", "code": exc.code})
                 if exc.quota:
                     raise
                 return False
             items = data.get("items")
             if not isinstance(items, list):
-                errors.append({"where": "search.list", "channel": channel_id, "code": "BAD_SHAPE"})
+                errors.append({"where": "search.list", "channel": channel_id or "public_search", "code": "BAD_SHAPE"})
                 return False
             with self.store.transaction():
                 for raw in items:
@@ -268,7 +289,7 @@ class Discovery:
                         counts["invalid_items"] += 1
                         continue
                     counts["discovered"] += 1
-                    outcome = self._upsert_discovered(found, now)
+                    outcome = self._upsert_discovered(found, now, discovery_class)
                     counts[{"new": "new", "duplicate_id": "duplicate_by_video_id", "duplicate_text": "duplicate_by_text_fingerprint"}[outcome]] += 1
                     if outcome == "new":
                         state["ids"].append(found["video_id"])

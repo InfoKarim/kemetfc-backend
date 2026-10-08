@@ -62,6 +62,9 @@ class Channel:
     reviewed_on: str
 
 
+DISCOVERY_MODES = ("allowlisted_channels", "public_keyword_search")
+
+
 @dataclass(frozen=True)
 class YouTubeConfig:
     enabled: bool = False
@@ -80,6 +83,8 @@ class YouTubeConfig:
     max_response_bytes: int = 262_144
     api_key_env: str = "KEMET_LE_YOUTUBE_API_KEY"
     api_key_transport: str = "header"
+    discovery_mode: str = "allowlisted_channels"      # or "public_keyword_search" (no channel needed; results are PUBLIC_METADATA_DISCOVERY)
+    future_queries: tuple = ()                        # prepared for later; NEVER sent by this build (only `query` is)
 
 
 @dataclass(frozen=True)
@@ -149,7 +154,7 @@ def parse_config(data: dict) -> Config:
     y = data.get("youtube", {})
     _only(y, {"enabled", "channels", "query", "query_version", "results_per_page", "max_pages_per_channel", "search_calls_per_day",
               "units_per_day", "details_batch", "timeout_s", "min_interval_s", "max_retries", "backoff_base_s", "max_response_bytes",
-              "api_key_env", "api_key_transport"}, "youtube")
+              "api_key_env", "api_key_transport", "discovery_mode", "future_queries"}, "youtube")
     channels = []
     for i, ch in enumerate(y.get("channels", [])):
         _only(ch, {"channel_id", "label", "basis_for_allowing", "reviewed_by", "reviewed_on"}, f"youtube.channels[{i}]")
@@ -165,6 +170,14 @@ def parse_config(data: dict) -> Config:
         channels.append(Channel(ch["channel_id"], ch["label"], ch["basis_for_allowing"], ch["reviewed_by"], ch["reviewed_on"]))
     if len({c.channel_id for c in channels}) != len(channels):
         raise ConfigError("duplicate channel ids in the allowlist")
+    discovery_mode = y.get("discovery_mode", "allowlisted_channels")
+    if discovery_mode not in DISCOVERY_MODES:
+        raise ConfigError("youtube.discovery_mode must be allowlisted_channels or public_keyword_search")
+    if discovery_mode == "public_keyword_search" and channels:
+        raise ConfigError("youtube.channels must be empty in public_keyword_search mode: a channel found by a public search is never an approved channel")
+    future = y.get("future_queries", [])
+    if not isinstance(future, list) or len(future) > 10 or not all(isinstance(q, str) and 3 <= len(q) <= 100 and "dribbl" in q.lower() for q in future):
+        raise ConfigError("youtube.future_queries must be a list of up to 10 short Dribbling queries")
     transport = y.get("api_key_transport", "header")
     if transport not in ("header", "query"):
         raise ConfigError("youtube.api_key_transport must be header or query")
@@ -187,7 +200,7 @@ def parse_config(data: dict) -> Config:
         max_retries=_int(y.get("max_retries", 2), 0, 3, "youtube.max_retries"),
         backoff_base_s=_num(y.get("backoff_base_s", 2.0), 0.1, 60, "youtube.backoff_base_s"),
         max_response_bytes=_int(y.get("max_response_bytes", 262_144), 1_024, 1_000_000, "youtube.max_response_bytes"),
-        api_key_env=env, api_key_transport=transport)
+        api_key_env=env, api_key_transport=transport, discovery_mode=discovery_mode, future_queries=tuple(future))
 
     providers = {}
     p_all = data.get("providers", {})
@@ -262,7 +275,7 @@ def youtube_blockers(config: Config, env: dict) -> list[str]:
         out.append("NETWORK_DISABLED")
     if not config.youtube.enabled:
         out.append("YOUTUBE_NOT_ENABLED")
-    if not config.youtube.channels:
+    if config.youtube.discovery_mode == "allowlisted_channels" and not config.youtube.channels:
         out.append("NO_CHANNEL_ALLOWLIST")
     if not env.get(config.youtube.api_key_env):
         out.append("YOUTUBE_API_KEY_NOT_SET")

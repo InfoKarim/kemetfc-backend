@@ -9,6 +9,8 @@ Nothing in this repository installs, loads, enables or starts any of these. They
 * `kemet-learning-engine.service.template` and `.timer.template` - systemd. `OnCalendar=*-*-* 06:30:00 America/Detroit`. NOT
   tested on Linux or systemd: I cannot confirm they work as written.
 
+The templates are config-driven: they run whatever `discovery_mode` the config says (`allowlisted_channels` or `public_keyword_search`) and stay offline unless the config is live. A real daily schedule needs a chosen host and a separate decision to enable it; none is installed.
+
 Operating reality: a local schedule only runs while the computer is on (and, for launchd, the user is logged in). A closed
 laptop runs nothing; launchd does not make up a missed run, systemd with `Persistent=true` runs a missed day once. Either way
 the engine is idempotent per day and refuses to overlap, so catching up is safe.

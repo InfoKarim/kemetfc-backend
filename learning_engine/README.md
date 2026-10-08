@@ -25,6 +25,17 @@ and videos.list client - `discovery.py` validation, duplicates, states - `budget
 `cli.py` command line. Optional backend review API: `app/routers/learning_review.py` (locked by default). Scheduler templates:
 `deploy/learning_engine/` (not installed).
 
+## Two discovery modes (`youtube.discovery_mode`)
+
+* `allowlisted_channels` (default, unchanged): searches only the channels the operator listed, each with the basis for allowing it.
+* `public_keyword_search`: ONE configured query (default `football dribbling drills`) over public YouTube search, **no channel needed**,
+  `channels` must stay empty. Every source it finds is recorded as `PUBLIC_METADATA_DISCOVERY` with the query, the time, the video and channel ids and the link.
+  That is *public metadata only*: not an approved channel, not a trusted source, no permission from any owner, nothing downloaded, watched or analysed,
+  and nothing known about the drill or its suitability for children. A found channel is never added to an allowlist. `safeSearch=strict` is requested, but
+  the official reference says it only *tries* to exclude restricted content, so it is never presented as safety. Every candidate stays `pending` until a coach
+  reviews it. Refresh, retention, invalidation, deduplication and the request/quota limits work as before. `future_queries` may hold later queries; this build never sends them.
+  Official references used (read 2026-10-08): search.list (`channelId` is optional; 1 unit in its own bucket of 100 calls/day) and the quota page (updated 2026-10-08).
+
 ## Using it (offline first)
 
 ```sh

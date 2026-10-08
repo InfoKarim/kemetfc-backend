@@ -79,9 +79,14 @@ class YouTubeClient:
             self.sleep(self.config.backoff_base_s * (2 ** attempt))
         raise last                                           # pragma: no cover
 
-    def search(self, channel_id: str, page_token: str | None = None) -> dict:
-        params = {"part": "snippet", "type": "video", "channelId": channel_id, "q": self.config.query, "safeSearch": "strict",
+    def search(self, channel_id: str | None, page_token: str | None = None) -> dict:
+        """search.list. With a channel id the search is limited to that channel (allowlisted mode). With None it is the public keyword
+        search: no channelId is sent (channelId is an optional parameter in the official reference). `safeSearch=strict` only asks
+        YouTube to TRY to exclude restricted content; the documentation does not promise that results are safe, and neither does this engine."""
+        params = {"part": "snippet", "type": "video", "q": self.config.query, "safeSearch": "strict",
                   "maxResults": self.config.results_per_page}
+        if channel_id is not None:
+            params["channelId"] = channel_id
         if page_token:
             params["pageToken"] = page_token
         return self._call("search", params, "youtube_search")

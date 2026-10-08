@@ -83,6 +83,8 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
                 "anthropic": {"status": "skipped", "reasons": []}}
     channels_done = 0
     fatal = False
+    public_mode = config.youtube.discovery_mode == "public_keyword_search"
+    planned = 1 if public_mode else len(config.youtube.channels)
 
     # ---- YouTube ------------------------------------------------------------------------------------------------------
     if mode == "offline":
@@ -100,9 +102,12 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
             client = YouTubeClient(tr, key, config.youtube, before_attempt=budget.reserve_youtube, pace=pacer.wait, sleep=sleep)
             disc = Discovery(store, config, client, clock)
             try:
-                for channel in config.youtube.channels:
-                    if disc.discover_channel(channel.channel_id, now, counts, errors, checkpoint):
-                        channels_done += 1
+                if public_mode:
+                    channels_done += 1 if disc.discover_public(now, counts, errors, checkpoint) else 0
+                else:
+                    for channel in config.youtube.channels:
+                        if disc.discover_channel(channel.channel_id, now, counts, errors, checkpoint):
+                            channels_done += 1
                 new_ids = [i for st in checkpoint.values() if isinstance(st, dict) for i in st.get("ids", [])]
                 pending = [r["video_id"] for r in store.db.execute("SELECT video_id FROM sources WHERE stage='discovered' AND availability='unknown' AND duplicate_of IS NULL ORDER BY video_id")]
                 refresh = due_for_refresh(store, config, now)
@@ -119,8 +124,8 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
             except Exception as exc:                          # type name only: a message could carry a secret
                 fatal = True
                 errors.append({"where": "youtube", "code": f"UNEXPECTED_{type(exc).__name__}"})
-            services["youtube"] = {"status": "ok" if channels_done == len(config.youtube.channels) and not errors else "partial" if channels_done else "failed",
-                                   "reasons": [], "channels_done": channels_done, "channels_planned": len(config.youtube.channels),
+            services["youtube"] = {"status": "ok" if channels_done == planned and not errors else "partial" if channels_done else "failed",
+                                   "reasons": [], "channels_done": channels_done, "channels_planned": planned,
                                    "request_attempts_this_run": client.attempts}
 
     # ---- AI drafts (every gate must be open; none is in the default configuration) -----------------------------------------
@@ -188,6 +193,12 @@ def _run(config, store, env, now, day, mode, attempt, checkpoint, transport, ai_
         "cost_usd": {p: {"reserved": spend[p]["usd_reserved"], "actual_estimate_from_operator_prices": spend[p]["usd_actual"]} for p in ("openai", "anthropic")},
         "cost_note": "reserved and estimated from operator-supplied ceilings and prices: not a guarantee of any provider invoice",
         "retention": retention, "audit_chain_ok": store.verify_audit(),
+        "discovery": {"mode": config.youtube.discovery_mode, "query": config.youtube.query, "queries_sent_this_run": 1 if public_mode and channels_done else 0,
+                      "future_queries_prepared_not_sent": list(config.youtube.future_queries),
+                      "class": "PUBLIC_METADATA_DISCOVERY" if public_mode else "ALLOWLISTED_CHANNEL",
+                      "meaning": ("public metadata found by a keyword search: not an approved channel, not a trusted source, no permission from any owner, "
+                                  "nothing downloaded or analysed, nothing about the drill or its suitability for children is known") if public_mode
+                      else "found inside an allowlisted channel the operator chose"},
     }
 
 
@@ -201,6 +212,9 @@ def render_markdown(r: dict) -> str:
              f"- stages: " + ", ".join(f"{k} {v}" for k, v in r["stages"].items()), "", "## Services", ""]
     for name, svc in r["services"].items():
         lines.append(f"- {name}: {svc['status']}" + (f" ({', '.join(svc['reasons'])})" if svc.get("reasons") else ""))
+    d = r.get("discovery") or {}
+    lines += ["", "## Discovery", "", f"- mode: {d.get('mode')} (class {d.get('class')}), query: {d.get('query')!r}, queries sent this run: {d.get('queries_sent_this_run')}",
+              f"- meaning: {d.get('meaning')}"]
     lines += ["", "## Calls and limits", "", f"- API calls: {r['api_calls']}", f"- limits: {r['limits']}",
               f"- cost (reserved / estimated): {r['cost_usd']} - {r['cost_note']}", "", "## Errors", ""]
     lines += [f"- {e}" for e in r["errors"]] or ["- none"]

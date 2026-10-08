@@ -250,6 +250,8 @@ def test_a_version_1_database_is_upgraded_without_losing_a_possibly_sent_request
         created_at TEXT NOT NULL, settled_at TEXT, note TEXT)""")
     db.execute("INSERT INTO ledger(day,kind,provider,status,created_at,note) VALUES ('2026-10-08','ai','openai','released','2026-10-08T15:00:00Z','HTTP 504, not processed')")
     db.execute("INSERT INTO ledger(day,kind,provider,status,created_at,tokens_actual,usd_actual) VALUES ('2026-10-08','ai','openai','settled','2026-10-08T15:01:00Z',10,0.1)")
+    db.execute("ALTER TABLE sources DROP COLUMN discovery_class")
+    db.execute("ALTER TABLE sources DROP COLUMN discovery_query")
     db.execute("ALTER TABLE sources DROP COLUMN fingerprint_conflict_with")
     db.execute("ALTER TABLE reviews DROP COLUMN review_basis")
     db.execute("PRAGMA foreign_keys=OFF")
@@ -264,7 +266,7 @@ def test_a_version_1_database_is_upgraded_without_losing_a_possibly_sent_request
     db.commit()
     store.close()
     upgraded = ResearchStore(tmp_path / "s")
-    assert upgraded.schema_version() == 3
+    assert upgraded.schema_version() == 4
     assert [r["status"] for r in rows(upgraded)] == ["uncertain", "settled"]            # the old "released" 504 is counted again, conservatively
     refs = [r["sql"] for r in upgraded.db.execute("select sql from sqlite_master where sql like '%review_items_v1%'")]
     assert refs == [] and upgraded.db.execute("pragma foreign_key_check").fetchall() == []   # no table was left pointing at a dropped name
