@@ -25,6 +25,8 @@ struct AssessmentSummaryView: View {
     let onDone: () -> Void
     let onViewPendingUploads: () -> Void
     let onConfirmPlayerTracked: (String) -> Void
+    /// SELECT PLAYER IN VIDEO for the video-first flow (nil in the classic flow, which does not show it).
+    var onSelectPlayerInVideo: (() -> Void)? = nil
 
     // BUG FIX (found during recording-fix verification): this dialog used to live on
     // AssessmentCameraView, triggered synchronously by the Stop button — but
@@ -36,6 +38,10 @@ struct AssessmentSummaryView: View {
     // after Stop, so the confirmation now lives here instead, shown once per finished
     // recording via .onAppear.
     @State private var showPlayerTrackedConfirmation = false
+
+    /// True only when the coach came in through the video-first PLAYER ASSESSMENT. RECORD ASSESSMENT
+    /// clears it, so the classic summary below is shown exactly as before for that route.
+    @ObservedObject private var videoFirst = VideoFirstAssessmentMode.shared
 
     private var record: PendingAssessmentRecord? { store.record(id: recordId) }
 
@@ -69,7 +75,20 @@ struct AssessmentSummaryView: View {
         }
     }
 
+    @ViewBuilder
     private func content(for record: PendingAssessmentRecord) -> some View {
+        if videoFirst.isActive {
+            VideoFirstReviewView(
+                store: store, mode: videoFirst, recordId: recordId,
+                onRetryUpload: onRetryUpload, onDone: onDone, onViewPendingUploads: onViewPendingUploads,
+                onSelectPlayerInVideo: onSelectPlayerInVideo
+            )
+        } else {
+            classicContent(for: record)
+        }
+    }
+
+    private func classicContent(for record: PendingAssessmentRecord) -> some View {
         VStack(spacing: 24) {
             VStack(spacing: 4) {
                 Text("KEMET FC").font(.caption).bold().foregroundStyle(.secondary)

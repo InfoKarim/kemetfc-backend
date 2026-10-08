@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 IOS = ROOT / "ios/KemetFCTracker/Sources"
 CONFIG = (IOS / "UI/AssessmentWebConfiguration.swift").read_text()
 HOME = (IOS / "UI/CoachHomeView.swift").read_text()
+REVIEW = (IOS / "UI/VideoFirstReviewView.swift").read_text()
 APP = (IOS / "App/KemetFCTrackerApp.swift").read_text()
 KEY = "KEMET_ASSESSMENT_WEB_BASE_URL"
 PILOT_PORT = "87" + "65"        # the local pilot server's port, built so that it is not written out in this file
@@ -78,18 +79,18 @@ def test_the_setting_is_named_in_exactly_one_file():
     assert [p.name for p in swift_files() if KEY in p.read_text()] == ["AssessmentWebConfiguration.swift"]
 
 
-def test_the_helper_is_used_only_by_the_player_assessment_cover():
+def test_the_helper_is_used_only_by_the_manual_measurement_cover_on_the_saved_screen():
     users = [p.name for p in swift_files() if HELPER in p.read_text() and p.name != "AssessmentWebConfiguration.swift"]
-    assert users == ["CoachHomeView.swift"]
-    assert HOME.count(HELPER) == 1
-    assert "baseURL: AssessmentWebConfiguration.baseURL(fallback: webDashboardBaseURL)" in cover("showPlayerAssessment")
-    assert 'pagePath: "v1/sprint"' in cover("showPlayerAssessment")
+    assert users == ["VideoFirstReviewView.swift"]
+    assert REVIEW.count(HELPER) == 1
+    assert "baseURL: AssessmentWebConfiguration.baseURL(fallback: session.sharedAPIClient.baseURL)" in REVIEW
+    assert 'pagePath: "v1/sprint"' in REVIEW
 
 
 def test_the_full_dashboard_and_the_record_and_pending_buttons_do_not_use_the_override():
     assert "WebDashboardScreen(baseURL: webDashboardBaseURL, onClose: { showWebDashboard = false })" in HOME
-    assert HELPER not in cover("showWebDashboard")
-    assert "Button(action: onStartAssessment)" in HOME and "Button(action: onViewPendingUploads)" in HOME
+    assert HELPER not in HOME
+    assert "Button(action: onViewPendingUploads)" in HOME and "onStartAssessment()" in HOME
     assert "onStartAssessment: { coachWantsToRecord = true }" in APP
     assert "onViewPendingUploads: { showPendingUploads = true }" in APP
 

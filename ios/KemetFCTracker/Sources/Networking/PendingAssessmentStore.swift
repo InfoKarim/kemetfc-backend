@@ -95,6 +95,19 @@ public struct PendingAssessmentRecord: Codable, Identifiable, Equatable {
     /// Set when the file passed but AVFoundation still reported an error at stop. Survives a
     /// successful upload (unlike `lastError`, which upload success clears).
     public var integrityWarning: String?
+    /// "CAMERA_RECORDING" or "IMPORTED_VIDEO" (`AssessmentVideoSource`). nil on every record made before
+    /// importing existed, which are all camera recordings. Optional, so older index files decode unchanged.
+    public var videoSource: String?
+    /// SHA-256 of the video file as it was stored (imported videos). nil for camera recordings.
+    public var contentSha256: String?
+    /// When the coach confirmed SAVE ASSESSMENT for an imported video. An imported video is copied into
+    /// durable storage before the coach confirms, but it is NOT uploaded, retried or counted as pending until
+    /// this is set. nil for camera recordings (they upload as soon as they are finalized, as before).
+    public var coachSavedAt: Date?
+    /// The coach's confirmed choice(s) of which person in the video is the player (SELECT PLAYER IN VIDEO). A
+    /// temporary tracking identity for this video, stored locally only; nil until the coach has chosen. Optional,
+    /// so older index files decode unchanged and no database or server schema is involved.
+    public var targetSelections: [VideoTargetSelection]?
 
     public init(
         id: String,
@@ -124,6 +137,10 @@ public struct PendingAssessmentRecord: Codable, Identifiable, Equatable {
     }
 
     public var isFinished: Bool { uploadState == .uploaded }
+    /// An imported video that is on this iPhone but whose SAVE ASSESSMENT has not been confirmed. It must
+    /// never be uploaded by an automatic retry.
+    public var awaitingCoachSave: Bool { videoSource == "IMPORTED_VIDEO" && coachSavedAt == nil }
+    public var isImportedVideo: Bool { videoSource == "IMPORTED_VIDEO" }
     /// Eligible to have finalizeAndUpload(_:) attempted on it — either
     /// because a previous attempt is retryable, or because it's a
     /// verified-safe local recording that simply hasn't been attempted
@@ -133,6 +150,7 @@ public struct PendingAssessmentRecord: Codable, Identifiable, Equatable {
     /// B1C50F7F-5D92-45ED-A9AD-D6FABF429659, stuck at LOCAL_SAVED with a
     /// verified 20s recording and no way to retry it).
     public var isRetryable: Bool {
+        if awaitingCoachSave { return false }
         switch uploadState {
         case .localSaved, .pendingUpload, .failedRetryable:
             return true
@@ -208,9 +226,15 @@ public final class PendingAssessmentStore: ObservableObject {
     /// backs up and does not purge under storage pressure the way it
     /// may purge tmp/. Creates the directory on first use.
     public func newRecordingFileURL(recordingId: String) -> URL {
+        newRecordingFileURL(recordingId: recordingId, fileExtension: "mov")
+    }
+
+    /// Same durable folder, keeping the original container extension (an imported .mp4 stays .mp4, so its
+    /// name never claims a different format than the file holds).
+    public func newRecordingFileURL(recordingId: String, fileExtension: String) -> URL {
         let directory = rootDirectory.appendingPathComponent(Self.recordingsDirectoryName)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appendingPathComponent("\(recordingId).mov")
+        return directory.appendingPathComponent("\(recordingId).\(fileExtension)")
     }
 
     public func relativePath(for fileURL: URL) -> String {

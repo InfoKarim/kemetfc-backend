@@ -51,6 +51,11 @@ struct RootView: View {
     @EnvironmentObject var session: AssessmentSessionViewModel
     @State private var showPendingUploads = false
     @State private var coachWantsToRecord = false
+    /// Set when the coach came in through PLAYER ASSESSMENT: after the player is chosen they pick RECORD VIDEO
+    /// (the existing camera flow below) or UPLOAD VIDEO (an imported video, same pending record and upload).
+    @ObservedObject private var videoFirst = VideoFirstAssessmentMode.shared
+    /// The saved video whose player the coach is choosing (SELECT PLAYER IN VIDEO).
+    @State private var selectingTargetRecordId: String?
 
     var body: some View {
         Group {
@@ -72,6 +77,13 @@ struct RootView: View {
                     onUploadAvatar: { data in await session.uploadAvatar(imageData: data) },
                     onRemoveAvatar: { await session.removeAvatar() }
                 )
+            } else if let targetId = selectingTargetRecordId, session.pendingStore.record(id: targetId) != nil {
+                // The coach shows the AI which person in a saved video is the player. Nothing starts from here.
+                SelectPlayerInVideoView(
+                    store: session.pendingStore,
+                    recordId: targetId,
+                    onClose: { selectingTargetRecordId = nil }
+                )
             } else if let recordingId = session.lastFinishedRecordingId, session.pendingStore.record(id: recordingId) != nil {
                 AssessmentSummaryView(
                     store: session.pendingStore,
@@ -86,8 +98,39 @@ struct RootView: View {
                     onViewPendingUploads: { showPendingUploads = true },
                     onConfirmPlayerTracked: { answer in
                         Task { await session.confirmPlayerTracked(answer) }
-                    }
+                    },
+                    onSelectPlayerInVideo: { selectingTargetRecordId = recordingId }
                 )
+            } else if videoFirst.isActive, let importedId = videoFirst.importedRecordId,
+                      session.pendingStore.record(id: importedId) != nil {
+                // An uploaded video, imported and checked, waiting for SAVE ASSESSMENT (or already saved).
+                // It is the same kind of pending record a recording makes; saving hands it to the same
+                // upload code a recording uses.
+                let importer = VideoImportService(store: session.pendingStore)
+                NavigationStack {
+                    ImportedVideoReviewView(
+                        store: session.pendingStore,
+                        mode: videoFirst,
+                        recordId: importedId,
+                        onSave: {
+                            guard importer.markSaved(recordId: importedId) else { return }
+                            videoFirst.save(importedId)
+                            Task { await session.retryUpload(recordId: importedId) }
+                        },
+                        onCancel: {
+                            importer.discardUnsaved(recordId: importedId)
+                            videoFirst.returnToSourceChoice()
+                        },
+                        onRetryUpload: { Task { await session.retryUpload(recordId: importedId) } },
+                        onDone: {
+                            videoFirst.end()
+                            session.clearFinishedRecording()
+                            coachWantsToRecord = false
+                        },
+                        onViewPendingUploads: { showPendingUploads = true },
+                        onSelectPlayerInVideo: { selectingTargetRecordId = importedId }
+                    )
+                }
             } else if !coachWantsToRecord {
                 CoachHomeView(
                     currentUsername: session.authenticatedUsername,
@@ -133,6 +176,14 @@ struct RootView: View {
                         .background(Color.kemetNavy)
                     }
                 }
+            } else if let player = session.confirmedPlayer, videoFirst.isActive, videoFirst.sourceChoice == nil {
+                VideoSourceChoiceView(
+                    mode: videoFirst,
+                    store: session.pendingStore,
+                    player: player,
+                    // Nothing is recording at this point, so clearing the chosen player is safe.
+                    onChangePlayer: { session.clearFinishedRecording() }
+                )
             } else if let player = session.confirmedPlayer {
                 // ROOT-CAUSE FIX (physical-device investigation, 2026-09-27): the camera
                 // preview used to live INSIDE AssessmentCameraView, which only enters the

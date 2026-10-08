@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 IOS = ROOT / "ios/KemetFCTracker/Sources"
 WEB = (IOS / "UI/WebDashboardScreen.swift").read_text()
 HOME = (IOS / "UI/CoachHomeView.swift").read_text()
+REVIEW = (IOS / "UI/VideoFirstReviewView.swift").read_text()
 APP = (IOS / "App/KemetFCTrackerApp.swift").read_text()
 
 
@@ -28,25 +29,29 @@ def test_the_web_screen_defaults_still_open_the_full_dashboard_unrestricted():
     assert "WebDashboardScreen(baseURL: webDashboardBaseURL, onClose: { showWebDashboard = false })" in HOME
 
 
-def test_player_assessment_opens_the_sprint_page_in_a_restricted_web_view():
-    cover = re.search(r"\.fullScreenCover\(isPresented: \$showPlayerAssessment\) \{(.*?)\n        \}", HOME, re.S).group(1)
+def test_the_manual_measurement_page_is_still_a_restricted_web_view_reached_from_the_saved_screen():
+    cover = re.search(r"\.fullScreenCover\(isPresented: \$showManualMeasurements\) \{(.*?)\n        \}", REVIEW, re.S).group(1)
     assert 'pagePath: "v1/sprint"' in cover and "restrictToOrigin: true" in cover
     # The app's own configured origin, nothing hard-coded; the optional assessment-only override resolves to it when absent.
-    assert "baseURL: AssessmentWebConfiguration.baseURL(fallback: webDashboardBaseURL)" in cover
-    assert "Player Assessment" in HOME and "Manual measurements" in HOME
+    assert "baseURL: AssessmentWebConfiguration.baseURL(fallback: session.sharedAPIClient.baseURL)" in cover
+    assert "Manual measurements (advanced)" in REVIEW
+    assert "showPlayerAssessment" not in HOME and "v1/sprint" not in HOME     # Home no longer opens it: Player Assessment is video-first
 
 
 def test_recording_and_pending_uploads_are_wired_to_the_same_actions_as_before():
-    assert "Button(action: onStartAssessment)" in HOME and "Button(action: onViewPendingUploads)" in HOME
+    assert "Button(action: onViewPendingUploads)" in HOME
     assert "Record Assessment" in HOME and "Camera and player tracking" in HOME
+    record_button = HOME[HOME.index('Text("Record Assessment")') - 220:HOME.index('Text("Record Assessment")')]
+    assert "VideoFirstAssessmentMode.shared.end()" in record_button and "onStartAssessment()" in record_button
     assert "onStartAssessment: { coachWantsToRecord = true }" in APP          # RootView still starts recording the same way
     assert "onViewPendingUploads: { showPendingUploads = true }" in APP
     assert "CoachHomeView(" in APP and "onPlayerAssessment" not in APP + HOME   # no new parameter, so RootView is untouched
 
 
-def test_the_player_assessment_entry_does_not_touch_recording_or_timing():
-    block = HOME[HOME.index("showPlayerAssessment = true"):HOME.index("Button(action: onStartAssessment)")]
-    for forbidden in ("Timer", "timer", "startAssessment", "pendingStore", "session.", "Camera", "record"):
+def test_the_player_assessment_entry_only_starts_the_existing_recording_route():
+    block = HOME[HOME.index("VideoFirstAssessmentMode.shared.begin()"):HOME.index('Text("Select a player, record, save")')]
+    assert block.count("onStartAssessment()") == 1 and "VideoFirstAssessmentMode.shared.begin()" in block
+    for forbidden in ("Timer", "timer", "startAssessment", "stopAssessment", "pendingStore", "session.", "Camera", "AVFoundation", "confirmPlayer"):
         assert forbidden not in block, forbidden
     protected = list((IOS / "Capture").glob("*.swift")) + list((IOS / "Tracking").glob("*.swift")) + \
         list((IOS / "DockKit").glob("*.swift")) + list((IOS / "Networking").glob("*.swift")) + \
@@ -54,6 +59,7 @@ def test_the_player_assessment_entry_does_not_touch_recording_or_timing():
     for path in protected:
         text = path.read_text()
         assert "v1/sprint" not in text and "pagePath" not in text and "showPlayerAssessment" not in text, path.name
+        assert "VideoFirst" not in text, path.name
 
 
 def test_the_production_default_is_unchanged_and_no_development_address_is_in_the_source():
