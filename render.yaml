@@ -15,6 +15,9 @@ services:
         sync: false
       - key: AUTH_COOKIE_SECURE
         value: "true"
+      # Assessment V1 (manual timing) stays OFF until it is deliberately enabled; see app/v1/access.py.
+      - key: V1_ASSESSMENT_ENABLED
+        value: "false"
       - key: AUTH_MAX_FAILED_ATTEMPTS
         value: "5"
       - key: AUTH_LOCKOUT_MINUTES

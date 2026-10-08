@@ -20,6 +20,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRATCH_ROOT = Path(tempfile.mkdtemp(prefix="kemet-pytest-"))
 
+# Assessment V1 is OFF and fail-closed in a real deployment. The V1 tests exercise the feature itself, so the test session turns it on for
+# everybody; tests/test_v1_access_flag.py changes these per test to prove the switch.
+os.environ.setdefault("V1_ASSESSMENT_ENABLED", "true")
+os.environ.setdefault("V1_ASSESSMENT_ALLOWED_USERNAMES", "*")
+
 # Environment settings that name a directory the application may write to.
 _DIRECTORY_SETTINGS = {
     "PLAYER_VIDEO_UPLOAD_DIR": "videos",

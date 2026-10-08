@@ -20,7 +20,7 @@ from tests.test_v1_access_flag import set_flag
 from tests.test_v1_api import (  # noqa: F401  (api, concurrent_env are fixtures)
     api, concurrent_env, correct, count, create_assessment, key, race,
 )
-from tests.v1_support import ctx  # noqa: F401  (api depends on it)
+from tests.test_privacy_s0 import ctx  # noqa: F401  (api depends on it)
 
 COMING_SOON = ("S3", "S5", "S6", "S7", "S8")
 
@@ -412,4 +412,7 @@ def test_on_with_an_allowlist_admits_only_the_named_coach(api, asm, monkeypatch)
 
 def test_phase_1_adds_no_database_table(api):
     from app.database import Base
-    assert {t for t in Base.metadata.tables if t.startswith("v1_")} == set(TABLE_CLASSIFICATIONS)
+    v1_tables = {t for t in Base.metadata.tables if t.startswith("v1_")}
+    # the same six tables phase 0 created (this repository's privacy classification covers every table in the application, not only V1's)
+    assert v1_tables == {"v1_assessments", "v1_manual_measurement_corrections", "v1_manual_measurements", "v1_metric_definitions", "v1_station_runs", "v1_trials"}
+    assert v1_tables <= set(TABLE_CLASSIFICATIONS)

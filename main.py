@@ -161,6 +161,7 @@ from app.routers import messaging as messaging_router
 from app.routers import player_assessments as player_assessments_router
 from app.routers import player_checkin as player_checkin_router
 from app.routers import v1_assessments as v1_assessments_router
+from app.v1.access import is_v1_path, username_may_enter, v1_enabled
 from app.routers import learning_review as learning_review_router
 from app.routers import seasons as seasons_router
 from app.routers import teams as teams_router
@@ -443,6 +444,11 @@ def required_feature_for_path(path: str) -> str | None:
 async def enforce_authentication(request: Request, call_next):
     path = request.url.path
 
+    # Assessment V1 is off unless V1_ASSESSMENT_ENABLED is set. While off, every /v1 path is a plain 404
+    # for everybody, before any authentication, so the feature cannot be probed.
+    if is_v1_path(path) and not v1_enabled():
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
     if AUTH_DISABLED:
         if path == "/login":
             return RedirectResponse(url="/dashboard", status_code=307)
@@ -499,6 +505,9 @@ async def enforce_authentication(request: Request, call_next):
         )
 
     request.state.current_user = authenticated
+
+    if is_v1_path(path) and not username_may_enter(authenticated["username"]):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
 
     if authenticated["role"] == "guardian":
         guardian_path_allowed = (
