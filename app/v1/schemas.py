@@ -28,6 +28,8 @@ class CreateStationRunBody(_Body):
 
 class CreateTrialBody(_Body):
     attempt_number: int = Field(ge=1, le=99, strict=True)
+    # "" for a station without series; "L" or "R" for the turning foot at S2.
+    series_key: Literal["", "L", "R"] = ""
     validity: Literal["VALID", "INVALID"] = "VALID"
     invalid_reason: StrictStr | None = Field(default=None, max_length=64)
 
@@ -51,3 +53,19 @@ class CorrectMeasurementBody(_Body):
     reason_code: Literal["DECIMAL_SLIP", "TYPING_ERROR", "MISREAD_DISPLAY", "WRONG_TRIAL", "OTHER"]
     reason_text: StrictStr | None = Field(default=None, max_length=200)
     confirmed_by_user_id: StrictStr = Field(min_length=1, max_length=128)
+
+
+class SaveAttemptBody(_Body):
+    """One attempt in one request: the unit the coach saves, and the unit the browser's offline
+    queue replays. ``client_entry_id`` is the idempotency key; sending the same body again can
+    never create a second attempt. A VALID attempt carries a time (RECORDED) or a NOT_RECORDED
+    reason; a not-valid attempt carries a reason from the station's list and no time."""
+    station_id: StrictStr = Field(min_length=1, max_length=8)
+    series_key: Literal["", "L", "R"] = ""
+    attempt_number: int = Field(ge=1, le=99, strict=True)
+    validity: Literal["VALID", "INVALID"] = "VALID"
+    invalid_reason: StrictStr | None = Field(default=None, max_length=64)
+    entry_status: Literal["RECORDED", "NOT_RECORDED"] | None = None
+    displayed_value: StrictStr | None = Field(default=None, max_length=16)
+    not_recorded_reason: StrictStr | None = Field(default=None, max_length=64)
+    client_entry_id: StrictStr = Field(min_length=8, max_length=64)

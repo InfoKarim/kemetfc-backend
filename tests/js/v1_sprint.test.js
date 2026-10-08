@@ -61,115 +61,92 @@ test("no time is ever converted to a number or reformatted", () => {
   assert.equal(S.validateTimeText("4.20").value, "4.20");   // trailing zero kept
 });
 
-// ---- save flow (10-14, 22-25) -----------------------------------------------------------
+// ---- saving one whole attempt ---------------------------------------------------------------
 
-test("saving sends the time as a JSON string and shows the server's value", async () => {
-  const { flows, calls } = flowsWith([{ status: 201, body: measurementBody("4.25") }]);
-  const r = await flows.saveTime({ trialId: "V1T000001", text: "4.25" });
+const entryOf = (payload, op = "op-0001-test") => ({ op_id: op, payload: {
+  station_id: "S1", series_key: "", attempt_number: 1, validity: "VALID", entry_status: "RECORDED", displayed_value: "4.25", ...payload } });
+const savedReply = (value = "4.25", extra = {}) => ({ status: 201, body: { created: true, station_run: { station_run_id: "V1SR000001" },
+  trial: { trial_id: "V1T000001", attempt_number: 1, validity: "VALID", manual_measurements: [measurementBody(value)] }, ...extra } });
+
+test("saving sends the whole attempt in one request, the time as a JSON string", async () => {
+  const { flows, calls } = flowsWith([savedReply("4.25")]);
+  const r = await flows.saveAttempt({ assessmentId: "V1A000001", entry: entryOf({}) });
   assert.equal(r.state, "SAVED");
-  assert.equal(r.measurement.displayed_value, "4.25");
-  assert.match(calls[0].raw, /"displayed_value":"4\.25"/);       // a string in the wire body
+  assert.equal(r.trial.manual_measurements[0].displayed_value, "4.25");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].path, "/v1/assessments/V1A000001/attempts");
+  assert.match(calls[0].raw, /"displayed_value":"4\.25"/);       // a string on the wire
   assert.doesNotMatch(calls[0].raw, /"displayed_value":4\.25/);  // never a JSON number
-  assert.equal(calls[0].path, "/v1/trials/V1T000001/manual-measurements");
-  assert.deepEqual(Object.keys(calls[0].body).sort(), ["client_entry_id", "displayed_value", "metric_id"]);
-  assert.equal(calls[0].body.metric_id, S.SPRINT_METRIC);
+  assert.deepEqual(Object.keys(calls[0].body).sort(),
+    ["attempt_number", "client_entry_id", "displayed_value", "entry_status", "series_key", "station_id", "validity"]);
+  assert.equal(calls[0].body.client_entry_id, "op-0001-test");  // the queue's operation id is the idempotency key
 });
 
-test("a typed 4.20 is sent as 4.20 and the server's 4.20 is what is shown", async () => {
-  const { flows, calls } = flowsWith([{ status: 201, body: measurementBody("4.20") }]);
-  const r = await flows.saveTime({ trialId: "t", text: "4.20" });
-  assert.match(calls[0].raw, /"displayed_value":"4\.20"/);
-  assert.equal(r.measurement.displayed_value, "4.20");
-});
-
-test("42.50 is sent unchanged", async () => {
-  const { flows, calls } = flowsWith([{ status: 201, body: measurementBody("42.50") }]);
-  await flows.saveTime({ trialId: "t", text: "42.50" });
-  assert.equal(calls[0].body.displayed_value, "42.50");
-});
-
-test("invalid input never reaches the server", async () => {
-  const { flows, calls } = flowsWith([]);
-  for (const text of ["-1", "0", "4.255", "1e1", "4,25", "", "x"]) {
-    const r = await flows.saveTime({ trialId: "t", text });
-    assert.equal(r.state, "INVALID_INPUT");
+test("a typed 4.20 and 42.50 are sent unchanged and the server's text is what is shown", async () => {
+  for (const typed of ["4.20", "42.50"]) {
+    const { flows, calls } = flowsWith([savedReply(typed)]);
+    const r = await flows.saveAttempt({ assessmentId: "A1", entry: entryOf({ displayed_value: typed }) });
+    assert.equal(calls[0].body.displayed_value, typed);
+    assert.equal(r.trial.manual_measurements[0].displayed_value, typed);
   }
-  assert.equal(calls.length, 0);
+});
+
+test("the body carries the station, the turning foot and the attempt number, and leaves empty fields out", () => {
+  const body = S.attemptBody(entryOf({ station_id: "S2", series_key: "L", attempt_number: 2 }));
+  assert.equal(body.station_id, "S2");
+  assert.equal(body.series_key, "L");
+  assert.equal(body.attempt_number, 2);
+  for (const missing of ["invalid_reason", "not_recorded_reason"]) assert.equal(missing in body, false, missing);
+  const invalid = S.attemptBody({ op_id: "op-0002-test", payload: { station_id: "S4", series_key: "", attempt_number: 1, validity: "INVALID", invalid_reason: "MISSED_CONE" } });
+  assert.deepEqual(invalid, { station_id: "S4", series_key: "", attempt_number: 1, validity: "INVALID", invalid_reason: "MISSED_CONE", client_entry_id: "op-0002-test" });
+});
+
+test("a timer problem sends a reason and no number", async () => {
+  const { flows, calls } = flowsWith([savedReply(null)]);
+  await flows.saveAttempt({ assessmentId: "A1", entry: entryOf({ entry_status: "NOT_RECORDED", not_recorded_reason: "DEVICE_FAILURE", displayed_value: null }) });
+  assert.equal(calls[0].body.entry_status, "NOT_RECORDED");
+  assert.equal(calls[0].body.not_recorded_reason, "DEVICE_FAILURE");
+  assert.equal("displayed_value" in calls[0].body, false);
 });
 
 test("SAVED only when the server confirms; server errors are never success", async () => {
   for (const status of [400, 401, 403, 404, 409, 422, 500, 502, 503]) {
     const { flows } = flowsWith([{ status, body: { detail: "x" } }]);
-    const r = await flows.saveTime({ trialId: "t", text: "4.25" });
+    const r = await flows.saveAttempt({ assessmentId: "A1", entry: entryOf({}) });
     assert.notEqual(r.state, "SAVED", String(status));
     assert.ok(["REJECTED", "UNCERTAIN"].includes(r.state));
   }
   const { flows } = flowsWith(["network"]);
-  assert.equal((await flows.saveTime({ trialId: "t", text: "4.25" })).state, "UNCERTAIN");
+  assert.equal((await flows.saveAttempt({ assessmentId: "A1", entry: entryOf({}) })).state, "UNCERTAIN");
 });
 
-test("uncertain outcomes never say 'not saved' and keep the same key for a safe retry", async () => {
-  let n = 0;
-  const { flows, calls, store } = flowsWith(["network", { status: 200, body: measurementBody("4.25") }],
-    () => `key-${++n}-generated`);
-  const first = await flows.saveTime({ trialId: "V1T000001", text: "4.25" });
+test("uncertain outcomes never say 'not saved' and every retry carries the same operation id", async () => {
+  const { flows, calls } = flowsWith(["network", { status: 200, body: { ...savedReply().body, created: false } }]);
+  const entry = entryOf({});
+  const first = await flows.saveAttempt({ assessmentId: "A1", entry });
   assert.equal(first.state, "UNCERTAIN");
   assert.doesNotMatch(first.message, /not saved/i);
   assert.match(first.message, /Retry safely/);
-  assert.equal(store.has("mm:V1T000001"), true);              // kept for the retry
-  const retry = await flows.saveTime({ trialId: "V1T000001", text: "4.25" });
-  assert.equal(retry.state, "SAVED");
-  assert.equal(calls[0].body.client_entry_id, calls[1].body.client_entry_id); // same identity
-  assert.equal(n, 1);                                          // only one key was ever made
-  assert.equal(store.has("mm:V1T000001"), false);             // cleared after the server answered
+  const retry = await flows.saveAttempt({ assessmentId: "A1", entry });
+  assert.equal(retry.state, "SAVED");                              // the server's 200 says it already had it
+  assert.equal(calls[0].body.client_entry_id, calls[1].body.client_entry_id);
 });
 
-test("after a definitive answer the next action gets a fresh key", async () => {
-  let n = 0;
-  const { flows, calls } = flowsWith([{ status: 422, body: { detail: "bad" } }, { status: 201, body: measurementBody("4.25") }],
-    () => `key-${++n}-generated`);
-  await flows.saveTime({ trialId: "t", text: "4.25" });
-  await flows.saveTime({ trialId: "t", text: "4.25" });
-  assert.notEqual(calls[0].body.client_entry_id, calls[1].body.client_entry_id);
+test("a refusal is reported as a refusal with the server's reason in plain words", async () => {
+  const { flows } = flowsWith([{ status: 409, body: { detail: "This attempt number already exists with different content" } }]);
+  const r = await flows.saveAttempt({ assessmentId: "A1", entry: entryOf({}) });
+  assert.equal(r.state, "REJECTED");
+  assert.equal(r.status, 409);
+  assert.match(r.message, /already has a different saved entry/);
 });
 
-test("a 500 keeps the key (the request may have been stored)", async () => {
-  const { flows, store } = flowsWith([{ status: 503, body: null }]);
-  const r = await flows.saveTime({ trialId: "t", text: "4.25" });
-  assert.equal(r.state, "UNCERTAIN");
-  assert.equal(store.has("mm:t"), true);
-});
-
-test("the pending store keeps keys only, never assessment content", async () => {
-  const { flows, storage } = flowsWith(["network"]);
-  await flows.saveTime({ trialId: "V1T000001", text: "4.25" });
-  const stored = JSON.stringify(storage.data);
-  assert.match(stored, /key-0001-fixed/);
-  assert.doesNotMatch(stored, /4\.25/);
-  assert.deepEqual(Object.keys(storage.data), ["kemet_v1_pending_keys"]);
-});
-
-// ---- NOT_RECORDED ---------------------------------------------------------------------------
-
-test("not recorded sends a reason and no number", async () => {
-  const body = { ...measurementBody(null), entry_status: "NOT_RECORDED", not_recorded_reason: "DEVICE_FAILURE" };
-  const { flows, calls } = flowsWith([{ status: 201, body }]);
-  const r = await flows.saveNotRecorded({ trialId: "t", reason: "DEVICE_FAILURE" });
-  assert.equal(r.state, "SAVED");
-  assert.equal(calls[0].body.entry_status, "NOT_RECORDED");
-  assert.equal(calls[0].body.not_recorded_reason, "DEVICE_FAILURE");
-  assert.equal("displayed_value" in calls[0].body, false);
-  assert.doesNotMatch(calls[0].raw, /\b0\b|999/);
-});
-
-test("not recorded needs one of the backend's reasons", async () => {
-  const { flows, calls } = flowsWith([]);
-  for (const reason of ["", "SLOW", "TIMER_FAILURE", "TIMER_RESET_EARLY", "TIMER_WRONG_EVENT", null]) {
-    assert.equal((await flows.saveNotRecorded({ trialId: "t", reason })).state, "INVALID_INPUT");
-  }
-  assert.equal(calls.length, 0);
+test("the reasons the page offers match the backend's lists", () => {
   assert.deepEqual(S.NOT_RECORDED_REASONS.map((r) => r[0]),
     ["TIMER_MISSED_STOP", "TIMER_RESET_BEFORE_ENTRY", "DEVICE_FAILURE", "EVENT_UNCERTAIN", "OTHER"]);
+  assert.deepEqual(Object.keys(S.INVALID_REASONS_BY_STATION), ["S1", "S2", "S4"]);   // only the open stations
+  assert.equal(S.INVALID_REASONS_BY_STATION.S4.some(([c]) => c === "MISSED_CONE"), true);
+  assert.equal(Object.values(S.INVALID_REASONS_BY_STATION).flat().some(([c]) => c === "CONE_CONTACT"), false);
 });
 
 test("a timer problem is described as a recording problem, never as the player failing", () => {
@@ -191,31 +168,81 @@ test("validity and time status are separate facts", () => {
   assert.equal(timed.time, "4.31 sec");
 });
 
-// ---- attempts -----------------------------------------------------------------------------------
+// ---- attempts waiting on this device -----------------------------------------------------------------
 
-test("attempt numbers continue from the server's list", () => {
-  assert.equal(S.nextAttemptNumber([]), 1);
-  assert.equal(S.nextAttemptNumber([{ attempt_number: 1 }, { attempt_number: 2 }]), 3);
+test("attempt numbers continue after the server's list and after the attempts waiting on the device", () => {
+  assert.equal(S.nextAttemptNumber([], [], ""), 1);
+  assert.equal(S.nextAttemptNumber([{ attempt_number: 1, series_key: "" }, { attempt_number: 2, series_key: "" }], [], ""), 3);
+  assert.equal(S.nextAttemptNumber([{ attempt_number: 1, series_key: "" }], [{ attempt_number: 2, series_key: "" }, { attempt_number: 3, series_key: "" }], ""), 4);
 });
 
-test("adding an attempt sends its number; a repeat press resolves to the same attempt", async () => {
-  const { flows, calls } = flowsWith([
-    { status: 201, body: { trial_id: "V1T000001", attempt_number: 1 } },
-    { status: 200, body: { trial_id: "V1T000001", attempt_number: 1 } }]);
-  const a = await flows.addAttempt({ runId: "V1SR000001", attemptNumber: 1 });
-  const b = await flows.addAttempt({ runId: "V1SR000001", attemptNumber: 1 });
-  assert.equal(a.trial.trial_id, b.trial.trial_id);
-  assert.deepEqual(calls[0].body, { attempt_number: 1, validity: "VALID" });
-  const inv = flowsWith([{ status: 201, body: {} }]);
-  await inv.flows.addAttempt({ runId: "r", attemptNumber: 2, invalidReason: "FALSE_START" });
-  assert.deepEqual(inv.calls[0].body, { attempt_number: 2, validity: "INVALID", invalid_reason: "FALSE_START" });
+test("each turning foot counts its own attempts", () => {
+  const trials = [{ attempt_number: 1, series_key: "L" }, { attempt_number: 2, series_key: "L" }, { attempt_number: 1, series_key: "R" }];
+  assert.equal(S.nextAttemptNumber(trials, [], "L"), 3);
+  assert.equal(S.nextAttemptNumber(trials, [], "R"), 2);
+  assert.equal(S.nextAttemptNumber(trials, [{ attempt_number: 2, series_key: "R" }], "R"), 3);
+});
+
+test("a queued attempt says plainly where it is, and a refused one says the server did not accept it", () => {
+  const base = { payload: { station_id: "S1", series_key: "", attempt_number: 2, validity: "VALID", entry_status: "RECORDED", displayed_value: "4.25" } };
+  const pending = S.describeQueued({ ...base, state: "LOCAL_PENDING" });
+  assert.equal(pending.time, "4.25 sec");
+  assert.match(pending.status, /Saved on this device/);
+  assert.equal(pending.failed, false);
+  assert.match(S.describeQueued({ ...base, state: "SYNCING" }).status, /Sending/);
+  const failed = S.describeQueued({ ...base, state: "SYNC_FAILED", last_error: { status: 409, message: "This attempt number already has a different saved entry." } });
+  assert.equal(failed.failed, true);
+  assert.match(failed.status, /Not accepted by the server/);
+  assert.equal(S.describeQueued({ payload: { ...base.payload, validity: "INVALID", invalid_reason: "FALSE_START", entry_status: null, displayed_value: null }, state: "LOCAL_PENDING" }).time, "No time for this attempt");
+});
+
+test("the sync banner is silent when nothing waits and honest when something does", () => {
+  assert.equal(S.syncBannerModel({ LOCAL_PENDING: 0, SYNCING: 0, SYNCED: 3, SYNC_FAILED: 0 }).visible, false);
+  const waiting = S.syncBannerModel({ LOCAL_PENDING: 2, SYNCING: 0, SYNCED: 0, SYNC_FAILED: 0 });
+  assert.equal(waiting.visible, true);
+  assert.match(waiting.text, /2 attempts saved on this device/);
+  assert.equal(waiting.showSync, true);
+  const one = S.syncBannerModel({ LOCAL_PENDING: 1 });
+  assert.match(one.text, /1 attempt saved/);
+  const failed = S.syncBannerModel({ LOCAL_PENDING: 0, SYNC_FAILED: 1 });
+  assert.match(failed.text, /not accepted by the server/);
+  assert.equal(failed.tone, "warn");
+  assert.equal(failed.showSync, false);
+});
+
+// ---- the eight-station list -----------------------------------------------------------------------
+
+const station = (over) => ({ station_id: "S1", order: 1, name: "Sprint", enabled: true, state: "NOT_STARTED", series: [
+  { series_key: "", label: "", valid_recorded: 0, required_valid: 3 }], ...over });
+
+test("an open station shows its state and its progress, and can be opened", () => {
+  const m = S.stationRowModel(station({ state: "IN_PROGRESS", series: [{ series_key: "", label: "", valid_recorded: 1, required_valid: 3 }] }));
+  assert.equal(m.label, "1. Sprint");
+  assert.equal(m.stateText, "IN PROGRESS");
+  assert.equal(m.detail, "valid attempts 1 of 3");
+  assert.equal(m.canOpen, true);
+});
+
+test("agility shows each turning foot", () => {
+  const m = S.stationRowModel(station({ station_id: "S2", order: 2, name: "Agility", series: [
+    { series_key: "L", label: "Turning foot: left", valid_recorded: 2, required_valid: 2 },
+    { series_key: "R", label: "Turning foot: right", valid_recorded: 0, required_valid: 2 }] }));
+  assert.equal(m.detail, "Turning foot: left: valid attempts 2 of 2 · Turning foot: right: valid attempts 0 of 2");
+});
+
+test("a station that is coming soon shows only that, with nothing to open and no invented result", () => {
+  const m = S.stationRowModel({ station_id: "S3", order: 3, name: "Ball Mastery", enabled: false, state: "COMING_SOON", series: [] });
+  assert.equal(m.stateText, "COMING SOON");
+  assert.equal(m.canOpen, false);
+  assert.equal(m.detail, "");
+  assert.deepEqual(Object.keys(S.STATE_WORDS).sort(), ["COMING_SOON", "COMPLETE", "IN_PROGRESS", "NOT_STARTED"]);
 });
 
 test("assessment creation retries reuse one key until the server answers", async () => {
   let n = 0;
   const { flows, calls } = flowsWith(["network", { status: 200, body: { assessment_id: "V1A000001" } }, { status: 201, body: { assessment_id: "V1A000002" } }],
     () => `asm-key-${++n}-generated`);
-  const args = { playerId: "TEST_PLAYER_A", date: "2026-09-12", title: "V1 assessment" };
+  const args = { playerId: "TEST_PLAYER_A", date: "2026-09-12", title: "Assessment" };
   assert.equal((await flows.createAssessment(args)).state, "UNCERTAIN");
   assert.equal((await flows.createAssessment(args)).state, "SAVED");
   assert.equal(calls[0].body.client_entry_id, calls[1].body.client_entry_id);
@@ -223,6 +250,15 @@ test("assessment creation retries reuse one key until the server answers", async
   assert.notEqual(calls[1].body.client_entry_id, calls[2].body.client_entry_id);
   assert.equal(calls[0].body.protocol_code, undefined);       // the coach never types protocol or ids
   assert.deepEqual(Object.keys(calls[0].body).sort(), ["assessment_date", "client_entry_id", "player_id", "title"]);
+});
+
+test("the pending store keeps keys only, never assessment content", async () => {
+  const { flows, storage } = flowsWith(["network"]);
+  await flows.createAssessment({ playerId: "TEST_PLAYER_A", date: "2026-09-12", title: "Assessment" });
+  const stored = JSON.stringify(storage.data);
+  assert.match(stored, /key-0001-fixed/);
+  assert.doesNotMatch(stored, /Assessment|4\.25|name/i);        // no title, no time, no name; the key's scope holds an opaque player id and a date
+  assert.deepEqual(Object.keys(storage.data), ["kemet_v1_pending_keys"]);
 });
 
 // ---- corrections ---------------------------------------------------------------------------------
@@ -273,7 +309,7 @@ test("plain-language errors", () => {
   assert.equal(S.friendlyMessage(401, ""), "Your session has expired. Sign in again.");
   assert.equal(S.friendlyMessage(403, "No active guardian consent for performance tracking exists for this player"),
     "This player does not currently have the required assessment consent.");
-  assert.equal(S.friendlyMessage(409, "x", "time"), "This attempt already has a different saved entry. Refresh before continuing.");
+  assert.equal(S.friendlyMessage(409, "x", "time"), "This attempt number already has a different saved entry. Refresh before continuing.");
   assert.equal(S.friendlyMessage(422, "x", "time"), "Enter the stopwatch reading using seconds and up to two decimal places.");
   assert.match(S.friendlyMessage(500, ""), /Could not confirm save/);
   assert.match(S.friendlyMessage(0, ""), /Retry safely/);
@@ -285,7 +321,7 @@ test("plain-language errors", () => {
 
 test("a consent refusal is a refusal with no bypass path in the logic", async () => {
   const { flows } = flowsWith([{ status: 403, body: { detail: "No active guardian consent for performance tracking exists for this player" } }]);
-  const r = await flows.saveTime({ trialId: "t", text: "4.25" });
+  const r = await flows.saveAttempt({ assessmentId: "A1", entry: entryOf({}) });
   assert.equal(r.state, "REJECTED");
   assert.equal(r.status, 403);
   assert.match(r.message, /required assessment consent/);
@@ -299,10 +335,11 @@ test("a timeout is reported as unknown, not as failure", async () => {
   assert.equal(S.outcome(r, "time", () => ({})).state, "UNCERTAIN");
 });
 
-test("the script exposes only measurement-entry behaviour", () => {
-  assert.deepEqual(Object.keys(S).sort(), ["CORRECTION_REASONS", "INVALID_REASONS", "NOT_RECORDED_REASONS", "SPRINT_METRIC", "TIME_HELP",
-    "createPendingStore", "describeAttempt", "filterPlayers", "friendlyMessage", "makeFlows", "newKey", "nextAttemptNumber", "outcome",
-    "playerListModel", "renderPlayerRows", "request", "selectedLabel", "start", "validateTimeText"]);
+test("the script exposes only assessment-entry behaviour", () => {
+  assert.deepEqual(Object.keys(S).sort(), ["CORRECTION_REASONS", "INVALID_REASONS_BY_STATION", "NOT_RECORDED_REASONS", "STATE_WORDS", "TIME_HELP",
+    "attemptBody", "createPendingStore", "describeAttempt", "describeQueued", "filterPlayers", "friendlyMessage", "makeFlows", "newKey",
+    "nextAttemptNumber", "outcome", "playerListModel", "renderPlayerRows", "request", "selectedLabel", "start", "stationRowModel",
+    "syncBannerModel", "validateTimeText"]);
   assert.equal(S.newKey({ randomUUID: () => "abc-123" }), "abc-123");
 });
 

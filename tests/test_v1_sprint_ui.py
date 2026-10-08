@@ -1,5 +1,5 @@
-"""Coach web screen for the S1 20 m sprint (S1B2): access control, page content, the
-supporting read route, and the browser-logic tests (run with node when it is installed).
+"""Coach web screen for Player Assessment (S1B2, extended in Phase 1): access control, page content,
+the supporting read route, and the browser-logic tests (run with node when it is installed).
 
 There is no browser test framework in this repository (the web screens are static HTML with
 inline script), so behaviour that needs a DOM was checked by hand in a real browser; the
@@ -21,9 +21,12 @@ from tests.test_privacy_s0 import ctx  # noqa: F401  (api depends on it)
 ROOT = Path(__file__).resolve().parent.parent
 PAGE = (ROOT / "app/static/v1_sprint.html").read_text()
 RAW_SCRIPT = (ROOT / "app/static/v1_sprint.js").read_text()
+RAW_OUTBOX = (ROOT / "app/static/v1_outbox.js").read_text()
 # Comments explain the rules ("no scores", "never innerHTML"); the checks below are about code.
 SCRIPT = re.sub(r"/\*.*?\*/", "", RAW_SCRIPT, flags=re.S)
 SCRIPT = re.sub(r"(?m)^\s*//.*$|(?<=[;{}, ])//[^\n\"']*$", "", SCRIPT)
+OUTBOX = re.sub(r"/\*.*?\*/", "", RAW_OUTBOX, flags=re.S)
+OUTBOX = re.sub(r"(?m)^\s*//.*$|(?<=[;{}, ])//[^\n\"']*$", "", OUTBOX)
 
 
 # ---- access (UI list 1-5) -------------------------------------------------------------------
@@ -33,19 +36,22 @@ def test_anonymous_users_are_sent_to_login_and_cannot_load_the_script(api):
     response = anonymous.get("/v1/sprint", follow_redirects=False)
     assert response.status_code == 303 and response.headers["location"].startswith("/login")
     assert anonymous.get("/v1/sprint.js").status_code == 401
+    assert anonymous.get("/v1/outbox.js").status_code == 401
 
 
 @pytest.mark.parametrize("who", ["coach", "admin", "reviewer"])
 def test_staff_can_open_the_screen(api, who):
     response = getattr(api, who).get("/v1/sprint")
-    assert response.status_code == 200 and "S1 — 20 m Sprint" in response.text
-    script = getattr(api, who).get("/v1/sprint.js")
-    assert script.status_code == 200 and "javascript" in script.headers["content-type"]
+    assert response.status_code == 200 and "PLAYER ASSESSMENT" in response.text
+    for path in ("/v1/sprint.js", "/v1/outbox.js"):
+        script = getattr(api, who).get(path)
+        assert script.status_code == 200 and "javascript" in script.headers["content-type"], path
 
 
 def test_guardians_cannot_reach_the_screen_or_the_script(api):
     assert api.guard_a.get("/v1/sprint").status_code == 403
     assert api.guard_a.get("/v1/sprint.js").status_code == 403
+    assert api.guard_a.get("/v1/outbox.js").status_code == 403
 
 
 def test_a_user_without_the_assessments_feature_cannot_open_it(api):
@@ -86,13 +92,23 @@ def visible_text():
     return re.sub(r"<style.*?</style>|<script.*?</script>", " ", PAGE, flags=re.S | re.I)
 
 
-def test_the_page_names_s1_only_and_has_no_other_station_controls():
+def test_the_station_list_comes_from_the_server_and_only_the_open_stations_have_controls():
     text = visible_text()
-    assert "S1 — 20 m Sprint" in text
-    for other in ("S2", "S3", "S4", "S5", "S6", "Passing", "Shooting", "Dribbling", "Ball mastery",
-                  "Change of direction", "left foot", "right foot"):
-        assert other.lower() not in (text + SCRIPT).lower().replace("s2-s6", ""), other
-    assert d.STATIONS[0] == "S1" and "const STATION = \"S1\"" in SCRIPT
+    # The page and script never hard-code a station that is not open; the server's list is shown.
+    for soon in ("Ball Mastery", "Passing", "Shooting", "1v1", "Small-Sided", "S3", "S5", "S6", "S7", "S8"):
+        assert soon.lower() not in (text + SCRIPT).lower(), soon
+    assert re.search(r"INVALID_REASONS_BY_STATION = \{\s*S1:", SCRIPT)
+    assert re.findall(r"^    (S\d): \[", re.search(r"INVALID_REASONS_BY_STATION = \{(.*?)\n  \};", SCRIPT, re.S).group(1), re.M) == ["S1", "S2", "S4"]
+    assert "COMING_SOON" in SCRIPT and "canOpen" in SCRIPT
+    assert "state.overview.stations" in SCRIPT
+
+
+def test_the_screen_has_no_camera_recording_or_video_control_in_phase_1():
+    everything = (visible_text() + SCRIPT + OUTBOX).lower()
+    for word in ("record attempt", "camera", "video", "startassessment", "stopassessment", "avfoundation", "dockkit",
+                 "getusermedia", "mediarecorder", "telemetry", "tracking", "upload", "webkit.messagehandlers"):
+        assert word not in everything, word
+    assert "<video" not in PAGE.lower() and 'type="file"' not in PAGE.lower()
 
 
 def test_the_screen_shows_no_scores_benchmarks_ai_age_bands_or_delete_actions():
@@ -125,17 +141,20 @@ def test_official_times_are_never_parsed_into_numbers_and_no_thresholds_are_hard
 
 
 def test_reason_lists_in_the_screen_equal_the_backend_lists():
-    def codes(name):
-        block = re.search(rf"const {name} = \[(.*?)\n  \];", SCRIPT, re.S).group(1)
+    def codes(block):
         return re.findall(r'\["([A-Z_]+)",', block)
 
-    assert codes("NOT_RECORDED_REASONS") == list(d.NOT_RECORDED_REASONS)
-    labels = dict(re.findall(r'\["([A-Z_]+)", "([^"]+)"\]', re.search(
-        r"const NOT_RECORDED_REASONS = \[(.*?)\n  \];", SCRIPT, re.S).group(1)))
+    nr_block = re.search(r"const NOT_RECORDED_REASONS = \[(.*?)\n  \];", SCRIPT, re.S).group(1)
+    assert codes(nr_block) == list(d.NOT_RECORDED_REASONS)
+    labels = dict(re.findall(r'\["([A-Z_]+)", "([^"]+)"\]', nr_block))
     assert labels == d.NOT_RECORDED_REASON_LABELS
-    assert set(codes("INVALID_REASONS")) == d.INVALID_REASONS["S1"] and len(codes("INVALID_REASONS")) == 5
-    assert codes("CORRECTION_REASONS") == list(d.CORRECTION_REASONS)
-    assert f'SPRINT_METRIC = "{d.METRIC_DEFINITIONS[0].metric_id}"' in SCRIPT
+    by_station = re.search(r"INVALID_REASONS_BY_STATION = \{(.*?)\n  \};", SCRIPT, re.S).group(1)
+    for station_id in d.ENABLED_STATIONS:
+        block = re.search(rf"\n    {station_id}: \[(.*?)\n    \],", by_station, re.S).group(1)
+        assert codes(block) == sorted(codes(block), key=codes(block).index)            # no duplicates
+        assert set(codes(block)) == d.INVALID_REASONS[station_id] and len(codes(block)) == len(d.INVALID_REASONS[station_id])
+    assert "CONE_CONTACT" not in SCRIPT                                              # not an invalidating reason (D-V1-03)
+    assert codes(re.search(r"const CORRECTION_REASONS = \[(.*?)\n  \];", SCRIPT, re.S).group(1)) == list(d.CORRECTION_REASONS)
 
 
 def test_page_structure_supports_labels_keyboard_and_mobile():
@@ -155,8 +174,8 @@ def test_page_structure_supports_labels_keyboard_and_mobile():
 
 
 def test_no_real_child_names_were_introduced():
-    for path in (ROOT / "app/static/v1_sprint.html", ROOT / "app/static/v1_sprint.js",
-                 ROOT / "tests/js/v1_sprint.test.js", Path(__file__)):
+    for path in (ROOT / "app/static/v1_sprint.html", ROOT / "app/static/v1_sprint.js", ROOT / "app/static/v1_outbox.js",
+                 ROOT / "tests/js/v1_sprint.test.js", ROOT / "tests/js/v1_outbox.test.js", Path(__file__)):
         text = path.read_text().lower()
         for name in ("ad" + "am",):     # assembled so this file does not contain the name itself
             assert name not in text, (path.name, name)
@@ -166,7 +185,7 @@ def test_no_real_child_names_were_introduced():
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed")
 def test_browser_logic_tests_pass_under_node():
-    result = subprocess.run(["node", "--test", "tests/js/v1_sprint.test.js", "tests/js/login_next.test.js"], cwd=ROOT,
+    result = subprocess.run(["node", "--test", "tests/js/v1_sprint.test.js", "tests/js/v1_outbox.test.js", "tests/js/login_next.test.js"], cwd=ROOT,
                             capture_output=True, text=True, timeout=120)
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-1000:]
     assert re.search(r"# fail 0", result.stdout) and not re.search(r"# pass 0\b", result.stdout)
@@ -185,7 +204,8 @@ def test_the_player_picker_is_a_tappable_list_not_a_native_select():
     css = re.search(r"\.player-row \{[^}]*\}", html).group(0)
     assert re.search(r"min-height:\s*(5[6-9]|[6-9]\d)px", css) and "width: 100%" in css
     assert 'content: "\\2713' in html and ":hover" not in html
-    assert "<select" not in html.replace('<select id="invalid-reason">', "")      # the only select left is the rule list
+    # The only selects are the two reason lists (not-valid rule, timer problem); players are never a <select>.
+    assert re.findall(r'<select id="([a-z-]+)"', html) == ["nr-reason", "invalid-reason"]
 
 
 def test_the_picker_script_wires_search_retry_and_never_fails_silently():
@@ -197,3 +217,30 @@ def test_the_picker_script_wires_search_retry_and_never_fails_silently():
     assert SCRIPT.count("state.playersStatus = \"failed\"") >= 3
     # Only the display name reaches the page; ids stay in code.
     assert "data-player" not in SCRIPT and "player_id" in SCRIPT
+
+
+# ---- the offline queue's own file (Phase 1) -----------------------------------------------------------
+
+def test_the_offline_queue_uses_one_browser_key_and_stores_no_credentials_or_media():
+    assert "localStorage" in OUTBOX and "indexedDB" not in OUTBOX and "sessionStorage" not in OUTBOX
+    assert 'STORAGE_KEY = "kemet_v1_outbox_v1"' in OUTBOX
+    assert "document.cookie" not in OUTBOX and "fetch(" not in OUTBOX and "XMLHttpRequest" not in OUTBOX   # it never talks to the network
+    assert "innerHTML" not in OUTBOX and "console." not in OUTBOX and "eval(" not in OUTBOX
+    keys = re.search(r"PAYLOAD_KEYS = Object\.freeze\(\[(.*?)\]\)", OUTBOX, re.S).group(1)
+    assert re.findall(r'"([a-z_]+)"', keys) == [
+        "station_id", "series_key", "attempt_number", "validity", "invalid_reason",
+        "entry_status", "displayed_value", "not_recorded_reason"]
+    for banned in ("password", "csrf", "authorization", "bearer", "player_name", "email", "phone"):
+        assert banned not in OUTBOX.lower().replace("csrf token", ""), banned
+
+
+def test_the_page_never_reads_or_writes_browser_storage_itself_except_the_key_store():
+    assert "localStorage" not in SCRIPT and "indexedDB" not in SCRIPT
+    assert "V1Outbox.createDefaultOutbox()" in SCRIPT and "outbox.enqueue(" in SCRIPT
+    assert SCRIPT.index("outbox.enqueue(") < SCRIPT.index("syncNow()", SCRIPT.index("outbox.enqueue("))   # saved on the device first, then sent
+
+
+def test_unsent_attempts_can_only_be_discarded_after_the_server_refused_them():
+    assert "outbox.discard(entry.op_id, owner())" in SCRIPT
+    assert 'entry.state === "SYNC_FAILED"' in SCRIPT
+    assert "CONFIRM: DISCARD THIS ATTEMPT" in SCRIPT                      # a second, deliberate tap

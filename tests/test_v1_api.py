@@ -165,13 +165,16 @@ def test_station_run_and_trial_creation_and_retry(api):
     assert conflict.status_code == 409 and count(api, V1TrialDB) == 1
 
 
-def test_only_the_sprint_station_is_open_in_this_api_version(api):
+def test_only_s1_s2_and_s4_are_open_in_this_api_version(api):
     assessment = create_assessment(api.coach).json()
     path = f"/v1/assessments/{assessment['assessment_id']}/station-runs"
-    for station in ("S2", "S3", "S4", "S5", "S6", "S9"):
-        assert api.coach.post(path, json={"station_id": station}).status_code == 422
+    for station in ("S3", "S5", "S6", "S7", "S8", "S9"):          # coming soon, or not a station
+        assert api.coach.post(path, json={"station_id": station}).status_code == 422, station
     assert api.coach.post(path, json={"station_id": "S1", "series_key": "L"}).status_code == 422
-    assert count(api, V1StationRunDB) == 0
+    assert count(api, V1StationRunDB) == 0                         # nothing was created by the refusals
+    for station in ("S1", "S2", "S4"):
+        assert api.coach.post(path, json={"station_id": station}).status_code == 201, station
+    assert count(api, V1StationRunDB) == 3
 
 
 def test_invalid_trial_uses_protocol_reasons_and_timer_failure_is_not_one(api):
@@ -615,6 +618,7 @@ def test_no_v1_delete_or_generic_update_routes_exist(api):
         "/v1/assessments", "/v1/assessments/{assessment_id}", "/v1/players/{player_id}/assessments",
         "/v1/player-picker", "/v1/eligible-confirmers",
         "/v1/assessments/{assessment_id}/station-runs", "/v1/station-runs/{station_run_id}/trials",
+        "/v1/assessments/{assessment_id}/stations", "/v1/assessments/{assessment_id}/attempts",
         "/v1/trials/{trial_id}/manual-measurements", "/v1/manual-measurements/{measurement_id}",
         "/v1/manual-measurements/{measurement_id}/corrections"])
     _, _, trial = setup_trial(api)

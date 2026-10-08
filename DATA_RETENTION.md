@@ -29,3 +29,6 @@ their full correction history) is exported and, on completed deletion, removed i
 dependency order; normal use has no delete path for it. The guardian export lists what it
 contains and what it leaves out; it is not a complete copy of everything held.
 
+Unsent Player Assessment attempts are kept briefly in the coach's own browser storage (one key,
+no names, tokens, cookies or media) until the server confirms them; the typed content is deleted at
+once on success and a receipt is purged after 24 hours. See `V1_PLAYER_ASSESSMENT_PHASE1.md`.
