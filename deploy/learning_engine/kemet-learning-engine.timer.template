@@ -1,0 +1,14 @@
+# TEMPLATE ONLY (never enabled or started by this repository). systemd documents a time-zone suffix in OnCalendar; I did not
+# run it on a Linux host, so I cannot confirm it. The machine must be on at that time; Persistent=true runs a missed day once
+# the machine is back (the engine's own idempotency makes that safe).
+[Unit]
+Description=Daily KEMET learning engine run (template)
+
+[Timer]
+OnCalendar=*-*-* 06:30:00 America/Detroit
+Persistent=true
+RandomizedDelaySec=120
+Unit=kemet-learning-engine.service
+
+[Install]
+WantedBy=timers.target

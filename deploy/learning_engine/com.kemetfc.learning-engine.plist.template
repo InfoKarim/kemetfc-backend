@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  TEMPLATE ONLY. Nothing installs, loads or enables this. Copy it to ~/Library/LaunchAgents yourself, fill the @PLACEHOLDERS@,
+  and only then (if you decide to) `launchctl bootstrap` it. Disabled is set to true on purpose.
+  launchd has no per-job time zone: StartCalendarInterval uses the Mac's local time. The run itself works in America/Detroit
+  (run_daily.sh sets TZ), but the 06:30 trigger is 06:30 on THIS computer's clock. Set the Mac to America/Detroit or adjust Hour.
+  It only runs while the Mac is awake and logged in; a closed laptop does not run it (a missed run is simply not made up).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.kemetfc.learning-engine</string>
+  <key>Disabled</key><true/>
+  <key>RunAtLoad</key><false/>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>@KEMET_LE_REPO@/deploy/learning_engine/run_daily.sh</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>KEMET_LE_REPO</key><string>@KEMET_LE_REPO@</string>
+    <key>KEMET_LE_CONFIG</key><string>@KEMET_LE_CONFIG@</string>
+    <key>KEMET_LE_STATE</key><string>@KEMET_LE_STATE@</string>
+    <key>TZ</key><string>America/Detroit</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+  <key>WorkingDirectory</key><string>@KEMET_LE_STATE@</string>
+  <key>StandardOutPath</key><string>@KEMET_LE_STATE@/launchd.out.log</string>
+  <key>StandardErrorPath</key><string>@KEMET_LE_STATE@/launchd.err.log</string>
+  <key>Umask</key><integer>63</integer>
+  <key>ProcessType</key><string>Background</string>
+</dict>
+</plist>

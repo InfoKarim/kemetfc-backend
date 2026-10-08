@@ -104,3 +104,19 @@ def pytest_sessionfinish(session, exitstatus):
     if changed:
         print(f"\nREAL DATA TOUCHED BY THE TEST SESSION: {[str(p) for p in changed]}")
         session.exitstatus = 1
+
+
+# ---- tests that TRAIN a neural network are opt-in -------------------------------------------------------------------
+# Training is off by default everywhere (app.ml1.train.training_enabled). A test that actually trains is marked
+# `trains_models` and is skipped unless a human sets KEMET_ALLOW_MODEL_TRAINING_TESTS=1 for the run.
+def pytest_configure(config):
+    config.addinivalue_line("markers", "trains_models: actually trains a (tiny, synthetic) neural network; opt-in only")
+
+
+def pytest_collection_modifyitems(config, items):
+    if os.environ.get("KEMET_ALLOW_MODEL_TRAINING_TESTS") == "1":
+        return
+    skip = pytest.mark.skip(reason="trains a model: set KEMET_ALLOW_MODEL_TRAINING_TESTS=1 to run (never by default)")
+    for item in items:
+        if "trains_models" in item.keywords:
+            item.add_marker(skip)

@@ -161,6 +161,7 @@ from app.routers import messaging as messaging_router
 from app.routers import player_assessments as player_assessments_router
 from app.routers import player_checkin as player_checkin_router
 from app.routers import v1_assessments as v1_assessments_router
+from app.routers import learning_review as learning_review_router
 from app.routers import seasons as seasons_router
 from app.routers import teams as teams_router
 from app.routers import tracking as tracking_router
@@ -177,6 +178,7 @@ app.include_router(seasons_router.router)
 app.include_router(teams_router.router)
 app.include_router(tracking_router.router)
 app.include_router(v1_assessments_router.router)
+app.include_router(learning_review_router.router)
 app.include_router(training_plans_router.router)
 app.include_router(videos_router.router)
 

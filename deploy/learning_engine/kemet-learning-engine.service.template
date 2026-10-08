@@ -1,0 +1,20 @@
+# TEMPLATE ONLY (never installed or started by this repository). Not tested on Linux/systemd: I cannot confirm it works.
+[Unit]
+Description=KEMET learning engine - daily Dribbling research (offline unless configured live)
+
+[Service]
+Type=oneshot
+User=@KEMET_LE_USER@
+WorkingDirectory=@KEMET_LE_STATE@
+Environment=KEMET_LE_REPO=@KEMET_LE_REPO@
+Environment=KEMET_LE_CONFIG=@KEMET_LE_CONFIG@
+Environment=KEMET_LE_STATE=@KEMET_LE_STATE@
+# live-mode keys, if ever used, go in a root-owned file outside this repository:
+# EnvironmentFile=-/etc/kemet-learning-engine/credentials
+ExecStart=/usr/bin/env bash @KEMET_LE_REPO@/deploy/learning_engine/run_daily.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@KEMET_LE_STATE@
