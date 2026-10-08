@@ -6,6 +6,7 @@ source and run with swiftc; the rest are source-level pins.
 """
 import re
 import shutil
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -31,7 +32,7 @@ def git_show(path: str) -> str:
     return subprocess.run(["git", "show", f"{BASE}:{path}"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
 
 
-@pytest.mark.skipif(shutil.which("swiftc") is None, reason="the Swift compiler is not installed")
+@pytest.mark.skipif(sys.platform != "darwin" or shutil.which("swiftc") is None, reason="requires macOS CoreGraphics and Swift")
 def test_tap_mapping_person_choice_frame_suggestion_and_selection_rules_hold():
     model = re.search(r"// BEGIN VideoTargetModel\n(.*?)// END VideoTargetModel", MODEL, re.S).group(1)
     harness = re.sub(r"(?m)^import (CoreGraphics|Foundation)\n", "", (ROOT / "tests/ios/video_target_harness.swift").read_text())

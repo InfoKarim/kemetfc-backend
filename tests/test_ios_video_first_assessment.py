@@ -7,6 +7,7 @@ pin that: the new files may only read what that engine already decided.
 """
 import re
 import shutil
+import sys
 import subprocess
 import tempfile
 from pathlib import Path
@@ -32,7 +33,7 @@ def code(text: str) -> str:
 
 # ---- 3, 5, 6, 10: the review rules (compiled and run with swiftc) ---------------------------------------
 
-@pytest.mark.skipif(shutil.which("swiftc") is None, reason="the Swift compiler is not installed")
+@pytest.mark.skipif(sys.platform != "darwin" or shutil.which("swiftc") is None, reason="requires macOS Combine and Swift")
 def test_the_review_and_save_rules_hold():
     model = re.search(r"// BEGIN VideoFirstAssessmentModel\n(.*?)// END VideoFirstAssessmentModel", MODEL, re.S).group(1)
     mode = re.sub(r"(?m)^import .*\n", "", MODE)

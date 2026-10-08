@@ -26,13 +26,19 @@ jobs:
       DATABASE_URL: postgresql+psycopg://trainingbuddy:test-password@localhost:5432/trainingbuddy_test
       AUTH_COOKIE_SECURE: "false"
       VIDEO_STORAGE_BACKEND: local
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      KEMET_ALLOW_MODEL_TRAINING_TESTS: "0"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pip install 'torch>=2.5,<3' --index-url https://download.pytorch.org/whl/cpu
+      - run: pip install -r requirements-vision.txt -r requirements-dev.txt
       - run: python -m alembic upgrade head
       - run: python -m pytest --cov=app --cov=main --cov-fail-under=85
       - run: ruff check app main.py scripts tests
@@ -40,3 +46,20 @@ jobs:
       - run: pip-audit -r requirements.txt
       - run: docker build -t trainingbuddy:${{ github.sha }} .
 
+  ios-contracts:
+    runs-on: macos-latest
+    env:
+      APP_ENV: test
+      AUTH_COOKIE_SECURE: "false"
+      VIDEO_STORAGE_BACKEND: local
+      KEMET_ALLOW_MODEL_TRAINING_TESTS: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: python -m pytest -q tests/test_ios_*.py
